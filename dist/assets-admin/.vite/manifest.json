@@ -1,0 +1,11 @@
+{
+  "adminSiteClient/admin.entry.ts": {
+    "file": "admin.mjs",
+    "name": "admin",
+    "src": "adminSiteClient/admin.entry.ts",
+    "isEntry": true,
+    "css": [
+      "admin.css"
+    ]
+  }
+}
