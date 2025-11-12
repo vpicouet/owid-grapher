@@ -67,12 +67,12 @@ import {
     ProjectionColumnInfo,
     Time,
     ToleranceStrategy,
+    type EntitySelectorEvent,
 } from "@ourworldindata/types"
 import { buildVariableTable } from "../core/LegacyToOwidTable"
 import { DrawerContext } from "../slideInDrawer/SlideInDrawer.js"
 import * as R from "remeda"
 import { MapConfig } from "../mapCharts/MapConfig"
-import { EntitySelectorEvent } from "../core/GrapherAnalytics"
 import { match } from "ts-pattern"
 import {
     entityRegionTypeLabels,
@@ -82,6 +82,7 @@ import {
     isAggregateSource,
 } from "../core/EntitiesByRegionType"
 import { SearchField } from "../controls/SearchField"
+import { MAP_REGION_LABELS } from "../mapCharts/MapChartConstants.js"
 
 export type CoreColumnBySlug = Record<ColumnSlug, CoreColumn>
 
@@ -121,7 +122,6 @@ export interface EntitySelectorManager {
     onSelectEntity?: (entityName: EntityName) => void
     onDeselectEntity?: (entityName: EntityName) => void
     onClearEntities?: () => void
-    yColumnSlugs?: ColumnSlug[]
     entityRegionTypeGroups?: EntityRegionTypeGroup[]
     entityNamesByRegionType?: EntityNamesByRegionType
     isReady?: boolean
@@ -292,7 +292,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         this.disposers.forEach((dispose) => dispose())
     }
 
-    private set(newState: Partial<EntitySelectorState>): void {
+    @action.bound private set(newState: Partial<EntitySelectorState>): void {
         const correctedState = { ...newState }
 
         if (newState.sortConfig !== undefined) {
@@ -442,10 +442,10 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
     } {
         // use map tolerance if on the map tab
         const tolerance = this.manager.isOnMapTab
-            ? this.manager.mapConfig?.timeTolerance
+            ? this.mapConfig.timeTolerance
             : undefined
         const toleranceStrategy = this.manager.isOnMapTab
-            ? this.manager.mapConfig?.toleranceStrategy
+            ? this.mapConfig.toleranceStrategy
             : undefined
 
         return { value: tolerance, strategy: toleranceStrategy }
@@ -589,8 +589,8 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         return this.manager.endTime ?? this.table.maxTime!
     }
 
-    @computed private get yColumnSlugs(): ColumnSlug[] {
-        return this.manager.yColumnSlugs ?? []
+    @computed private get mapConfig(): MapConfig {
+        return this.manager.mapConfig ?? new MapConfig()
     }
 
     private isEntityMuted(entityName: EntityName): boolean {
@@ -1553,6 +1553,10 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         const shouldHideAvailableEntities =
             !shouldShowFilterBar && hasFewEntities && this.allEntitiesSelected
 
+        const availableEntitiesTitle = this.mapConfig.is2dContinentActive()
+            ? `Countries in ${MAP_REGION_LABELS[this.mapConfig.region]}`
+            : `All ${this.entityType.plural}`
+
         return (
             <Flipper
                 spring={{ stiffness: 300, damping: 33 }}
@@ -1611,7 +1615,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
                         {!shouldShowFilterBar && (
                             <Flipped flipId="__available" translate opacity>
                                 <div className="entity-section__title grapher_body-3-regular-italic grapher_light">
-                                    All {this.entityType.plural}
+                                    {availableEntitiesTitle}
                                 </div>
                             </Flipped>
                         )}

@@ -13,7 +13,6 @@ export { loadVariableDataAndMetadata } from "./core/loadVariable.js"
 export {
     GRAPHER_ROUTE_FOLDER,
     GRAPHER_EMBEDDED_FIGURE_ATTR,
-    GRAPHER_EMBEDDED_FIGURE_CONFIG_ATTR,
     GRAPHER_NARRATIVE_CHART_CONFIG_FIGURE_ATTR,
     GRAPHER_PAGE_BODY_CLASS,
     GRAPHER_IS_IN_IFRAME_CLASS,
@@ -29,8 +28,6 @@ export {
     BASE_FONT_SIZE,
     WORLD_ENTITY_NAME,
     Patterns,
-    grapherInterfaceWithHiddenControls,
-    grapherInterfaceWithHiddenTabs,
     CONTINENTS_INDICATOR_ID,
     POPULATION_INDICATOR_ID_USED_IN_ADMIN,
     latestGrapherConfigSchema,
@@ -72,7 +69,7 @@ export {
     type GrapherManager,
 } from "./core/Grapher"
 export { GrapherState } from "./core/GrapherState"
-export { GrapherAnalytics, EventCategory } from "./core/GrapherAnalytics"
+export { GrapherAnalytics } from "./core/GrapherAnalytics"
 export { hydrateGlobalEntitySelectorIfAny } from "./controls/globalEntitySelector/GlobalEntitySelector"
 export { legacyToCurrentGrapherUrl } from "./core/GrapherUrlMigrations"
 export {

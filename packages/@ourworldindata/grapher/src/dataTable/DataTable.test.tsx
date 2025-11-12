@@ -1,5 +1,5 @@
 /**
- * @vitest-environment jsdom
+ * @vitest-environment happy-dom
  */
 
 import { expect, it, describe, beforeAll, beforeEach } from "vitest"
@@ -40,12 +40,12 @@ describe("when you render a table", () => {
     })
 
     it("renders a unit name in the caption", () => {
-        const cell = container.querySelector(".DataTable .caption .unit")
+        const cell = container.querySelector(".DataTable .caption")
         expect(cell?.textContent).toContain("percent")
     })
 
     it("renders 'percent' in the caption when unit is '%'", () => {
-        const cell = container.querySelector(".DataTable .caption .unit")
+        const cell = container.querySelector(".DataTable .caption")
         expect(cell?.textContent).toContain("percent")
     })
 

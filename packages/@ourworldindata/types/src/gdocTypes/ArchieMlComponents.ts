@@ -31,28 +31,6 @@ export type EnrichedBlockAside = {
     caption: Span[]
 } & EnrichedBlockWithParseErrors
 
-export enum ChartControlKeyword {
-    all = "all",
-    relativeToggle = "relativeToggle",
-    timeline = "timeline",
-    facetControl = "facetControl",
-    entitySelector = "entitySelector",
-    zoomToggle = "zoomToggle",
-    noDataAreaToggle = "noDataAreaToggle",
-    alignAxisScalesToggle = "alignAxisScalesToggle",
-    xLogLinearSelector = "xLogLinearSelector",
-    yLogLinearSelector = "yLogLinearSelector",
-    mapRegionDropdown = "mapRegionDropdown",
-    tableFilterToggle = "tableFilterToggle",
-}
-
-export enum ChartTabKeyword {
-    all = "all",
-    chart = "chart",
-    map = "map",
-    table = "table",
-}
-
 export type RawBlockChartValue = {
     url?: string
     height?: string
@@ -61,10 +39,6 @@ export type RawBlockChartValue = {
     // TODO: position is used as a classname apparently? Should be renamed or split
     position?: string
     caption?: string
-    title?: string
-    subtitle?: string
-    controls?: { list: string[] }[]
-    tabs?: { list: string[] }[]
 }
 
 export type RawBlockChart = {
@@ -80,10 +54,6 @@ export type EnrichedBlockChart = {
     column?: string
     position?: ChartPositionChoice
     caption?: Span[]
-    title?: string
-    subtitle?: string
-    controls?: ChartControlKeyword[]
-    tabs?: ChartTabKeyword[]
 } & EnrichedBlockWithParseErrors
 
 export type RawBlockNarrativeChartValue = {
@@ -451,14 +421,14 @@ export type RawBlockRecirc = {
     }
 }
 
-export const recircAlignments = ["left", "center", "right"] as const
+export const blockAlignments = ["left", "center", "right"] as const
 
-export type RecircAlignment = (typeof recircAlignments)[number]
+export type BlockAlignment = (typeof blockAlignments)[number]
 
 export type EnrichedBlockRecirc = {
     type: "recirc"
     title: string
-    align?: RecircAlignment
+    align?: BlockAlignment
     links: EnrichedHybridLink[]
 } & EnrichedBlockWithParseErrors
 
@@ -885,6 +855,7 @@ export type RawBlockTable = {
         template?: TableTemplate
         size?: TableSize
         rows?: RawBlockTableRow[]
+        caption?: string
     }
 }
 
@@ -906,6 +877,7 @@ export type EnrichedBlockTable = {
     template: TableTemplate
     size: TableSize
     rows: EnrichedBlockTableRow[]
+    caption?: Span[]
 } & EnrichedBlockWithParseErrors
 
 export interface EnrichedBlockTableRow {
@@ -1041,6 +1013,18 @@ export type EnrichedBlockCookieNotice = {
     type: "cookie-notice"
 } & EnrichedBlockWithParseErrors
 
+export type RawBlockSubscribeBanner = {
+    type: "subscribe-banner"
+    value?: {
+        align?: string
+    }
+}
+
+export type EnrichedBlockSubscribeBanner = {
+    type: "subscribe-banner"
+    align: BlockAlignment
+} & EnrichedBlockWithParseErrors
+
 export type RawBlockCta = {
     type: "cta"
     value: {
@@ -1144,6 +1128,7 @@ export type OwidRawGdocBlock =
     | RawBlockHomepageIntro
     | RawBlockLatestDataInsights
     | RawBlockCookieNotice
+    | RawBlockSubscribeBanner
     | RawBlockCta
     | RawBlockSocials
 
@@ -1201,6 +1186,7 @@ export type OwidEnrichedGdocBlock =
     | EnrichedBlockHomepageIntro
     | EnrichedBlockLatestDataInsights
     | EnrichedBlockCookieNotice
+    | EnrichedBlockSubscribeBanner
     | EnrichedBlockCta
     | EnrichedBlockSocials
 

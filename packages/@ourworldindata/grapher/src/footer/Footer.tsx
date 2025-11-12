@@ -406,17 +406,12 @@ abstract class AbstractFooter<
             <div className="license" style={this.licenseAndOriginUrl.htmlStyle}>
                 {this.finalUrlText && (
                     <>
-                        <a href={this.finalUrl} target="_blank" rel="noopener">
-                            {this.finalUrlText}
-                        </a>{" "}
-                        |{" "}
+                        <a href={this.finalUrl}>{this.finalUrlText}</a> |{" "}
                     </>
                 )}
                 <a
                     className={this.manager.hasOWIDLogo ? "cclogo" : undefined}
                     href={this.licenseUrl}
-                    target="_blank"
-                    rel="noopener"
                     style={{ textDecoration: "none" }}
                 >
                     {this.licenseText}
@@ -703,9 +698,9 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
         const { finalUrl, finalUrlText, licenseText, licenseUrl, textColor } =
             this
         const linkStyle = `fill: ${textColor};`
-        const licenseSvg = `<a target="_blank" style="${linkStyle}" href="${licenseUrl}">${licenseText}</a>`
+        const licenseSvg = `<a style="${linkStyle}" href="${licenseUrl}">${licenseText}</a>`
         if (!finalUrlText) return licenseSvg
-        const originUrlSvg = `<a target="_blank" style="${linkStyle}" href="${finalUrl}">${finalUrlText}</a>`
+        const originUrlSvg = `<a style="${linkStyle}" href="${finalUrl}">${finalUrlText}</a>`
         return [originUrlSvg, licenseSvg].join(" | ")
     }
 

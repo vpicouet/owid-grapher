@@ -47,7 +47,6 @@ import {
     getTagHierarchiesByChildName,
     getBestBreadcrumbs,
 } from "../../db.js"
-import { enrichedBlocksToMarkdown } from "./enrichedToMarkdown.js"
 import { GdocAbout } from "./GdocAbout.js"
 import { GdocAuthor } from "./GdocAuthor.js"
 import { extractFilenamesFromBlock } from "./gdocUtils.js"
@@ -156,13 +155,7 @@ export async function updateGdocContentOnly(
         | GdocAuthor
         | GdocAnnouncement
 ): Promise<void> {
-    let markdown: string | null = gdoc.markdown
-    try {
-        const markdownContentSource = gdoc.enrichedBlockSources.flat()
-        markdown = enrichedBlocksToMarkdown(markdownContentSource, true) ?? null
-    } catch (e) {
-        console.error("Error when converting content to markdown", e)
-    }
+    gdoc.updateMarkdown()
     await knex
         .table(PostsGdocsTableName)
         .where({ id })
@@ -170,7 +163,7 @@ export async function updateGdocContentOnly(
         .update({
             content: JSON.stringify(gdoc.content),
             revisionId: gdoc.revisionId,
-            markdown,
+            markdown: gdoc.markdown,
         })
     await updateDerivedGdocPostsComponents(knex, id, gdoc.content.body)
 }
@@ -368,7 +361,8 @@ export async function getAndLoadGdocBySlug(
 export async function getAndLoadGdocById(
     knex: KnexReadonlyTransaction,
     id: string,
-    contentSource?: GdocsContentSource
+    contentSource?: GdocsContentSource,
+    acceptSuggestions: boolean = false
 ): Promise<
     | GdocPost
     | GdocDataInsight
@@ -380,7 +374,7 @@ export async function getAndLoadGdocById(
     const base = await getGdocBaseObjectById(knex, id, true)
     if (!base)
         throw new Error(`No Google Doc with id "${id}" found in the database`)
-    return loadGdocFromGdocBase(knex, base, contentSource)
+    return loadGdocFromGdocBase(knex, base, contentSource, acceptSuggestions)
 }
 
 export async function createOrLoadGdocById(
@@ -402,6 +396,7 @@ export async function loadGdocFromGdocBase(
     knex: KnexReadonlyTransaction,
     base: OwidGdocBaseInterface,
     contentSource?: GdocsContentSource,
+    acceptSuggestions: boolean = false,
     options?: { loadState?: boolean }
 ): Promise<
     | GdocPost
@@ -443,7 +438,7 @@ export async function loadGdocFromGdocBase(
 
     if (contentSource === GdocsContentSource.Gdocs) {
         // TODO: if we get here via fromJSON then we have already done this - optimize that?
-        await gdoc.fetchAndEnrichGdoc()
+        await gdoc.fetchAndEnrichGdoc(acceptSuggestions)
     }
 
     if (shouldLoadState) {
@@ -660,7 +655,7 @@ export async function getAndLoadListedGdocPosts(
     // When loadState=true (default), it fully loads linked charts, validates, loads images, etc.
     const gdocs = (await Promise.all(
         enrichedRows.map(async (row) =>
-            loadGdocFromGdocBase(knex, row, undefined, {
+            loadGdocFromGdocBase(knex, row, undefined, undefined, {
                 loadState: shouldLoadState,
             })
         )
@@ -719,10 +714,11 @@ export function getDbEnrichedGdocFromOwidGdoc(
 }
 export async function upsertGdoc(
     knex: KnexReadWriteTransaction,
-    gdoc: OwidGdoc | GdocBase
+    gdoc: GdocBase
 ): Promise<DbEnrichedPostGdoc> {
     let sql = undefined
     try {
+        gdoc.updateMarkdown()
         const enrichedGdoc = getDbEnrichedGdocFromOwidGdoc(gdoc)
         const rawPost = serializePostsGdocsRow(enrichedGdoc)
         const query = knex

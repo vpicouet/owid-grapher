@@ -341,6 +341,11 @@ export const enrichedBlockExamples: Record<
         ],
         parseErrors: [],
     },
+    ["subscribe-banner"]: {
+        type: "subscribe-banner",
+        align: "center",
+        parseErrors: [],
+    },
     ["resource-panel"]: {
         type: "resource-panel",
         icon: "chart",
@@ -662,6 +667,12 @@ export const enrichedBlockExamples: Record<
         type: "table",
         template: "header-row",
         size: "narrow",
+        caption: [
+            {
+                spanType: "span-simple-text",
+                text: "Table 1: Example cities and their continents",
+            },
+        ],
         rows: [
             {
                 type: "table-row",

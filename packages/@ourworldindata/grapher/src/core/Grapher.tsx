@@ -20,9 +20,8 @@ import {
     strToQueryParams,
     queryParamsToStr,
     setWindowQueryStr,
-    EntityYearHighlight,
 } from "@ourworldindata/utils"
-import { BodyDiv } from "@ourworldindata/components"
+import { BodyPortal } from "@ourworldindata/components"
 import {
     ScaleType,
     AnnotationFieldsInTitle,
@@ -34,6 +33,7 @@ import {
     ArchiveContext,
     AdditionalGrapherDataFetchFn,
     GrapherVariant,
+    Time,
 } from "@ourworldindata/types"
 import { OwidTable } from "@ourworldindata/core-table"
 import {
@@ -81,7 +81,7 @@ export interface GrapherProgrammaticInterface extends GrapherInterface {
     bakedGrapherURL?: string
     adminBaseUrl?: string
     env?: string
-    entityYearHighlight?: EntityYearHighlight
+    highlightedTimesInLineChart?: Time[]
     baseFontSize?: number
     staticBounds?: Bounds
     variant?: GrapherVariant
@@ -93,15 +93,8 @@ export interface GrapherProgrammaticInterface extends GrapherInterface {
     hideOriginUrl?: boolean
 
     hideEntityControls?: boolean
-    hideZoomToggle?: boolean
-    hideNoDataAreaToggle?: boolean
-    hideFacetYDomainToggle?: boolean
-    hideXScaleToggle?: boolean
-    hideYScaleToggle?: boolean
-    hideMapRegionDropdown?: boolean
     forceHideAnnotationFieldsInTitle?: AnnotationFieldsInTitle
     hasTableTab?: boolean
-    hideChartTabs?: boolean
     hideShareButton?: boolean
     hideExploreTheDataButton?: boolean
     hideRelatedQuestion?: boolean
@@ -571,21 +564,16 @@ export class Grapher extends React.Component<GrapherProps> {
 
                 {/* Tooltip: either pin to the bottom or render into the chart area */}
                 {this.grapherState.shouldPinTooltipToBottom ? (
-                    <BodyDiv>
+                    <BodyPortal>
                         <TooltipContainer
-                            tooltipProvider={this.grapherState}
+                            tooltipManager={this.grapherState}
                             anchor={GrapherTooltipAnchor.bottom}
                         />
-                    </BodyDiv>
+                    </BodyPortal>
                 ) : (
                     <TooltipContainer
-                        tooltipProvider={this.grapherState}
-                        containerWidth={
-                            this.grapherState.captionedChartBounds.width
-                        }
-                        containerHeight={
-                            this.grapherState.captionedChartBounds.height
-                        }
+                        tooltipManager={this.grapherState}
+                        containerBounds={this.grapherState.captionedChartBounds}
                     />
                 )}
             </>
@@ -602,9 +590,11 @@ export class Grapher extends React.Component<GrapherProps> {
                             // We need to render this immediately to avoid a Safari bug, where Safari
                             // is seemingly blocking rendering during the initial fetches, and will then
                             // subsequently render using the wrong bounds.
-                            flushSync(() => {
-                                this.hasBeenVisible = true
-                            })
+                            flushSync(
+                                action(() => {
+                                    this.hasBeenVisible = true
+                                })
+                            )
 
                             if (!this.hasLoggedGAViewEvent) {
                                 this.hasLoggedGAViewEvent = true
@@ -678,10 +668,10 @@ export class Grapher extends React.Component<GrapherProps> {
     }
 
     @action.bound private setUpWindowResizeEventHandler(): void {
-        const updateWindowDimensions = (): void => {
+        const updateWindowDimensions = action((): void => {
             this.grapherState.windowInnerWidth = window.innerWidth
             this.grapherState.windowInnerHeight = window.innerHeight
-        }
+        })
         const onResize = _.debounce(updateWindowDimensions, 400, {
             leading: true,
         })

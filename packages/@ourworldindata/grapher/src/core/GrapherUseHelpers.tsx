@@ -65,11 +65,7 @@ export function renderGrapherIntoContainer(
             })
         )
         resizeObserver.observe(containerNode)
-    } else if (
-        typeof window === "object" &&
-        typeof document === "object" &&
-        !navigator.userAgent.includes("jsdom")
-    ) {
+    } else if (typeof window === "object" && typeof document === "object") {
         // only show the warning when we're in something that roughly resembles a browser
         console.warn(
             "ResizeObserver not available; grapher will not be able to render"
@@ -83,16 +79,24 @@ export function renderSingleGrapherOnGrapherPage(
     {
         archiveContext,
         noCache,
-    }: { archiveContext?: ArchiveContext; noCache?: boolean } = {}
+        queryParams,
+    }: {
+        archiveContext?: ArchiveContext
+        noCache?: boolean
+        queryParams?: URLSearchParams
+    } = {}
 ): void {
     const container = document.getElementsByTagName("figure")[0]
+    const queryStrValue = queryParams
+        ? `?${queryParams.toString()}`
+        : window.location.search
     try {
         renderGrapherIntoContainer(
             {
                 ...jsonConfig,
                 bindUrlToWindow: true,
                 enableKeyboardShortcuts: true,
-                queryStr: window.location.search,
+                queryStr: queryStrValue,
                 archiveContext,
             },
             container,

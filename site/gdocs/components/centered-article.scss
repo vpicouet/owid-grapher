@@ -896,7 +896,7 @@ p.article-block__text + #article-licence {
     overflow-x: auto;
     margin-bottom: 32px;
     table {
-        min-width: 100%;
+        margin: auto;
         border-collapse: collapse;
 
         th {
@@ -935,6 +935,15 @@ p.article-block__text + #article-licence {
             }
             @include md-down {
                 font-size: 0.75rem;
+            }
+        }
+        caption {
+            margin-top: 6px;
+            caption-side: bottom;
+            color: $blue-60;
+            @include body-3-medium-italic;
+            a {
+                @include owid-link-90;
             }
         }
     }

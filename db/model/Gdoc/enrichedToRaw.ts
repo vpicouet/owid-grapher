@@ -53,6 +53,7 @@ import {
     RawBlockNarrativeChart,
     RawBlockCode,
     RawBlockCookieNotice,
+    RawBlockSubscribeBanner,
     RawBlockExpander,
     EnrichedHybridLink,
     RawBlockResourcePanel,
@@ -318,6 +319,15 @@ export function enrichedBlockToRawBlock(
             })
         )
         .with(
+            { type: "subscribe-banner" },
+            (b): RawBlockSubscribeBanner => ({
+                type: b.type,
+                value: {
+                    align: b.align,
+                },
+            })
+        )
+        .with(
             { type: "resource-panel" },
             (b): RawBlockResourcePanel => ({
                 type: b.type,
@@ -574,6 +584,7 @@ export function enrichedBlockToRawBlock(
                 type: b.type,
                 value: {
                     template: b.template,
+                    size: b.size,
                     rows: b.rows.map((row) => ({
                         type: row.type,
                         value: {
@@ -585,6 +596,7 @@ export function enrichedBlockToRawBlock(
                             })),
                         },
                     })),
+                    caption: b.caption ? spansToHtmlText(b.caption) : undefined,
                 },
             }
         })

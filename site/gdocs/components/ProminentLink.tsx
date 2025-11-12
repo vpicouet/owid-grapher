@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { faArrowUpRightFromSquare } from "@fortawesome/free-solid-svg-icons"
 import { getLinkType } from "@ourworldindata/components"
 
-import { useLinkedChart, useLinkedDocument } from "../utils.js"
+import { isExternalUrl, useLinkedChart, useLinkedDocument } from "../utils.js"
 import { DocumentContext } from "../DocumentContext.js"
 import { BlockErrorFallback } from "./BlockErrorBoundary.js"
 import { ContentGraphLinkType } from "@ourworldindata/types"
@@ -64,21 +64,15 @@ export const ProminentLink = (props: {
         description ??= linkedChart?.subtitle
     }
 
-    const anchorTagProps =
-        linkType === "url" ? { target: "_blank", rel: "noopener" } : undefined
-
     const textContainerClassName = thumbnail
         ? "col-sm-start-4 col-md-start-3 col-start-2 col-end-limit"
         : "col-start-1 col-end-limit"
 
     const shouldVerticallyCenter = !description
+    const isExternal = isExternalUrl(linkType, href)
 
     return (
-        <a
-            className={cx(props.className, "prominent-link")}
-            href={href}
-            {...anchorTagProps}
-        >
+        <a className={cx(props.className, "prominent-link")} href={href}>
             {thumbnail ? (
                 <div
                     className={cx(
@@ -99,7 +93,7 @@ export const ProminentLink = (props: {
             >
                 <div className="prominent-link__heading-wrapper">
                     <h3 className="h3-bold">{title}</h3>
-                    {linkType === "url" && (
+                    {isExternal && (
                         <FontAwesomeIcon
                             className="prominent-link__icon-external"
                             icon={faArrowUpRightFromSquare}

@@ -1,5 +1,6 @@
 import * as _ from "lodash-es"
-import { GrapherAnalytics, EventCategory } from "@ourworldindata/grapher"
+import { GrapherAnalytics } from "@ourworldindata/grapher"
+import { EventCategory } from "@ourworldindata/types"
 import {
     type SearchChartHit,
     type SearchState,
@@ -10,6 +11,7 @@ import {
     FilterType,
 } from "./search/searchTypes.js"
 import { getFilterNamesOfType } from "./search/searchUtils.js"
+import { findDOMParent } from "@ourworldindata/utils"
 
 export class SiteAnalytics extends GrapherAnalytics {
     logPageNotFoundError(url: string) {
@@ -54,18 +56,21 @@ export class SiteAnalytics extends GrapherAnalytics {
     }
 
     logSearch(state: SearchState) {
+        const topics = Array.from(
+            getFilterNamesOfType(state.filters, FilterType.TOPIC)
+        )
+        const selectedCountryNames = Array.from(
+            getFilterNamesOfType(state.filters, FilterType.COUNTRY)
+        )
+
         this.logToGA({
             event: EventCategory.SiteSearch,
             eventAction: "search",
-            eventContext: JSON.stringify({
-                ...state,
-                topics: Array.from(
-                    getFilterNamesOfType(state.filters, FilterType.TOPIC)
-                ),
-                selectedCountryNames: Array.from(
-                    getFilterNamesOfType(state.filters, FilterType.COUNTRY)
-                ),
-            }),
+            searchQuery: state.query || "",
+            searchRequireAllCountries: state.requireAllCountries,
+            searchResultType: state.resultType || "",
+            searchTopics: topics.join("~"),
+            searchSelectedCountries: selectedCountryNames.join("~"),
         })
     }
 
@@ -148,5 +153,152 @@ export class SiteAnalytics extends GrapherAnalytics {
             eventAction: "mouseover",
             eventTarget: chartUrl,
         })
+    }
+
+    startClickTracking(): void {
+        // we use a data-track-note attr on elements to indicate that clicks on them should be tracked, and what to send
+        const dataTrackAttr = "data-track-note"
+        // we set a data-grapher-url attr on grapher charts to indicate the URL of the chart.
+        // this is helpful for tracking clicks on charts that are embedded in articles, where we would like to know
+        // which chart the user is interacting with
+        const dataGrapherUrlAttr = "data-grapher-url"
+        document.addEventListener(
+            "click",
+            async (ev) => {
+                const targetElement = ev.target as HTMLElement
+                const trackedElement = findDOMParent(
+                    targetElement,
+                    (el: HTMLElement) => el.getAttribute(dataTrackAttr) !== null
+                )
+                if (!trackedElement) return
+                const grapherUrlRaw = trackedElement
+                    .closest(`[${dataGrapherUrlAttr}]`)
+                    ?.getAttribute(dataGrapherUrlAttr)
+                if (grapherUrlRaw) {
+                    let grapherUrlObj:
+                        | {
+                              grapherUrl: string
+                              narrativeChartName: string
+                          }
+                        | undefined
+                    try {
+                        grapherUrlObj = JSON.parse(grapherUrlRaw)
+                    } catch (e) {
+                        console.warn("failed to parse grapherUrl", e)
+                    }
+                    this.logGrapherClick(
+                        trackedElement.getAttribute(dataTrackAttr) || undefined,
+                        {
+                            label: trackedElement.innerText,
+                            grapherUrl: grapherUrlObj?.grapherUrl,
+                            narrativeChartName:
+                                grapherUrlObj?.narrativeChartName,
+                        }
+                    )
+                } else
+                    this.logSiteClick(
+                        trackedElement.getAttribute(dataTrackAttr) || undefined,
+                        trackedElement.innerText
+                    )
+            },
+            { capture: true, passive: true }
+        )
+    }
+
+    private logBrowserTranslationEvent(ctx: {
+        from: string | null
+        to: string | null
+    }) {
+        const browserLanguages =
+            navigator.languages || [navigator.language] || []
+
+        this.logToGA({
+            event: EventCategory.TranslatePage,
+            eventTarget: JSON.stringify(ctx),
+            eventContext: browserLanguages.join(","),
+        })
+    }
+
+    // Add a listener to detect browser translation events
+    startDetectingBrowserTranslation() {
+        const htmlElement = document.documentElement
+        const initialLang = htmlElement.getAttribute("lang")
+
+        const sendTranslationAnalyticsEvent = (
+            prevLang: string | null,
+            newLang: string | null
+        ) => {
+            const ctx = { from: prevLang, to: newLang }
+
+            // eslint-disable-next-line no-console
+            console.info("Browser translation detected", ctx)
+
+            this.logBrowserTranslationEvent(ctx)
+        }
+
+        // Create a MutationObserver to watch for changes to the HTML which are signposts
+        // of a translation service / browser translation.
+        const observer = new MutationObserver((mutations) => {
+            // Chrome sometimes fires two of the same mutations in a row, so we deduplicate here:
+            const mutationsUniq = _.uniqBy(mutations, (m) =>
+                [m.attributeName, m.oldValue].join("-")
+            )
+
+            mutationsUniq.forEach((mutation) => {
+                if (!mutation.attributeName) return
+
+                const target = mutation.target as HTMLElement
+                const newValue = target.getAttribute(mutation.attributeName)
+
+                let prevLang: string | null = null,
+                    newLang: string | null = null
+
+                if (
+                    mutation.type === "attributes" &&
+                    mutation.attributeName === "lang"
+                ) {
+                    newLang = newValue
+                    prevLang = mutation.oldValue
+
+                    if (prevLang === newLang) {
+                        // In Safari, it sometimes happens that we receive mutations that don't change the lang attribute
+                        return
+                    }
+
+                    sendTranslationAnalyticsEvent(prevLang, newLang)
+                } else if (
+                    mutation.type === "attributes" &&
+                    mutation.attributeName === "_msthash"
+                ) {
+                    if (mutation.oldValue === null) {
+                        prevLang = initialLang
+                    } else if (newValue === null) {
+                        newLang = initialLang
+                    } else {
+                        // Don't handle events where both old and new values are non-null - this might mean that the title changed and was re-translated
+                        return
+                    }
+
+                    sendTranslationAnalyticsEvent(prevLang, newLang)
+                }
+            })
+        })
+
+        // Observe <html lang="...">, which is changed by most browser translation services
+        observer.observe(htmlElement, {
+            attributes: true,
+            attributeFilter: ["lang"],
+            attributeOldValue: true,
+        })
+
+        // Observe <title _msthash="...">, which is changed by Microsoft Edge translation
+        const titleElement = document.head.querySelector("title")
+        if (titleElement) {
+            observer.observe(titleElement, {
+                attributes: true,
+                attributeFilter: ["_msthash"],
+                attributeOldValue: true,
+            })
+        }
     }
 }

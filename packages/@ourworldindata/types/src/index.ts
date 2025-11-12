@@ -68,7 +68,6 @@ export {
 } from "./grapherTypes/GrapherConstants.js"
 
 export {
-    type EntityYearHighlight,
     type Box,
     type BasicChartInformation,
     SortBy,
@@ -178,8 +177,6 @@ export {
     type OwidRawGdocBlock,
     pullquoteAlignments,
     type PullQuoteAlignment,
-    ChartControlKeyword,
-    ChartTabKeyword,
     type EnrichedBlockAlign,
     type RawBlockAlign,
     type ParseError,
@@ -196,6 +193,7 @@ export {
     type RawBlockChartValue,
     type RawBlockCode,
     type RawBlockCookieNotice,
+    type RawBlockSubscribeBanner,
     type RawBlockCta,
     type RawBlockExpandableParagraph,
     type RawBlockExplorerTiles,
@@ -259,6 +257,7 @@ export {
     type EnrichedBlockChartStory,
     type EnrichedBlockCode,
     type EnrichedBlockCookieNotice,
+    type EnrichedBlockSubscribeBanner,
     type EnrichedBlockCta,
     type EnrichedBlockDonorList,
     type EnrichedBlockExpandableParagraph,
@@ -305,8 +304,8 @@ export {
     type EnrichedBlockResourcePanel,
     resourcePanelIcons,
     type ResourcePanelIcon,
-    recircAlignments,
-    type RecircAlignment,
+    blockAlignments,
+    type BlockAlignment,
     type EnrichedScrollerItem,
     type EnrichedSDGGridItem,
     type EnrichedBlockEntrySummary,
@@ -378,9 +377,6 @@ export {
 } from "./gdocTypes/Gdoc.js"
 
 export {
-    DataPageJsonTypeObject,
-    type DataPageJson,
-    type DataPageParseError,
     type DataPageV2ContentFields,
     type DataPageDataV2,
     type DataPageRelatedResearch,
@@ -893,3 +889,5 @@ export {
     MediumVariantGridSlotKey,
     LargeVariantGridSlotKey,
 } from "./endpointTypes/GrapherSearchResultJson.js"
+
+export * from "./analyticsTypes/analyticsTypes.js"

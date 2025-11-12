@@ -1385,13 +1385,17 @@ export const canWriteToClipboard = async (): Promise<boolean> => {
 
 /** Function to copy to clipboard. This uses the new Clipboard API if it is available.
  */
-export async function copyToClipboard(text: string): Promise<void> {
+export async function copyToClipboard(text: string): Promise<boolean> {
     const useModernClipboardApi = await canWriteToClipboard()
     if (useModernClipboardApi) {
         // We can use the new clipboard API
-        navigator.clipboard.writeText(text).catch((err) => {
-            console.error("Failed to copy text to clipboard", err)
-        })
+        return navigator.clipboard
+            .writeText(text)
+            .then(() => true)
+            .catch((err) => {
+                console.error("Failed to copy text to clipboard", err)
+                return false
+            })
     } else {
         // GPT 4 suggested attempt to work around the lack of clipboard API
         const textarea = document.createElement("textarea")
@@ -1403,14 +1407,14 @@ export async function copyToClipboard(text: string): Promise<void> {
         textarea.select()
 
         try {
-            document.execCommand("copy")
+            return document.execCommand("copy")
         } catch (err) {
             console.error("Failed to copy text to clipboard", err)
+            return false
+        } finally {
+            document.body.removeChild(textarea)
         }
-
-        document.body.removeChild(textarea)
     }
-    return
 }
 
 // Memoization for immutable getters. Run the function once for this instance and cache the result.
@@ -1783,6 +1787,7 @@ export function traverseEnrichedBlock(
                     "prominent-link",
                     "pull-quote",
                     "recirc",
+                    "subscribe-banner",
                     "resource-panel",
                     "research-and-writing",
                     "scroller",
@@ -1863,27 +1868,6 @@ export function lowercaseObjectKeys(
     return Object.fromEntries(
         Object.entries(obj).map(([key, value]) => [key.toLowerCase(), value])
     )
-}
-
-export function filterValidStringValues<ValidValue extends string>(
-    values: string[],
-    validValues: ValidValue[],
-    onValueInvalid?: (invalidValue: string) => void
-): ValidValue[] {
-    // type guard
-    const isValid = (value: any): value is ValidValue =>
-        validValues.includes(value)
-
-    const filteredValues: ValidValue[] = []
-    values.forEach((value: string) => {
-        if (isValid(value)) {
-            filteredValues.push(value)
-        } else if (onValueInvalid) {
-            onValueInvalid(value)
-        }
-    })
-
-    return filteredValues
 }
 
 /** Works for:

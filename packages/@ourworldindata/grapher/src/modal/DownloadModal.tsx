@@ -25,7 +25,12 @@ import {
     faDownload,
     faInfoCircle,
 } from "@fortawesome/free-solid-svg-icons"
-import { OwidColumnDef, OwidOrigin, QueryParams } from "@ourworldindata/types"
+import {
+    OwidColumnDef,
+    OwidOrigin,
+    QueryParams,
+    type GrapherImageDownloadEvent,
+} from "@ourworldindata/types"
 import {
     BlankOwidTable,
     OwidTable,
@@ -40,7 +45,6 @@ import {
 } from "./DownloadIcons.js"
 import { match } from "ts-pattern"
 import * as R from "remeda"
-import { GrapherImageDownloadEvent } from "../core/GrapherAnalytics"
 import {
     DEFAULT_GRAPHER_BOUNDS,
     DEFAULT_GRAPHER_BOUNDS_SQUARE,
@@ -1006,13 +1010,7 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
                             <ul>
                                 {sourceLinks.map((link, i) => (
                                     <li key={i}>
-                                        <a
-                                            href={link}
-                                            target="_blank"
-                                            rel="noopener"
-                                        >
-                                            {link}
-                                        </a>
+                                        <a href={link}>{link}</a>
                                     </li>
                                 ))}
                             </ul>

@@ -5,12 +5,10 @@ import {
 } from "@ourworldindata/types"
 import { Bounds } from "@ourworldindata/utils"
 import { defaultGrapherConfig } from "../schema/defaultGrapherConfig.js"
-import type { GrapherProgrammaticInterface } from "./Grapher"
 
 export const GRAPHER_PROD_URL = "https://ourworldindata.org"
 
 export const GRAPHER_EMBEDDED_FIGURE_ATTR = "data-grapher-src"
-export const GRAPHER_EMBEDDED_FIGURE_CONFIG_ATTR = "data-grapher-config"
 
 export const GRAPHER_NARRATIVE_CHART_CONFIG_FIGURE_ATTR =
     "data-grapher-narrative-chart-config"
@@ -80,6 +78,7 @@ export const GRAPHER_FONT_SCALE_12 = 12 / BASE_FONT_SIZE
 export const GRAPHER_FONT_SCALE_12_8 = 12.8 / BASE_FONT_SIZE
 export const GRAPHER_FONT_SCALE_13 = 13 / BASE_FONT_SIZE
 export const GRAPHER_FONT_SCALE_14 = 14 / BASE_FONT_SIZE
+export const GRAPHER_FONT_SCALE_18 = 18 / BASE_FONT_SIZE
 
 // keep in sync with $max-tooltip-width in Tooltip.scss
 export const GRAPHER_MAX_TOOLTIP_WIDTH = 400
@@ -150,29 +149,6 @@ export enum Patterns {
     projectedDataPatternForLegend = "projectedDataPatternForLegend",
 }
 
-export const grapherInterfaceWithHiddenControls: GrapherProgrammaticInterface =
-    {
-        hideRelativeToggle: true,
-        hideTimeline: true,
-        hideFacetControl: true,
-        hideEntityControls: true,
-        hideZoomToggle: true,
-        hideNoDataAreaToggle: true,
-        hideFacetYDomainToggle: true,
-        hideXScaleToggle: true,
-        hideYScaleToggle: true,
-        hideMapRegionDropdown: true,
-        map: {
-            hideTimeline: true,
-        },
-    }
-
-export const grapherInterfaceWithHiddenTabs: GrapherProgrammaticInterface = {
-    hasMapTab: false,
-    hasTableTab: false,
-    hideChartTabs: true,
-}
-
 export const SVG_STYLE_PROPS: React.CSSProperties = {
     fontFamily:
         "Lato, 'Helvetica Neue', Helvetica, Arial, 'Liberation Sans', sans-serif",
@@ -189,3 +165,8 @@ export enum GrapherModal {
 
 export const CHART_TYPES_THAT_SWITCH_TO_DISCRETE_BAR_WHEN_SINGLE_TIME: GrapherChartType[] =
     [GRAPHER_CHART_TYPES.LineChart, GRAPHER_CHART_TYPES.SlopeChart]
+
+export const CHART_TYPES_THAT_SHOW_ALL_ENTITIES: GrapherChartType[] = [
+    GRAPHER_CHART_TYPES.ScatterPlot,
+    GRAPHER_CHART_TYPES.Marimekko,
+]

@@ -1,11 +1,21 @@
 {
     "version": 1,
-    "include": [
-        "/grapher/*",
-        "/deleted/*",
-        "/donation/*",
-        "/explorers/*",
-        "/multi-dim/*"
-    ],
-    "exclude": ["/grapher/_grapherRedirects.json"]
+    "include": ["/*"],
+    "exclude": [
+        "/grapher/_grapherRedirects.json",
+        "/topicTagGraph.json",
+        "/dods.json",
+        "/*-logo.svg",
+        "/apple-touch-icon.png",
+        "/robots.txt",
+        "/assets/*",
+        "/fonts/*",
+        "/*.css",
+        "/*.js",
+        "/images/*",
+        "/*.woff2",
+        "/*.woff",
+        "/*.ttf",
+        "/*.ico"
+    ]
 }

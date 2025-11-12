@@ -2,8 +2,6 @@ import * as _ from "lodash-es"
 import {
     BlockPositionChoice,
     ChartPositionChoice,
-    ChartControlKeyword,
-    ChartTabKeyword,
     EnrichedBlockAside,
     EnrichedBlockCallout,
     EnrichedBlockChart,
@@ -24,6 +22,7 @@ import {
     EnrichedBlockPullQuote,
     EnrichedBlockGuidedChart,
     EnrichedBlockRecirc,
+    EnrichedBlockSubscribeBanner,
     EnrichedBlockScroller,
     EnrichedBlockSDGGrid,
     EnrichedBlockSDGToc,
@@ -59,6 +58,7 @@ import {
     RawBlockPullQuote,
     RawBlockGuidedChart,
     RawBlockRecirc,
+    RawBlockSubscribeBanner,
     RawBlockScroller,
     RawBlockSDGGrid,
     RawBlockSideBySideContainer,
@@ -140,8 +140,8 @@ import {
     pullquoteAlignments,
     RawBlockExpander,
     EnrichedBlockExpander,
-    recircAlignments,
-    RecircAlignment,
+    blockAlignments,
+    BlockAlignment,
     RawBlockResourcePanel,
     EnrichedBlockResourcePanel,
     RawHybridLink,
@@ -152,7 +152,6 @@ import {
 } from "@ourworldindata/types"
 import {
     traverseEnrichedSpan,
-    filterValidStringValues,
     excludeNullish,
     omitUndefinedValues,
     Url,
@@ -213,6 +212,7 @@ export function parseRawBlocksToEnrichedBlocks(
             })
         )
         .with({ type: "recirc" }, parseRecirc)
+        .with({ type: "subscribe-banner" }, parseSubscribeBanner)
         .with({ type: "text" }, parseText)
         .with(
             { type: "html" },
@@ -495,34 +495,6 @@ const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
                 })
             }
         const caption = val.caption ? htmlToSpans(val.caption) : []
-        const title = val.title
-        const subtitle = val.subtitle
-
-        const validControlKeywords = Object.values(ChartControlKeyword)
-        const controls = _.uniq(
-            filterValidStringValues(
-                val.controls?.flatMap((d: { list: string[] }) => d.list) || [],
-                validControlKeywords,
-                (invalidKeyword: string) => {
-                    warnings.push({
-                        message: `Keyword '${invalidKeyword}' in 'controls' is not valid. Must be one of: ${validControlKeywords}`,
-                    })
-                }
-            )
-        )
-
-        const validTabKeywords = Object.values(ChartTabKeyword)
-        const tabs = _.uniq(
-            filterValidStringValues(
-                val.tabs?.flatMap((d: { list: string[] }) => d.list) || [],
-                validTabKeywords,
-                (invalidKeyword: string) => {
-                    warnings.push({
-                        message: `Keyword '${invalidKeyword}' in 'tabs' is not valid. Must be one of: ${validTabKeywords}.`,
-                    })
-                }
-            )
-        )
 
         return omitUndefinedValues({
             type: "chart",
@@ -532,10 +504,6 @@ const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
             column,
             position,
             caption: caption.length > 0 ? caption : undefined,
-            title,
-            subtitle,
-            controls: controls.length > 0 ? controls : undefined,
-            tabs: tabs.length > 0 ? tabs : undefined,
             parseErrors: [],
         }) as EnrichedBlockChart
     }
@@ -1246,21 +1214,42 @@ const parseRecirc = (raw: RawBlockRecirc): EnrichedBlockRecirc => {
         })
     }
 
-    if (
-        raw.value.align &&
-        !validateRawEnum(recircAlignments, raw.value.align)
-    ) {
+    if (raw.value.align && !validateRawEnum(blockAlignments, raw.value.align)) {
         parseErrors.push({
-            message: `If specified, recirc position must be one of ${recircAlignments.join(", ")}`,
+            message: `If specified, recirc align must be one of ${blockAlignments.join(", ")}`,
         })
     }
 
-    const align = (raw.value.align as RecircAlignment) || "center"
+    const align = (raw.value.align as BlockAlignment) || "center"
 
     return {
         type: "recirc",
         title: raw.value.title,
         links: parsedLinks,
+        align,
+        parseErrors,
+    }
+}
+
+const parseSubscribeBanner = (
+    raw: RawBlockSubscribeBanner
+): EnrichedBlockSubscribeBanner => {
+    const parseErrors: ParseError[] = []
+
+    let align: BlockAlignment = "center"
+    const rawAlign = raw.value?.align
+    if (rawAlign) {
+        if (validateRawEnum(blockAlignments, rawAlign)) {
+            align = rawAlign as BlockAlignment
+        } else {
+            parseErrors.push({
+                message: `If specified, subscribe-banner align must be one of ${blockAlignments.join(", ")}`,
+            })
+        }
+    }
+
+    return {
+        type: "subscribe-banner",
         align,
         parseErrors,
     }
@@ -1362,11 +1351,16 @@ export const parseTable = (raw: RawBlockTable): EnrichedBlockTable => {
         }
     }
 
+    const caption = raw.value?.caption
+        ? htmlToSpans(raw.value.caption)
+        : undefined
+
     return {
         type: "table",
         rows: enrichedRows,
         template,
         size,
+        caption,
         parseErrors,
     }
 }

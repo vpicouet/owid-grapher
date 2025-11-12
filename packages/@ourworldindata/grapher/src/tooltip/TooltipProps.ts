@@ -6,17 +6,24 @@ import {
 } from "@ourworldindata/utils"
 import { IObservableValue } from "mobx"
 
-// We can't pass the property directly because we need it to be observable.
 export interface TooltipManager {
+    // We can't pass the property directly because we need it to be observable
     tooltip?: IObservableValue<TooltipProps | undefined>
 }
 
+/**
+ * Controls the fade transition behavior for tooltips.
+ * - "delayed": Good for charts with gaps between targetable areas
+ * - "immediate": Better if the tooltip is displayed for all points in the chart's bounds
+ * - "none": Disables the fade transition altogether
+ */
 export type TooltipFadeMode = "delayed" | "immediate" | "none"
+
 export enum TooltipFooterIcon {
-    notice = "notice",
-    stripes = "stripes",
-    significance = "significance",
-    none = "none",
+    Notice = "notice",
+    Stripes = "stripes",
+    Significance = "significance",
+    None = "none",
 }
 
 export interface FooterItem {
@@ -39,7 +46,6 @@ export interface TooltipProps {
     footer?: FooterItem[]
     style?: React.CSSProperties // css overrides (particularly width/maxWidth)
     dissolve?: TooltipFadeMode // flag that the tooltip should begin fading out
-    tooltipManager: TooltipManager
     children?: React.ReactNode
     dismiss?: () => void
 }
@@ -56,8 +62,8 @@ export interface TooltipValueProps {
 
 export interface TooltipValueRangeProps {
     column: CoreColumn
-    values: number[]
-    color?: string
+    values: (number | string | undefined)[]
+    colors?: string[] // value colors, matched by indices
     notice?: (number | string | undefined)[] // actual year data was drawn from (when ≠ target year)
     showSignificanceSuperscript?: boolean // show significance-s superscript if applicable
     labelVariant?: "name+unit" | "unit-only"
@@ -89,6 +95,11 @@ export interface TooltipTableData {
     fake?: boolean
 }
 
-export const TooltipContext = React.createContext<{
+export interface TooltipContainerProps {
+    containerBounds?: { width: number; height: number }
     anchor?: GrapherTooltipAnchor
-}>({})
+}
+
+export const TooltipContext = React.createContext<
+    Pick<TooltipContainerProps, "anchor">
+>({})

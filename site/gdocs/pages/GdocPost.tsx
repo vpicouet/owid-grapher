@@ -65,6 +65,8 @@ export function GdocPost({
     )
     const citationText = `${shortPageCitation} Published online at OurWorldinData.org. Retrieved from: '${`${BAKED_BASE_URL}/${slug}`}' [Online Resource]`
     const hasSidebarToc = content["sidebar-toc"]
+    const shouldHideSubscribeBanner =
+        content["hide-subscribe-banner"] || postType === OwidGdocType.TopicPage
     const isDeprecated =
         postType === OwidGdocType.Article &&
         Boolean(content["deprecation-notice"])
@@ -127,7 +129,11 @@ export function GdocPost({
                 </details>
             ) : null}
             {content.body ? (
-                <ArticleBlocks toc={content.toc} blocks={content.body} />
+                <ArticleBlocks
+                    toc={content.toc}
+                    blocks={content.body}
+                    automaticSubscribeBanner={!shouldHideSubscribeBanner}
+                />
             ) : null}
             {content.refs && !_.isEmpty(content.refs.definitions) ? (
                 <Footnotes definitions={content.refs.definitions} />
@@ -187,11 +193,7 @@ export function GdocPost({
                     <p>
                         All visualizations, data, and code produced by Our World
                         in Data are completely open access under the{" "}
-                        <a
-                            href="https://creativecommons.org/licenses/by/4.0/"
-                            target="_blank"
-                            rel="noopener"
-                        >
+                        <a href="https://creativecommons.org/licenses/by/4.0/">
                             Creative Commons BY license
                         </a>
                         . You have the permission to use, distribute, and

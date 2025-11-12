@@ -3,6 +3,7 @@ import {
     OwidRawGdocBlock,
     RawBlockHeading,
     RawBlockRecirc,
+    RawBlockSubscribeBanner,
     RawBlockAside,
     RawBlockChart,
     RawBlockChartStory,
@@ -362,6 +363,16 @@ function* rawBlockRecircToArchieMLString(
             }
             yield "[]"
         }
+    }
+    yield "{}"
+}
+
+function* rawBlockSubscribeBannerToArchieMLString(
+    block: RawBlockSubscribeBanner
+): Generator<string, void, undefined> {
+    yield "{.subscribe-banner}"
+    if (block.value) {
+        yield* propertyToArchieMLString("align", block.value)
     }
     yield "{}"
 }
@@ -829,6 +840,7 @@ function* rawBlockTableToArchieMLString(
     yield "{.table}"
     yield* propertyToArchieMLString("template", block.value)
     yield* propertyToArchieMLString("size", block.value)
+    yield* propertyToArchieMLString("caption", block.value)
     const rows = block?.value?.rows
     if (rows) {
         yield "[.+rows]"
@@ -975,6 +987,10 @@ export function* OwidRawGdocBlockToArchieMLStringGenerator(
             rawBlockHorizontalRuleToArchieMLString
         )
         .with({ type: "recirc" }, rawBlockRecircToArchieMLString)
+        .with(
+            { type: "subscribe-banner" },
+            rawBlockSubscribeBannerToArchieMLString
+        )
         .with({ type: "resource-panel" }, rawBlockResourcePanelToArchieMLString)
         .with({ type: "text" }, rawBlockTextToArchieMLString)
         .with({ type: "html" }, rawBlockHtmlToArchieMLString)

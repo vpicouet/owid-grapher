@@ -11,6 +11,7 @@ import {
     LegacyGrapherQueryParams,
     GRAPHER_TAB_NAMES,
     OwidChartDimensionInterface,
+    GRAPHER_TAB_QUERY_PARAMS,
 } from "@ourworldindata/types"
 import {
     TimeBoundValue,
@@ -641,6 +642,19 @@ describe("urls", () => {
         grapher.setTab(GRAPHER_TAB_NAMES.LineChart)
         expect(grapher.changedParams.tab).toEqual("line")
     })
+
+    it("shows a multi-year chart by default", () => {
+        const grapher = new GrapherState({})
+        expect(grapher.activeTab).toEqual(GRAPHER_TAB_NAMES.LineChart)
+        expect(grapher.timelineHandleTimeBounds).toEqual([-Infinity, Infinity])
+    })
+
+    it("shows a single-year map by default", () => {
+        const grapher = new GrapherState({ hasMapTab: true })
+        grapher.populateFromQueryParams({ tab: "map" })
+        expect(grapher.activeTab).toEqual(GRAPHER_TAB_NAMES.WorldMap)
+        expect(grapher.timelineHandleTimeBounds).toEqual([Infinity, Infinity])
+    })
 })
 
 describe("time domain tests", () => {
@@ -761,6 +775,28 @@ describe("time parameter", () => {
                     const params = toQueryParams({
                         minTime: test.param[0],
                         maxTime: test.param[1],
+                    })
+                    expect(params.time).toEqual(test.query)
+                })
+            }
+        }
+
+        for (const test of tests) {
+            it(`parse ${test.name} (map tab)`, () => {
+                const grapher = fromQueryParams({
+                    tab: GRAPHER_TAB_QUERY_PARAMS.map,
+                    time: test.query,
+                })
+                const [start, end] = grapher.timelineHandleTimeBounds
+                expect(start).toEqual(test.param[0])
+                expect(end).toEqual(test.param[1])
+            })
+            if (!test.irreversible) {
+                it(`encode ${test.name}`, () => {
+                    const params = toQueryParams({
+                        hasMapTab: true,
+                        tab: GRAPHER_TAB_CONFIG_OPTIONS.map,
+                        map: { startTime: test.param[0], time: test.param[1] },
                     })
                     expect(params.time).toEqual(test.query)
                 })
@@ -1095,7 +1131,7 @@ it("considers map tolerance before using column tolerance", () => {
         map: new MapConfig({ timeTolerance: 1, columnSlug: "gdp", time: 2002 }),
     })
 
-    expect(grapher.timelineHandleTimeBounds[1]).toEqual(2002)
+    expect(grapher.timelineHandleTimeBounds).toEqual([2002, 2002])
     expect(
         grapher.transformedTable.filterByEntityNames(["Germany"]).get("gdp")
             .values
@@ -1550,5 +1586,163 @@ describe("projectionColumnInfoBySlug", () => {
         })
 
         expect(grapherState.projectionColumnInfoBySlug.size).toBe(0)
+    })
+})
+
+describe("tableAfterColorAndSizeToleranceApplication", () => {
+    it("applies the specified tolerance to the size column", () => {
+        const table = new OwidTable(
+            [
+                ["entityName", "year", "x", "y", "size"],
+                ["USA", 2000, 1, 2, 100],
+                ["USA", 2001, 1.5, 2.5, null],
+                ["USA", 2002, 2, 3, null],
+                ["USA", 2003, 2.5, 3.5, null],
+                ["USA", 2004, 3, 4, 200],
+            ],
+            [
+                {
+                    slug: "size",
+                    type: ColumnTypeNames.Numeric,
+                    display: { tolerance: 1 },
+                },
+            ]
+        )
+
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.ScatterPlot],
+            xSlug: "x",
+            ySlugs: "y",
+            sizeSlug: "size",
+        })
+
+        const result = grapher.tableAfterColorAndSizeToleranceApplication
+        const sizeColumn = result.get("size")
+
+        const owidRowsByTime = sizeColumn.owidRowByEntityNameAndTime.get("USA")
+        expect(owidRowsByTime?.get(2001)).toMatchObject({
+            value: 100,
+            originalTime: 2000,
+        })
+        expect(owidRowsByTime?.get(2002)).toBeUndefined() // Outside tolerance
+        expect(owidRowsByTime?.get(2003)).toMatchObject({
+            value: 200,
+            originalTime: 2004,
+        })
+    })
+
+    it("uses infinity as default size tolerance", () => {
+        const table = new OwidTable([
+            ["entityName", "year", "x", "y", "size"],
+            ["USA", 2000, 1, 2, 100],
+            ["USA", 2001, 1.5, 2.5, null],
+            ["USA", 2002, 2, 3, null],
+            ["USA", 2003, 2.5, 3.5, null],
+            ["USA", 2004, 3, 4, 200],
+        ])
+
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.ScatterPlot],
+            xSlug: "x",
+            ySlugs: "y",
+            sizeSlug: "size",
+        })
+
+        const result = grapher.tableAfterColorAndSizeToleranceApplication
+        const sizeColumn = result.get("size")
+
+        const owidRowsByTime = sizeColumn.owidRowByEntityNameAndTime.get("USA")
+        expect(owidRowsByTime?.get(2001)).toMatchObject({
+            value: 100,
+            originalTime: 2000,
+        })
+        expect(owidRowsByTime?.get(2002)).toMatchObject({
+            value: 200,
+            originalTime: 2004,
+        })
+        expect(owidRowsByTime?.get(2003)).toMatchObject({
+            value: 200,
+            originalTime: 2004,
+        })
+    })
+
+    it("applies the specified tolerance to a categorical color column", () => {
+        const table = new OwidTable(
+            [
+                ["entityName", "year", "x", "y", "color"],
+                ["USA", 2000, 1, 2, "Europe"],
+                ["USA", 2001, 1.5, 2.5, null],
+                ["USA", 2002, 2, 3, null],
+                ["USA", 2003, 2.5, 3.5, null],
+                ["USA", 2004, 3, 4, "Asia"],
+            ],
+            [
+                {
+                    slug: "color",
+                    type: ColumnTypeNames.Categorical,
+                    display: { tolerance: 1 },
+                },
+            ]
+        )
+
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.ScatterPlot],
+            xSlug: "x",
+            ySlugs: "y",
+            colorSlug: "color",
+        })
+
+        const result = grapher.tableAfterColorAndSizeToleranceApplication
+        const colorColumn = result.get("color")
+
+        const owidRowsByTime = colorColumn.owidRowByEntityNameAndTime.get("USA")
+        expect(owidRowsByTime?.get(2001)).toMatchObject({
+            value: "Europe",
+            originalTime: 2000,
+        })
+        expect(owidRowsByTime?.get(2002)).toBeUndefined() // Outside tolerance
+        expect(owidRowsByTime?.get(2003)).toMatchObject({
+            value: "Asia",
+            originalTime: 2004,
+        })
+    })
+
+    it("uses infinity as default color tolerance", () => {
+        const table = new OwidTable([
+            ["entityName", "year", "x", "y", "color"],
+            ["USA", 2000, 1, 2, 100],
+            ["USA", 2001, 1.5, 2.5, null],
+            ["USA", 2002, 2, 3, null],
+            ["USA", 2003, 2.5, 3.5, null],
+            ["USA", 2004, 3, 4, 200],
+        ])
+
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.ScatterPlot],
+            xSlug: "x",
+            ySlugs: "y",
+            sizeSlug: "color",
+        })
+
+        const result = grapher.tableAfterColorAndSizeToleranceApplication
+        const colorColumn = result.get("color")
+
+        const owidRowsByTime = colorColumn.owidRowByEntityNameAndTime.get("USA")
+        expect(owidRowsByTime?.get(2001)).toMatchObject({
+            value: 100,
+            originalTime: 2000,
+        })
+        expect(owidRowsByTime?.get(2002)).toMatchObject({
+            value: 200,
+            originalTime: 2004,
+        })
+        expect(owidRowsByTime?.get(2003)).toMatchObject({
+            value: 200,
+            originalTime: 2004,
+        })
     })
 })

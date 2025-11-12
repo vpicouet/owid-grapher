@@ -104,9 +104,8 @@ export const NewsletterSubscriptionForm = ({
             className={cx("newsletter-subscription-form", className)}
             action="https://ourworldindata.us8.list-manage.com/subscribe/post?u=18058af086319ba6afad752ec&id=2e166c1fc1"
             method="post"
-            id="mc-embedded-subscribe-form"
-            name="mc-embedded-subscribe-form"
-            target="_blank"
+            id="mc-embedded-subscribe-banner"
+            name="mc-embedded-subscribe-banner"
             onSubmit={() =>
                 analytics.logSiteFormSubmit(
                     "newsletter-subscribe",
@@ -148,8 +147,6 @@ export const NewsletterSubscriptionForm = ({
                 <a
                     className="newsletter-subscription-form__example-link note-12-medium"
                     href="https://us8.campaign-archive.com/?u=18058af086319ba6afad752ec&id=53877b47f3"
-                    target="_blank"
-                    rel="noopener"
                 >
                     See example OWID Brief newsletter
                 </a>
@@ -185,8 +182,6 @@ export const NewsletterSubscriptionForm = ({
                 <a
                     className="newsletter-subscription-form__example-link note-12-medium"
                     href="https://us8.campaign-archive.com/?u=18058af086319ba6afad752ec&id=fdf16136e1"
-                    target="_blank"
-                    rel="noopener"
                 >
                     See example Data Insights newsletter
                 </a>

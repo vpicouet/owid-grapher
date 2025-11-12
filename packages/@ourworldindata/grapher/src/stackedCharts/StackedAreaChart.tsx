@@ -10,7 +10,7 @@ import {
     exposeInstanceOnWindow,
 } from "@ourworldindata/utils"
 import { computed, action, observable, makeObservable } from "mobx"
-import { SeriesName } from "@ourworldindata/types"
+import { SeriesName, SeriesStrategy } from "@ourworldindata/types"
 import {
     BASE_FONT_SIZE,
     DEFAULT_GRAPHER_BOUNDS,
@@ -153,11 +153,17 @@ export class StackedAreaChart
     }
 
     @computed private get lineLegendSeries(): LineLabelSeries[] {
+        const isEntityStrategy =
+            this.chartState.seriesStrategy === SeriesStrategy.entity
+
         return this.stackedSeries
             .map((series, index) => ({
                 color: series.color,
                 seriesName: series.seriesName,
-                label: series.seriesName,
+                label:
+                    isEntityStrategy && series.shortEntityName
+                        ? series.shortEntityName
+                        : series.seriesName,
                 yValue: this.chartState.midpoints[index],
                 isAllZeros: series.isAllZeros,
                 hover: this.hoverStateForSeries(series),
@@ -262,11 +268,17 @@ export class StackedAreaChart
         this.lineLegendHoveredSeriesName = seriesName
     }
 
+    @action.bound private clearLineLegendHover(): void {
+        this.lineLegendHoveredSeriesName = undefined
+    }
+
     @action.bound onLineLegendMouseLeave(): void {
         clearTimeout(this.hoverTimer)
+
+        // Wait before clearing selection in case the mouse is moving
+        // quickly over neighboring labels
         this.hoverTimer = window.setTimeout(() => {
-            // wait before clearing selection in case the mouse is moving quickly over neighboring labels
-            this.lineLegendHoveredSeriesName = undefined
+            this.clearLineLegendHover()
         }, 200)
     }
 
@@ -433,7 +445,7 @@ export class StackedAreaChart
 
         const roundingNotice = formatColumn.roundsToSignificantFigures
             ? {
-                  icon: TooltipFooterIcon.none,
+                  icon: TooltipFooterIcon.None,
                   text: makeTooltipRoundingNotice([
                       formatColumn.numSignificantFigures,
                   ]),

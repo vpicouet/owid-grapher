@@ -1,4 +1,5 @@
 import ArticleBlock from "./ArticleBlock.js"
+import { injectAutomaticSubscribeBanner } from "./gdocComponentUtils.js"
 import { Container } from "./layout.js"
 import {
     OwidEnrichedGdocBlock,
@@ -21,25 +22,33 @@ export const ArticleBlocks = ({
     toc,
     shouldRenderLinks = true,
     interactiveImages = true,
+    automaticSubscribeBanner = false,
 }: {
     blocks: OwidEnrichedGdocBlock[]
     containerType?: Container
     toc?: TocHeadingWithTitleSupertitle[]
     shouldRenderLinks?: boolean
     interactiveImages?: boolean
-}) => (
-    <>
-        {blocks.map((block: OwidEnrichedGdocBlock, i: number) => {
-            return (
-                <ArticleBlock
-                    key={i}
-                    b={block}
-                    containerType={containerType}
-                    toc={toc}
-                    shouldRenderLinks={shouldRenderLinks}
-                    interactiveImages={interactiveImages}
-                />
-            )
-        })}
-    </>
-)
+    automaticSubscribeBanner?: boolean
+}) => {
+    const blocksToRender = automaticSubscribeBanner
+        ? injectAutomaticSubscribeBanner(blocks)
+        : blocks
+
+    return (
+        <>
+            {blocksToRender.map((block: OwidEnrichedGdocBlock, i: number) => {
+                return (
+                    <ArticleBlock
+                        key={i}
+                        b={block}
+                        containerType={containerType}
+                        toc={toc}
+                        shouldRenderLinks={shouldRenderLinks}
+                        interactiveImages={interactiveImages}
+                    />
+                )
+            })}
+        </>
+    )
+}

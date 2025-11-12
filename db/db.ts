@@ -1,5 +1,5 @@
 import * as _ from "lodash-es"
-import { knex, Knex } from "knex"
+import knex, { Knex } from "knex"
 import {
     GRAPHER_DB_HOST,
     GRAPHER_DB_USER,
@@ -250,12 +250,17 @@ export const getPublishedExplorersBySlug = async (
     knex: KnexReadonlyTransaction,
     includeUnlisted: boolean = true
 ): Promise<Record<string, MinimalExplorerInfo>> => {
-    return cachedInTransaction(knex, "publishedExplorersBySlug", async () => {
-        const tags = await getExplorerTags(knex)
-        const tagsBySlug = _.keyBy(tags, "slug")
-        return knexRaw(
-            knex,
-            `-- sql
+    return cachedInTransaction(
+        knex,
+        includeUnlisted
+            ? "publishedExplorersBySlug"
+            : "unlistedPublishedExplorersBySlug",
+        async () => {
+            const tags = await getExplorerTags(knex)
+            const tagsBySlug = _.keyBy(tags, "slug")
+            return knexRaw(
+                knex,
+                `-- sql
             SELECT
                 e.slug,
                 e.config->>"$.explorerTitle" as title,
@@ -266,28 +271,29 @@ export const getPublishedExplorersBySlug = async (
                 explorers e
             WHERE
                 e.isPublished = TRUE`
-        ).then((rows) => {
-            let processed = rows.map((row: any) => {
-                const tagsForExplorer = tagsBySlug[row.slug]
-                return {
-                    slug: row.slug,
-                    title: row.title,
-                    subtitle: row.subtitle === "null" ? "" : row.subtitle,
-                    tags: tagsForExplorer
-                        ? tagsForExplorer.tags.map((tag) => tag.name)
-                        : [],
-                    createdAt: row.createdAt,
-                    updatedAt: row.updatedAt,
+            ).then((rows) => {
+                let processed = rows.map((row: any) => {
+                    const tagsForExplorer = tagsBySlug[row.slug]
+                    return {
+                        slug: row.slug,
+                        title: row.title,
+                        subtitle: row.subtitle === "null" ? "" : row.subtitle,
+                        tags: tagsForExplorer
+                            ? tagsForExplorer.tags.map((tag) => tag.name)
+                            : [],
+                        createdAt: row.createdAt,
+                        updatedAt: row.updatedAt,
+                    }
+                })
+                if (!includeUnlisted) {
+                    processed = processed.filter(
+                        (row) => !row.tags.includes("Unlisted")
+                    )
                 }
+                return _.keyBy(processed, "slug")
             })
-            if (!includeUnlisted) {
-                processed = processed.filter(
-                    (row) => !row.tags.includes("Unlisted")
-                )
-            }
-            return _.keyBy(processed, "slug")
-        })
-    })
+        }
+    )
 }
 
 export const getPublishedDataInsights = (

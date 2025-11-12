@@ -684,11 +684,17 @@ export class SlopeChart
         this.hoveredSeriesName = seriesName
     }
 
+    @action.bound private clearHoveredSeries(): void {
+        this.hoveredSeriesName = undefined
+    }
+
     @action.bound onLineLegendMouseLeave(): void {
         clearTimeout(this.hoverTimer)
+
+        // Wait before clearing selection in case the mouse is moving
+        // quickly over neighboring labels
         this.hoverTimer = window.setTimeout(() => {
-            // wait before clearing selection in case the mouse is moving quickly over neighboring labels
-            this.hoveredSeriesName = undefined
+            this.clearHoveredSeries()
         }, 200)
     }
 
@@ -702,7 +708,7 @@ export class SlopeChart
     }
 
     @action.bound onSlopeMouseLeave(): void {
-        this.hoveredSeriesName = undefined
+        this.clearHoveredSeries()
         this.tooltipState.target = null
     }
 
@@ -764,13 +770,13 @@ export class SlopeChart
         const targetYear = constructTargetYearForToleranceNotice()
         const toleranceNotice = targetYear
             ? {
-                  icon: TooltipFooterIcon.notice,
+                  icon: TooltipFooterIcon.Notice,
                   text: makeTooltipToleranceNotice(targetYear),
               }
             : undefined
         const roundingNotice = series.column.roundsToSignificantFigures
             ? {
-                  icon: TooltipFooterIcon.none,
+                  icon: TooltipFooterIcon.None,
                   text: makeTooltipRoundingNotice(
                       [series.column.numSignificantFigures],
                       { plural: !isRelativeMode }
