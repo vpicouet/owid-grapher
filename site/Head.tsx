@@ -52,7 +52,7 @@ export const Head = (props: {
     const { canonicalUrl, baseUrl } = props
     const pageTitle = props.pageTitle || `Our World in Data`
     const fullPageTitle = props.pageTitle
-        ? `${props.pageTitle} - Our World in Data`
+        ? `${props.pageTitle}`
         : `Our World in Data`
     const pageDesc =
         props.pageDesc ||

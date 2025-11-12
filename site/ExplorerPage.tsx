@@ -129,7 +129,7 @@ window.Explorer.renderSingleExplorerOnExplorerPage(
         <Html>
             <Head
                 canonicalUrl={`${baseUrl}/${EXPLORERS_ROUTE_FOLDER}/${slug}`}
-                pageTitle={`${explorerTitle} Data Explorer`}
+                pageTitle={`${explorerTitle}`}
                 pageDesc={explorerSubtitle}
                 imageUrl={thumbnail}
                 baseUrl={baseUrl}

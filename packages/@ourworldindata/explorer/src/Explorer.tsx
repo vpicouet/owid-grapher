@@ -974,7 +974,7 @@ export class Explorer
         return (
             <div className="ExplorerHeaderBox">
                 <div className="ExplorerTitle">
-                    {this.explorerProgram.explorerTitle} Data Explorer
+                    {this.explorerProgram.explorerTitle}
                 </div>
                 <div className="ExplorerSubtitle">
                     <MarkdownTextWrap
