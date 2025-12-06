@@ -16,6 +16,16 @@ log_step() {
     echo "----------------------------------------"
 }
 
+# Fonction pour vérifier si une commande existe
+command_exists() {
+    command -v "$1" &> /dev/null
+}
+
+# Fonction pour vérifier si un service Homebrew tourne
+service_running() {
+    brew services list | grep "$1" | grep -q "started"
+}
+
 # Vérifier si on est sur macOS
 if [[ "$OSTYPE" != "darwin"* ]]; then
     echo "❌ Ce script est conçu pour macOS uniquement"
@@ -50,7 +60,7 @@ brew_packages=(
     "node@22"          # Node.js version 22 (spécifiée dans le projet)
     "yarn"             # Gestionnaire de packages
     "git"              # Git (souvent déjà installé)
-    "mysql@8.0"        # MySQL 8.0 (base de données du projet)
+    "mysql@8.4"        # MySQL 8.4 (compatible avec mysql_native_password)
     "curl"             # Pour les téléchargements
     "wget"             # Utilitaire de téléchargement
 )
@@ -75,15 +85,96 @@ if ! grep -q "node@22" ~/.zshrc; then
     export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
 fi
 
-# 5. Configuration de MySQL
-log_step "Configuration de MySQL 8.0"
-# Démarrer MySQL
-brew services start mysql@8.0
+# 5. Configuration avancée de MySQL
+log_step "Configuration avancée de MySQL 8.4"
+
+# Déterminer le chemin MySQL selon l'architecture
+if [[ -d "/opt/homebrew/opt/mysql@8.4" ]]; then
+    MYSQL_PATH="/opt/homebrew/opt/mysql@8.4"
+elif [[ -d "/usr/local/opt/mysql@8.4" ]]; then
+    MYSQL_PATH="/usr/local/opt/mysql@8.4"
+else
+    echo "❌ MySQL@8.4 non trouvé"
+    exit 1
+fi
+
+# Arrêter d'autres versions de MySQL qui pourraient tourner
+for version in "mysql" "mysql@8.0" "mysql@9.0"; do
+    if service_running "$version" 2>/dev/null; then
+        echo "🛑 Arrêt de $version..."
+        brew services stop "$version" 2>/dev/null || true
+    fi
+done
+
+# Vérifier si les données MySQL existent et sont incompatibles
+MYSQL_DATA_DIR="/usr/local/var/mysql"
+if [[ -d "$MYSQL_DATA_DIR" ]] && [[ -f "$MYSQL_DATA_DIR/mysql.ibd" ]]; then
+    echo "⚠️  Détection d'anciennes données MySQL..."
+    
+    # Sauvegarder les anciennes données
+    if [[ ! -d "${MYSQL_DATA_DIR}_backup" ]]; then
+        echo "💾 Sauvegarde des anciennes données..."
+        cp -r "$MYSQL_DATA_DIR" "${MYSQL_DATA_DIR}_backup"
+    fi
+    
+    # Supprimer les anciennes données pour éviter les conflits de version
+    echo "🗑️  Suppression des données incompatibles..."
+    rm -rf "$MYSQL_DATA_DIR"
+    mkdir -p "$MYSQL_DATA_DIR"
+    
+    # Initialiser MySQL avec les nouveaux paramètres
+    echo "🔧 Initialisation de MySQL@8.4..."
+    "$MYSQL_PATH/bin/mysqld" --initialize-insecure --datadir="$MYSQL_DATA_DIR"
+fi
+
+# Créer le fichier de configuration MySQL pour activer mysql_native_password
+echo "📝 Configuration de MySQL pour la compatibilité..."
+cat > /usr/local/etc/my.cnf << EOF
+[mysqld]
+# Activer le plugin mysql_native_password pour la compatibilité
+mysql_native_password=ON
+default_authentication_plugin=mysql_native_password
+
+# Configuration recommandée pour le développement
+bind-address=127.0.0.1
+port=3306
+max_connections=200
+innodb_buffer_pool_size=256M
+
+# Désactiver le mode strict pour plus de flexibilité
+sql_mode=''
+
+[mysql]
+default-character-set=utf8mb4
+
+[client]
+default-character-set=utf8mb4
+EOF
+
+# Démarrer MySQL@8.4
+if ! service_running "mysql@8.4"; then
+    echo "🚀 Démarrage de MySQL@8.4..."
+    brew services start mysql@8.4
+    
+    # Attendre que MySQL soit prêt
+    echo "⏳ Attente du démarrage de MySQL..."
+    for i in {1..30}; do
+        if "$MYSQL_PATH/bin/mysqladmin" ping -h localhost --silent 2>/dev/null; then
+            echo "✅ MySQL est prêt !"
+            break
+        fi
+        sleep 2
+        if [[ $i -eq 30 ]]; then
+            echo "❌ Timeout: MySQL n'a pas démarré"
+            exit 1
+        fi
+    done
+fi
 
 # Ajouter MySQL au PATH
-if ! grep -q "mysql@8.0" ~/.zshrc; then
-    echo 'export PATH="/opt/homebrew/opt/mysql@8.0/bin:$PATH"' >> ~/.zshrc
-    export PATH="/opt/homebrew/opt/mysql@8.0/bin:$PATH"
+if ! grep -q "mysql@8.4" ~/.zshrc; then
+    echo 'export PATH="'$MYSQL_PATH'/bin:$PATH"' >> ~/.zshrc
+    export PATH="$MYSQL_PATH/bin:$PATH"
 fi
 
 # 6. Configuration SSH
@@ -164,12 +255,41 @@ fi
 
 # 10. Configuration de la base de données
 log_step "Configuration de la base de données MySQL"
-echo "Création de la base de données OWID..."
 
-# Attendre que MySQL soit prêt
-sleep 5
+# Configurer le mot de passe root et créer les bases de données
+echo "🔐 Configuration des utilisateurs et bases de données..."
 
-mysql -u root -e "CREATE DATABASE IF NOT EXISTS owid;" 2>/dev/null || echo "⚠️  Erreur lors de la création de la base de données. Vous devrez peut-être configurer MySQL manuellement."
+# Définir le mot de passe root
+ROOT_PASSWORD="hupinaise"
+DB_PASSWORD="hupinaise"
+
+# Sécuriser l'installation MySQL et définir le mot de passe root
+"$MYSQL_PATH/bin/mysql" -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOT_PASSWORD';" 2>/dev/null || echo "Root password déjà configuré"
+
+# Créer les bases de données nécessaires
+echo "📊 Création des bases de données..."
+"$MYSQL_PATH/bin/mysql" -u root -p"$ROOT_PASSWORD" -e "
+CREATE DATABASE IF NOT EXISTS grapher;
+CREATE DATABASE IF NOT EXISTS graphertest;
+CREATE DATABASE IF NOT EXISTS owid;
+CREATE DATABASE IF NOT EXISTS owid_test;
+" 2>/dev/null
+
+# Créer l'utilisateur vincent avec les bonnes permissions
+echo "👤 Configuration de l'utilisateur 'vincent'..."
+"$MYSQL_PATH/bin/mysql" -u root -p"$ROOT_PASSWORD" -e "
+CREATE USER IF NOT EXISTS 'vincent'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON *.* TO 'vincent'@'localhost';
+FLUSH PRIVILEGES;
+" 2>/dev/null
+
+# Tester la connexion avec l'utilisateur vincent
+echo "🔍 Test de connexion avec l'utilisateur vincent..."
+if "$MYSQL_PATH/bin/mysql" -u vincent -p"$DB_PASSWORD" -e "SHOW DATABASES;" &>/dev/null; then
+    echo "✅ Connexion MySQL réussie avec l'utilisateur vincent"
+else
+    echo "❌ Problème de connexion avec l'utilisateur vincent"
+fi
 
 # 11. Variables d'environnement
 log_step "Configuration des variables d'environnement"
@@ -182,25 +302,103 @@ if [[ -f ".env.example-full" ]] && [[ ! -f ".env" ]]; then
     echo "⚠️  Vous devrez peut-être modifier les variables dans .env"
 fi
 
-# 12. Vérification des installations
-log_step "Vérification des installations"
+# 12. Installation et configuration de Docker
+log_step "Installation et configuration de Docker"
+
+# Vérifier si Docker Desktop est installé
+if ! command_exists docker || ! docker --version &>/dev/null; then
+    echo "📦 Installation de Docker Desktop..."
+    brew install --cask docker
+    echo "🚀 Lancement de Docker Desktop..."
+    open -a Docker
+    echo "⏳ Attente du démarrage de Docker Desktop (peut prendre 1-2 minutes)..."
+    
+    # Attendre que Docker soit prêt
+    for i in {1..60}; do
+        if docker --version &>/dev/null; then
+            echo "✅ Docker Desktop est prêt !"
+            break
+        fi
+        sleep 5
+        if [[ $i -eq 60 ]]; then
+            echo "⚠️  Docker Desktop prend du temps à démarrer. Continuez manuellement."
+        fi
+    done
+else
+    echo "✅ Docker Desktop déjà installé"
+    # Vérifier que Docker fonctionne
+    if ! docker ps &>/dev/null; then
+        echo "🚀 Démarrage de Docker Desktop..."
+        open -a Docker
+        echo "⏳ Attente que Docker soit prêt..."
+        for i in {1..30}; do
+            if docker ps &>/dev/null; then
+                echo "✅ Docker est prêt !"
+                break
+            fi
+            sleep 2
+        done
+    fi
+fi
+
+# 13. Vérification finale des installations
+log_step "Vérification finale des installations"
 echo "Versions installées :"
+"$MYSQL_PATH/bin/mysql" --version 2>/dev/null && echo "✅ MySQL installé" || echo "❌ Problème avec MySQL"
 node --version 2>/dev/null && echo "✅ Node.js installé" || echo "❌ Problème avec Node.js"
 npm --version 2>/dev/null && echo "✅ NPM installé" || echo "❌ Problème avec NPM"
 yarn --version 2>/dev/null && echo "✅ Yarn installé" || echo "❌ Problème avec Yarn"
-mysql --version 2>/dev/null && echo "✅ MySQL installé" || echo "❌ Problème avec MySQL"
 git --version 2>/dev/null && echo "✅ Git installé" || echo "❌ Problème avec Git"
+docker --version 2>/dev/null && echo "✅ Docker installé" || echo "❌ Problème avec Docker"
 
-# 13. Instructions finales
+# Test de la stack complète
+echo ""
+echo "🧪 Tests de la configuration complète :"
+if "$MYSQL_PATH/bin/mysql" -u vincent -p"$DB_PASSWORD" -e "SELECT 'MySQL OK' as status;" &>/dev/null; then
+    echo "✅ Connexion MySQL fonctionnelle"
+else
+    echo "❌ Problème de connexion MySQL"
+fi
+
+if docker ps &>/dev/null; then
+    echo "✅ Docker fonctionnel"
+else
+    echo "❌ Docker non fonctionnel"
+fi
+
+# 14. Instructions finales
 log_step "Instructions finales"
 echo "🎉 Configuration terminée !"
 echo ""
 echo "📝 Prochaines étapes :"
 echo "1. Redémarrez votre terminal ou exécutez : source ~/.zshrc"
 echo "2. Vérifiez les variables d'environnement dans $GITHUB_DIR/owid-grapher/.env"
-echo "3. Pour démarrer les projets :"
-echo "   - Modern Societies Explorer : cd $GITHUB_DIR/modern-societies-explorer && yarn dev"
-echo "   - OWID Grapher : cd $GITHUB_DIR/owid-grapher && yarn dev"
+echo ""
+echo "🚀 Pour démarrer les projets :"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 Modern Societies Explorer :"
+echo "   cd $GITHUB_DIR/modern-societies-explorer"
+echo "   yarn dev"
+echo "   ➡️  http://localhost:3030"
+echo ""
+echo "📈 OWID Grapher (stack complète) :"
+echo "   cd $GITHUB_DIR/owid-grapher"
+echo "   make up                    # Lance tous les services"
+echo "   ➡️  http://localhost:3030  # Interface admin"
+echo ""
+echo "🧪 Tests rapides :"
+echo "   make test                  # Tests unitaires"
+echo "   yarn typecheck            # Vérification TypeScript"
+echo ""
+echo "🛠️  Commandes utiles :"
+echo "   make migrate              # Migrations de base de données"
+echo "   make down                 # Arrêter tous les services"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "🔐 Configuration MySQL :"
+echo "   Utilisateur : vincent"
+echo "   Mot de passe : hupinaise"
+echo "   Bases créées : grapher, graphertest, owid, owid_test"
 echo ""
 echo "🔑 Votre clé SSH publique (à ajouter sur GitHub) :"
 echo "----------------------------------------"
@@ -209,4 +407,9 @@ echo "----------------------------------------"
 echo ""
 echo "🌐 Ajoutez cette clé à votre compte GitHub : https://github.com/settings/keys"
 echo ""
-echo "✅ Script terminé avec succès !"
+echo "📋 En cas de problème :"
+echo "   • MySQL : brew services restart mysql@8.4"
+echo "   • Docker : relancer Docker Desktop"
+echo "   • Node : vérifier le PATH dans ~/.zshrc"
+echo ""
+echo "✅ Script terminé avec succès ! Votre environnement de développement est prêt."
