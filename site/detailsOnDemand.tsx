@@ -44,7 +44,7 @@ export async function runDetailsOnDemand(
         ? urljoin(ADMIN_BASE_URL, "admin/api/parsed-dods.json")
         : readFromAssetMap(runtimeAssetMap, {
               path: "dods.json",
-              fallback: `${BAKED_BASE_URL}/dods.json`,
+              fallback: `/dods.json`,
           })
 
     window.details = await fetchWithRetry(dodFetchUrl, {
