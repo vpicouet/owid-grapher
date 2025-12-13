@@ -38,7 +38,7 @@ tmp-logs
 packages/@ourworldindata/*/dist/
 packages/@ourworldindata/*/node_modules
 wpmigration
-dist/
+#dist/
 .wrangler/
 .nx/cache
 .nx/workspace-data

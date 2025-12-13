@@ -34,13 +34,14 @@ services:
         command: sleep infinity
 
         # Runs app on the same network as the database container, allows "forwardPorts" in devcontainer.json function.
-        network_mode: service:db
 
         depends_on:
             - db
 
         env_file:
             - .env.devcontainer
+        networks:
+        - grapher-net
 
     # Stock mysql database. Used for grapher database. Root password is hardcoded for now
     db:
@@ -54,6 +55,8 @@ services:
         environment:
             MYSQL_ROOT_PASSWORD: weeniest-stretch-contaminate-gnarl
             MYSQL_ROOT_HOST: "%"
+        networks:
+        - grapher-net
 
     # mysql 8 container for running the DB init scripts
     # These init scripts check if the grapher database and users are missing, if so they create them
@@ -73,7 +76,11 @@ services:
             - .env.devcontainer
         depends_on:
             - db
-
+networks:
+  grapher-net:
+    external: true
+    
 volumes:
     mysql_data:
     mysql_load_data:
+

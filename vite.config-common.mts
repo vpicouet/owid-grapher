@@ -85,13 +85,16 @@ export const defineViteConfigForEntrypoint = (entrypoint: ViteEntryPoint) => {
         server: {
             port: 8090,
             warmup: { clientFiles: [VITE_ASSET_SITE_ENTRY] },
-            // remote dev setup
-            ...(process.env.VITE_HOST
-                ? {
-                      host: process.env.VITE_HOST,
-                      cors: true,
-                  }
-                : {}),
+            // remote dev setup - allow all hosts for nginx proxy
+            host: process.env.VITE_HOST || '0.0.0.0',
+            cors: true,
+            // Disable host check - required when behind nginx reverse proxy
+            allowedHosts: true, // Allow all hosts when behind nginx proxy
+            // HMR configuration for proxied setup
+            hmr: {
+                protocol: 'ws',
+                host: 'localhost',
+            },
         },
         preview: {
             port: 8090,
