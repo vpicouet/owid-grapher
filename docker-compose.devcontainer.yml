@@ -34,8 +34,8 @@ services:
         command: sleep infinity
 
         # Runs app on the same network as the database container, allows "forwardPorts" in devcontainer.json function.
-        network_mode: service:db
-
+        # `network_mode: service:db` conflicts with explicit `networks:` in newer compose versions.
+        # Use the shared `grapher-net` network instead (defined at the bottom of this file).
         depends_on:
             - db
 

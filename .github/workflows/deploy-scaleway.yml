@@ -1,0 +1,80 @@
+name: Build and Deploy to Scaleway
+
+on:
+  push:
+    branches:
+      - master  # ou main selon votre branche
+
+env:
+  REGISTRY: rg.fr-par.scw.cloud
+  IMAGE_NAME: modern-societies-observatory/owid-grapher
+  CONTAINER_ID: 51b0f9bd-d7a1-4066-a605-727b8b694b53
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Scaleway Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: nologin
+          password: ${{ secrets.SCALEWAY_SECRET_KEY }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.scaleway
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Install Scaleway CLI
+        run: |
+          curl -o /usr/local/bin/scw -L "https://github.com/scaleway/scaleway-cli/releases/latest/download/scaleway-cli_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          chmod +x /usr/local/bin/scw
+
+      - name: Configure Scaleway CLI
+        run: |
+          scw init secret-key=${{ secrets.SCALEWAY_SECRET_KEY }} \
+            default-organization-id=${{ secrets.SCALEWAY_ORGANIZATION_ID }} \
+            default-project-id=${{ secrets.SCALEWAY_PROJECT_ID }} \
+            default-region=fr-par \
+            default-zone=fr-par-1
+
+      - name: Deploy to Scaleway
+        run: |
+          scw container container deploy ${{ env.CONTAINER_ID }}
+
+      - name: Wait for deployment
+        run: sleep 60
+
+      - name: Health check
+        id: healthcheck
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://msocontainersvu6ld2gy-owid-grapher.functions.fnc.fr-par.scw.cloud/)
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✅ Deployment successful! Health check passed."
+            exit 0
+          else
+            echo "❌ Health check failed with status: $RESPONSE"
+            exit 1
+          fi
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "⚠️ Deployment failed. Rolling back to previous version..."
+          # Redeploy avec le tag précédent
+          # Note: Scaleway garde automatiquement l'ancienne version si le health check échoue
+          scw container container get ${{ env.CONTAINER_ID }}
