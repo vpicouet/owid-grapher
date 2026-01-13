@@ -12,6 +12,7 @@ jobs:
                   fetch-depth: 0
 
             - name: Create Sentry release
+              if: ${{ secrets.SENTRY_AUTH_TOKEN != '' && secrets.SENTRY_ORG != '' }}
               uses: getsentry/action-release@v3
               env:
                   SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
