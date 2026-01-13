@@ -133,7 +133,12 @@ export class OwidAdminApp {
                 })
                 app.use(vite.middlewares)
             }
-            // todo (DB): we probably always want to have this
+        }
+
+        const enableMockSiteRouter =
+            this.options.isDev ||
+            process.env.ENABLE_MOCK_SITE_ROUTER === "true"
+        if (enableMockSiteRouter) {
             app.use("/", mockSiteRouter)
         }
 

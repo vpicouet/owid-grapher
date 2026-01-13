@@ -86,7 +86,7 @@ export const defineViteConfigForEntrypoint = (entrypoint: ViteEntryPoint) => {
         server: {
             port: vitePort,
             warmup: { clientFiles: [VITE_ASSET_SITE_ENTRY] },
-            allowedHosts: ["*", ".scw.cloud"],
+            allowedHosts: ["*", ".scw.cloud", ".up.railway.app"],
             // remote dev setup
             ...(process.env.VITE_HOST
                 ? {
