@@ -88,29 +88,39 @@ Ce document décrit tous les workflows CI/CD configurés dans `.github/workflows
 
 ---
 
-### 4. `publish-ghcr.yml` - Build Docker Image (Legacy)
+### 4. `publish-ghcr.yml` - Build Docker Image (Simple)
 
 **Déclencheur**: Push sur `modern-societies-customizations`
 
 **Fonction**:
-- Build `Dockerfile.scaleway` (⚠️ PAS Dockerfile.production)
+- Build `Dockerfile.scaleway` (simple Dockerfile, pas de webpack pre-build)
 - Push vers `ghcr.io/vpicouet/owid-grapher:latest`
 
-**Status**: ⚠️ **OBSOLÈTE** - Remplacé par `deploy-production.yml`
+**Différence avec `deploy-production.yml`**:
+- ❌ Ne compile PAS les webpack assets dans le build Docker
+- ✅ Plus rapide (~3-5 min vs 10-15 min)
+- ⚠️ Nécessite que les assets soient déjà buildés localement ou compilés au démarrage du serveur
 
-**Action recommandée**: Désactiver ce workflow car il build l'ancien Dockerfile.scaleway qui ne compile pas les webpack assets.
+**Status**: ⚠️ **DUPLIQUÉ** avec `deploy-production.yml`
+
+**Action recommandée**:
+- Si les webpack assets doivent être compilés dans le container → Utiliser `deploy-production.yml` uniquement
+- Si les assets sont déjà buildés localement → Utiliser `publish-ghcr.yml` uniquement
+- **Ne pas garder les deux** car ils écrivent sur le même tag `latest`
 
 ---
 
-### 5. `deploy-scaleway.yml` - Déploiement Scaleway (Legacy)
+### 5. `deploy-scaleway.yml` - Déploiement Scaleway
 
 **Déclencheur**: Push sur `master`
 
 **Fonction**: Déploie sur Scaleway Container Registry
 
-**Status**: ⚠️ **OBSOLÈTE** - Documentation dans `.github/DEPLOYMENT.md`
+**Documentation**: `.github/DEPLOYMENT.md`
 
-**Action recommandée**: Désactiver ou supprimer si Scaleway n'est plus utilisé.
+**Status**: ⚠️ Configuré pour `master` (pas `modern-societies-customizations`)
+
+**Action recommandée**: Vérifier si Scaleway est toujours utilisé pour déploiement
 
 ---
 
@@ -212,14 +222,28 @@ Ces workflows fonctionnent pour OWID mais nécessitent des secrets, tokens, ou i
 
 ## 🔧 Actions Recommandées pour le Fork
 
+### Décision à prendre: `publish-ghcr.yml` vs `deploy-production.yml`
+
+**Problème**: Les deux workflows buildent une image Docker et écrivent sur `ghcr.io/vpicouet/owid-grapher:latest`
+
+**Option 1 - Utiliser `deploy-production.yml`** (recommandé):
+- ✅ Compile webpack assets dans le container (résout Mac→Linux)
+- ✅ Container prêt à l'emploi
+- ❌ Build plus long (~10-15 min)
+- **Action**: Désactiver `publish-ghcr.yml`
+
+**Option 2 - Utiliser `publish-ghcr.yml`**:
+- ✅ Build rapide (~3-5 min)
+- ❌ Webpack assets doivent être buildés localement avant
+- ❌ Ne résout pas le problème Mac→Linux
+- **Action**: Désactiver `deploy-production.yml`
+
 ### À désactiver/supprimer:
 
-1. **`publish-ghcr.yml`**: Remplacé par `deploy-production.yml`
-2. **`deploy-scaleway.yml`**: Si Scaleway n'est plus utilisé
-3. **`buildkite.yml`**: Infra OWID uniquement
-4. **`stale.yml`**: Gestion repo OWID
-5. **`sentry.yml`**: Monitoring OWID
-6. **`sync-grapher-schema-to-digital-ocean.yml`**: Infra OWID
+1. **`buildkite.yml`**: Infra OWID uniquement
+2. **`stale.yml`**: Gestion repo OWID
+3. **`sentry.yml`**: Monitoring OWID (désormais skip automatiquement sur fork)
+4. **`sync-grapher-schema-to-digital-ocean.yml`**: Infra OWID
 
 ### À garder:
 
