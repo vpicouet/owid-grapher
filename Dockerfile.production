@@ -10,14 +10,12 @@ RUN corepack enable && corepack prepare yarn@4.10.3 --activate
 
 WORKDIR /app
 
-# Copy package files first (better caching)
-COPY package.json yarn.lock .yarnrc.yml ./
+# Copy all source code (needed for yarn workspaces resolution)
+COPY . .
 
 # Install ALL dependencies (including dev dependencies for build)
-RUN yarn install --immutable
-
-# Copy source code
-COPY . .
+# Note: --immutable removed because workspaces must be present first
+RUN yarn install
 
 # Build webpack assets (CRITICAL for production!)
 # These commands compile the frontend assets
