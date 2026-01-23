@@ -1,0 +1,72 @@
+# Dockerfile.production
+# Multi-stage build for OWID Grapher with webpack assets compilation
+# Resolves Mac→Linux build incompatibility by building on Linux in CI
+
+# Stage 1: Build webpack assets (heavy dependencies)
+FROM node:20 AS builder
+
+# Enable Yarn 4
+RUN corepack enable && corepack prepare yarn@4.10.3 --activate
+
+WORKDIR /app
+
+# Copy package files first (better caching)
+COPY package.json yarn.lock .yarnrc.yml ./
+COPY .yarn ./.yarn
+
+# Install ALL dependencies (including dev dependencies for build)
+RUN yarn install --immutable
+
+# Copy source code
+COPY . .
+
+# Build webpack assets (CRITICAL for production!)
+# These commands compile the frontend assets
+RUN echo "Building site webpack assets..." && \
+    yarn buildViteSite
+
+RUN echo "Building admin webpack assets..." && \
+    yarn buildViteAdmin
+
+# Verify that assets were built
+RUN test -d dist/assets || (echo "ERROR: dist/assets not created" && exit 1)
+RUN test -f dist/assets/owid.mjs || (echo "ERROR: dist/assets/owid.mjs not created" && exit 1)
+
+# Stage 2: Production runtime (lightweight)
+FROM node:20-slim
+
+# Enable Yarn 4
+RUN corepack enable && corepack prepare yarn@4.10.3 --activate
+
+WORKDIR /app
+
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Copy only necessary files from builder
+COPY --from=builder /app/package.json /app/yarn.lock /app/.yarnrc.yml ./
+COPY --from=builder /app/.yarn ./.yarn
+
+# Copy node_modules (already installed)
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy built webpack assets (THIS IS CRITICAL!)
+COPY --from=builder /app/dist ./dist
+
+# Copy all source code (needed for runtime)
+COPY --from=builder /app .
+
+# Expose port
+EXPOSE 3030
+
+# Environment variables
+ENV NODE_ENV=production
+ENV VITE_PREVIEW=true
+ENV PORT=3030
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:3030/ || exit 1
+
+# Start the admin server
+CMD ["yarn", "startAdminServer"]
