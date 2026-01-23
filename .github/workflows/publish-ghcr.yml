@@ -1,9 +1,10 @@
 name: Publish OWID Grapher Image (GHCR)
 
+# DISABLED - Replaced by deploy-production.yml which builds with webpack assets
 on:
     push:
         branches:
-            - modern-societies-customizations
+            - disabled-modern-societies-customizations
 
 permissions:
     contents: read
