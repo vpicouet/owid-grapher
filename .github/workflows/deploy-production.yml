@@ -1,231 +1,231 @@
 name: Build and Deploy Modern Societies Observatory
 
 on:
-  push:
-    branches:
-      - modern-societies-customizations
-  workflow_dispatch:  # Allow manual trigger
+    push:
+        branches:
+            - modern-societies-customizations
+    workflow_dispatch: # Allow manual trigger
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: vpicouet/owid-grapher
+    REGISTRY: ghcr.io
+    IMAGE_NAME: vpicouet/owid-grapher
 
 jobs:
-  build:
-    name: Build Docker Image with Webpack Assets
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    build:
+        name: Build Docker Image with Webpack Assets
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Log in to GitHub Container Registry
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest
-            type=raw,value={{branch}}-latest
+            - name: Extract metadata (tags, labels)
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                  tags: |
+                      type=sha,prefix={{branch}}-
+                      type=raw,value=latest
+                      type=raw,value={{branch}}-latest
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.production
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+            - name: Build and push Docker image
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: ./Dockerfile.production
+                  platforms: linux/amd64
+                  push: true
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+                  cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
-      - name: Image digest
-        run: echo "Built and pushed image digest ${{ steps.meta.outputs.digest }}"
+            - name: Image digest
+              run: echo "Built and pushed image digest ${{ steps.meta.outputs.digest }}"
 
-  deploy-test:
-    name: Deploy to Test Server
-    needs: build
-    runs-on: ubuntu-latest
-    environment: test
-    if: github.event_name == 'push'  # Auto deploy on push
+    deploy-test:
+        name: Deploy to Test Server
+        needs: build
+        runs-on: ubuntu-latest
+        environment: test
+        if: github.event_name == 'push' # Auto deploy on push
 
-    steps:
-      - name: Deploy to Test Server (observatory.picouet.fr)
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: 64.23.242.13
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "🔄 Deploying to test server..."
+        steps:
+            - name: Deploy to Test Server (observatory.picouet.fr)
+              uses: appleboy/ssh-action@v1.0.0
+              with:
+                  host: 64.23.242.13
+                  username: root
+                  key: ${{ secrets.SSH_PRIVATE_KEY }}
+                  script: |
+                      echo "🔄 Deploying to test server..."
 
-            # Navigate to repo
-            cd /opt/owid-grapher || exit 1
+                      # Navigate to repo
+                      cd /opt/owid-grapher || exit 1
 
-            # Fetch latest changes
-            echo "Fetching latest code..."
-            git fetch origin
+                      # Fetch latest changes
+                      echo "Fetching latest code..."
+                      git fetch origin
 
-            # Checkout and pull
-            echo "Checking out modern-societies-customizations..."
-            git checkout modern-societies-customizations
-            git pull origin modern-societies-customizations
+                      # Checkout and pull
+                      echo "Checking out modern-societies-customizations..."
+                      git checkout modern-societies-customizations
+                      git pull origin modern-societies-customizations
 
-            # Restart service
-            echo "Restarting OWID service..."
-            if systemctl list-units --type=service | grep -q owid-prod; then
-              systemctl restart owid-prod
-            else
-              # Manual restart if systemd not used
-              pkill -f startAdminServer || true
-              sleep 2
-              cd /opt/owid-grapher
-              nohup yarn startAdminServer > /tmp/owid-prod.log 2>&1 &
-            fi
+                      # Restart service
+                      echo "Restarting OWID service..."
+                      if systemctl list-units --type=service | grep -q owid-prod; then
+                        systemctl restart owid-prod
+                      else
+                        # Manual restart if systemd not used
+                        pkill -f startAdminServer || true
+                        sleep 2
+                        cd /opt/owid-grapher
+                        nohup yarn startAdminServer > /tmp/owid-prod.log 2>&1 &
+                      fi
 
-            echo "✅ Deployment commands completed"
+                      echo "✅ Deployment commands completed"
 
-      - name: Wait for service to start
-        run: |
-          echo "⏳ Waiting 45 seconds for service to fully start..."
-          sleep 45
+            - name: Wait for service to start
+              run: |
+                  echo "⏳ Waiting 45 seconds for service to fully start..."
+                  sleep 45
 
-      - name: Health check - Test Server
-        run: |
-          echo "🏥 Running health check..."
+            - name: Health check - Test Server
+              run: |
+                  echo "🏥 Running health check..."
 
-          # Try explorer endpoint
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://observatory.picouet.fr/explorers/modern-societies-observatory-challenge || echo "000")
-          echo "HTTP Response: $RESPONSE"
+                  # Try explorer endpoint
+                  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://observatory.picouet.fr/explorers/modern-societies-observatory-challenge || echo "000")
+                  echo "HTTP Response: $RESPONSE"
 
-          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "301" ] || [ "$RESPONSE" = "302" ]; then
-            echo "✅ Test server deployment successful! (HTTP $RESPONSE)"
-            exit 0
-          else
-            echo "⚠️ Explorer endpoint returned HTTP $RESPONSE, trying homepage..."
+                  if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "301" ] || [ "$RESPONSE" = "302" ]; then
+                    echo "✅ Test server deployment successful! (HTTP $RESPONSE)"
+                    exit 0
+                  else
+                    echo "⚠️ Explorer endpoint returned HTTP $RESPONSE, trying homepage..."
 
-            # Try homepage as fallback
-            HOME_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://observatory.picouet.fr/ || echo "000")
-            echo "Homepage HTTP Response: $HOME_RESPONSE"
+                    # Try homepage as fallback
+                    HOME_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://observatory.picouet.fr/ || echo "000")
+                    echo "Homepage HTTP Response: $HOME_RESPONSE"
 
-            if [ "$HOME_RESPONSE" = "200" ] || [ "$HOME_RESPONSE" = "301" ]; then
-              echo "✅ Test server homepage accessible (HTTP $HOME_RESPONSE)"
-              exit 0
-            else
-              echo "❌ Test server health check failed (Explorer: $RESPONSE, Home: $HOME_RESPONSE)"
-              exit 1
-            fi
-          fi
+                    if [ "$HOME_RESPONSE" = "200" ] || [ "$HOME_RESPONSE" = "301" ]; then
+                      echo "✅ Test server homepage accessible (HTTP $HOME_RESPONSE)"
+                      exit 0
+                    else
+                      echo "❌ Test server health check failed (Explorer: $RESPONSE, Home: $HOME_RESPONSE)"
+                      exit 1
+                    fi
+                  fi
 
-      - name: Deployment summary
-        if: always()
-        run: |
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "🎉 Test deployment successful!"
-            echo "📍 URL: https://observatory.picouet.fr"
-          else
-            echo "❌ Test deployment failed - check logs above"
-          fi
+            - name: Deployment summary
+              if: always()
+              run: |
+                  if [ "${{ job.status }}" = "success" ]; then
+                    echo "🎉 Test deployment successful!"
+                    echo "📍 URL: https://observatory.picouet.fr"
+                  else
+                    echo "❌ Test deployment failed - check logs above"
+                  fi
 
-  deploy-prod:
-    name: Deploy to Production Server
-    needs: [build, deploy-test]
-    runs-on: ubuntu-latest
-    environment: production  # Requires manual approval in GitHub
-    if: github.event_name == 'workflow_dispatch'  # Only manual trigger for prod
+    deploy-prod:
+        name: Deploy to Production Server
+        needs: [build, deploy-test]
+        runs-on: ubuntu-latest
+        environment: production # Requires manual approval in GitHub
+        if: github.event_name == 'workflow_dispatch' # Only manual trigger for prod
 
-    steps:
-      - name: Deploy to Production Server (mso.picouet.fr)
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: 159.65.56.172
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "🔄 Deploying to PRODUCTION server..."
+        steps:
+            - name: Deploy to Production Server (mso.picouet.fr)
+              uses: appleboy/ssh-action@v1.0.0
+              with:
+                  host: 159.65.56.172
+                  username: root
+                  key: ${{ secrets.SSH_PRIVATE_KEY }}
+                  script: |
+                      echo "🔄 Deploying to PRODUCTION server..."
 
-            # Navigate to repo
-            cd /opt/owid-grapher || exit 1
+                      # Navigate to repo
+                      cd /opt/owid-grapher || exit 1
 
-            # Fetch latest changes
-            echo "Fetching latest code..."
-            git fetch origin
+                      # Fetch latest changes
+                      echo "Fetching latest code..."
+                      git fetch origin
 
-            # Checkout and pull
-            echo "Checking out modern-societies-customizations..."
-            git checkout modern-societies-customizations
-            git pull origin modern-societies-customizations
+                      # Checkout and pull
+                      echo "Checking out modern-societies-customizations..."
+                      git checkout modern-societies-customizations
+                      git pull origin modern-societies-customizations
 
-            # Restart service
-            echo "Restarting OWID service..."
-            if systemctl list-units --type=service | grep -q owid-prod; then
-              systemctl restart owid-prod
-            else
-              # Manual restart if systemd not used
-              pkill -f startAdminServer || true
-              sleep 2
-              cd /opt/owid-grapher
-              nohup yarn startAdminServer > /tmp/owid-prod.log 2>&1 &
-            fi
+                      # Restart service
+                      echo "Restarting OWID service..."
+                      if systemctl list-units --type=service | grep -q owid-prod; then
+                        systemctl restart owid-prod
+                      else
+                        # Manual restart if systemd not used
+                        pkill -f startAdminServer || true
+                        sleep 2
+                        cd /opt/owid-grapher
+                        nohup yarn startAdminServer > /tmp/owid-prod.log 2>&1 &
+                      fi
 
-            echo "✅ Production deployment commands completed"
+                      echo "✅ Production deployment commands completed"
 
-      - name: Wait for service to start
-        run: |
-          echo "⏳ Waiting 45 seconds for production service to fully start..."
-          sleep 45
+            - name: Wait for service to start
+              run: |
+                  echo "⏳ Waiting 45 seconds for production service to fully start..."
+                  sleep 45
 
-      - name: Health check - Production Server
-        run: |
-          echo "🏥 Running production health check..."
+            - name: Health check - Production Server
+              run: |
+                  echo "🏥 Running production health check..."
 
-          # Try explorer endpoint
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://mso.picouet.fr/explorers/modern-societies-observatory-challenge || echo "000")
-          echo "HTTP Response: $RESPONSE"
+                  # Try explorer endpoint
+                  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://mso.picouet.fr/explorers/modern-societies-observatory-challenge || echo "000")
+                  echo "HTTP Response: $RESPONSE"
 
-          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "301" ] || [ "$RESPONSE" = "302" ]; then
-            echo "✅ Production deployment successful! (HTTP $RESPONSE)"
-            exit 0
-          else
-            echo "⚠️ Explorer endpoint returned HTTP $RESPONSE, trying homepage..."
+                  if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "301" ] || [ "$RESPONSE" = "302" ]; then
+                    echo "✅ Production deployment successful! (HTTP $RESPONSE)"
+                    exit 0
+                  else
+                    echo "⚠️ Explorer endpoint returned HTTP $RESPONSE, trying homepage..."
 
-            # Try homepage as fallback
-            HOME_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://mso.picouet.fr/ || echo "000")
-            echo "Homepage HTTP Response: $HOME_RESPONSE"
+                    # Try homepage as fallback
+                    HOME_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://mso.picouet.fr/ || echo "000")
+                    echo "Homepage HTTP Response: $HOME_RESPONSE"
 
-            if [ "$HOME_RESPONSE" = "200" ] || [ "$HOME_RESPONSE" = "301" ]; then
-              echo "✅ Production homepage accessible (HTTP $HOME_RESPONSE)"
-              exit 0
-            else
-              echo "❌ Production health check failed (Explorer: $RESPONSE, Home: $HOME_RESPONSE)"
-              exit 1
-            fi
-          fi
+                    if [ "$HOME_RESPONSE" = "200" ] || [ "$HOME_RESPONSE" = "301" ]; then
+                      echo "✅ Production homepage accessible (HTTP $HOME_RESPONSE)"
+                      exit 0
+                    else
+                      echo "❌ Production health check failed (Explorer: $RESPONSE, Home: $HOME_RESPONSE)"
+                      exit 1
+                    fi
+                  fi
 
-      - name: Deployment summary
-        if: always()
-        run: |
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "🚀 PRODUCTION DEPLOYMENT SUCCESSFUL!"
-            echo "📍 URL: https://mso.picouet.fr"
-            echo "🎉 Modern Societies Observatory is live!"
-          else
-            echo "❌ Production deployment failed"
-            echo "⚠️ Manual intervention may be required"
-            echo "📝 Check server logs: ssh root@159.65.56.172 'tail -100 /tmp/owid-prod.log'"
-          fi
+            - name: Deployment summary
+              if: always()
+              run: |
+                  if [ "${{ job.status }}" = "success" ]; then
+                    echo "🚀 PRODUCTION DEPLOYMENT SUCCESSFUL!"
+                    echo "📍 URL: https://mso.picouet.fr"
+                    echo "🎉 Modern Societies Observatory is live!"
+                  else
+                    echo "❌ Production deployment failed"
+                    echo "⚠️ Manual intervention may be required"
+                    echo "📝 Check server logs: ssh root@159.65.56.172 'tail -100 /tmp/owid-prod.log'"
+                  fi

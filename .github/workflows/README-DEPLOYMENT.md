@@ -7,10 +7,12 @@ This document explains the automated CI/CD workflow for building and deploying t
 **File**: `deploy-production.yml`
 
 **Triggers**:
+
 - ✅ **Automatic**: Every push to `modern-societies-customizations` → Builds image + Deploys to TEST
 - 🔘 **Manual**: Workflow dispatch → Builds image + Deploys to TEST + Deploys to PROD (requires approval)
 
 **Jobs**:
+
 1. **Build**: Compiles webpack assets on Linux (resolves Mac→Linux incompatibility)
 2. **Deploy Test**: Auto-deploys to `observatory.picouet.fr` (64.23.242.13)
 3. **Deploy Prod**: Manual deploy to `mso.picouet.fr` (159.65.56.172) with approval
@@ -120,11 +122,12 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 - **Output**: Docker image at `ghcr.io/vpicouet/owid-grapher:latest`
 
 **What it does**:
+
 1. Checkout code
 2. Setup Docker Buildx
 3. Build Dockerfile.production (multi-stage):
-   - Stage 1: Install deps + Build webpack assets (`yarn buildViteSite`, `yarn buildViteAdmin`)
-   - Stage 2: Copy built assets to slim production image
+    - Stage 1: Install deps + Build webpack assets (`yarn buildViteSite`, `yarn buildViteAdmin`)
+    - Stage 2: Copy built assets to slim production image
 4. Push to GitHub Container Registry
 
 ### Deploy Test Job
@@ -134,6 +137,7 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 - **Duration**: ~1 minute
 
 **What it does**:
+
 1. SSH to test server
 2. `git pull` latest code
 3. Restart OWID service
@@ -149,6 +153,7 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 - **Requires**: Manual approval if environment protection enabled
 
 **What it does**:
+
 1. SSH to prod server
 2. `git pull` latest code
 3. Restart OWID service
@@ -165,6 +170,7 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 **Cause**: Syntax error or dependency issue in code.
 
 **Solution**:
+
 1. Check GitHub Actions logs for error details
 2. Fix the code locally
 3. Push again
@@ -174,6 +180,7 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 **Cause**: SSH key not configured or server unreachable.
 
 **Solution**:
+
 1. Verify SSH key in GitHub Secrets: https://github.com/vpicouet/owid-grapher/settings/secrets/actions
 2. Test SSH manually: `ssh -i ~/.ssh/github-actions-deploy root@64.23.242.13`
 3. Check server is online: `ping 64.23.242.13`
@@ -183,6 +190,7 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 **Cause**: Service didn't start properly.
 
 **Solution**:
+
 1. SSH to server: `ssh root@64.23.242.13`
 2. Check logs: `tail -100 /tmp/owid-prod.log`
 3. Check service: `systemctl status owid-prod` or `ps aux | grep startAdminServer`
@@ -193,6 +201,7 @@ Watch progress: https://github.com/vpicouet/owid-grapher/actions
 **Cause**: Browser cache or webpack assets not rebuilt.
 
 **Solution**:
+
 1. Hard refresh browser: Cmd+Shift+R (Mac) or Ctrl+Shift+R (Windows)
 2. Check deployment logs: Verify webpack build step succeeded
 3. SSH to server and verify: `ls -la /opt/owid-grapher/dist/assets/`

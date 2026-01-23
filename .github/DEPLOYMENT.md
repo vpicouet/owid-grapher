@@ -9,9 +9,11 @@ Pour que le CI/CD fonctionne, vous devez ajouter ces secrets dans votre repo Git
 2. Ajoutez ces secrets:
 
 ### SCALEWAY_SECRET_KEY
+
 Votre clé secrète Scaleway API.
 
 **Comment l'obtenir:**
+
 ```bash
 # Depuis votre terminal
 scw config get secret-key
@@ -20,11 +22,13 @@ scw config get secret-key
 Ou créez une nouvelle clé: https://console.scaleway.com/iam/api-keys
 
 ### SCALEWAY_ORGANIZATION_ID
+
 ```bash
 scw config get default-organization-id
 ```
 
 ### SCALEWAY_PROJECT_ID
+
 ```bash
 scw config get default-project-id
 ```

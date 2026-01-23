@@ -42,7 +42,7 @@ services:
         env_file:
             - .env.devcontainer
         networks:
-        - grapher-net
+            - grapher-net
 
     # Stock mysql database. Used for grapher database. Root password is hardcoded for now
     db:
@@ -57,7 +57,7 @@ services:
             MYSQL_ROOT_PASSWORD: weeniest-stretch-contaminate-gnarl
             MYSQL_ROOT_HOST: "%"
         networks:
-        - grapher-net
+            - grapher-net
 
     # mysql 8 container for running the DB init scripts
     # These init scripts check if the grapher database and users are missing, if so they create them
@@ -78,9 +78,9 @@ services:
         depends_on:
             - db
 networks:
-  grapher-net:
-    external: true
-    
+    grapher-net:
+        external: true
+
 volumes:
     mysql_data:
     mysql_load_data:

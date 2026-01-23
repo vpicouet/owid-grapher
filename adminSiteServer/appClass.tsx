@@ -136,8 +136,7 @@ export class OwidAdminApp {
         }
 
         const enableMockSiteRouter =
-            this.options.isDev ||
-            process.env.ENABLE_MOCK_SITE_ROUTER === "true"
+            this.options.isDev || process.env.ENABLE_MOCK_SITE_ROUTER === "true"
         if (enableMockSiteRouter) {
             app.use("/", mockSiteRouter)
         }

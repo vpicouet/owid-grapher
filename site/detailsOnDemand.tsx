@@ -1,6 +1,6 @@
 import { tippy } from "@tippyjs/react"
 import type { Instance } from "tippy.js"
-import { ADMIN_BASE_URL, BAKED_BASE_URL } from "../settings/clientSettings.js"
+import { ADMIN_BASE_URL } from "../settings/clientSettings.js"
 import {
     ArchiveMetaInformation,
     DetailDictionary,

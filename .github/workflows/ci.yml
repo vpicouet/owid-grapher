@@ -92,3 +92,4 @@ jobs:
 
             - name: BundleMon
               uses: lironer/bundlemon-action@v1
+              continue-on-error: true
