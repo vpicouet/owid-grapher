@@ -76,20 +76,21 @@ jobs:
               run: yarn testLint --max-warnings=0
 
     # Runs `bundlemon` on the code to see if our Vite build assets exceed a given file size.
-    bundlemon:
-        runs-on: ubuntu-latest
+    # DISABLED - BundleMon GitHub app not installed on fork
+    # bundlemon:
+    #     runs-on: ubuntu-latest
 
-        steps:
-            - name: Clone repository
-              uses: actions/checkout@v5
+    #     steps:
+    #         - name: Clone repository
+    #           uses: actions/checkout@v5
 
-            - uses: ./.github/actions/setup-node-yarn-deps
+    #         - uses: ./.github/actions/setup-node-yarn-deps
 
-            - name: Build
-              run: yarn buildViteSite
-              env:
-                  BUNDLEMON: true
+    #         - name: Build
+    #           run: yarn buildViteSite
+    #           env:
+    #               BUNDLEMON: true
 
-            - name: BundleMon
-              uses: lironer/bundlemon-action@v1
-              continue-on-error: true
+    #         - name: BundleMon
+    #           uses: lironer/bundlemon-action@v1
+    #           continue-on-error: true

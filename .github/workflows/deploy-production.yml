@@ -62,7 +62,7 @@ jobs:
         needs: build
         runs-on: ubuntu-latest
         environment: test
-        if: github.event_name == 'push' # Auto deploy on push
+        if: false # DISABLED - Auto deploy on push
 
         steps:
             - name: Deploy to Test Server (observatory.picouet.fr)
@@ -147,7 +147,7 @@ jobs:
         needs: [build, deploy-test]
         runs-on: ubuntu-latest
         environment: production # Requires manual approval in GitHub
-        if: github.event_name == 'workflow_dispatch' # Only manual trigger for prod
+        if: false # DISABLED - Only manual trigger for prod
 
         steps:
             - name: Deploy to Production Server (mso.picouet.fr)

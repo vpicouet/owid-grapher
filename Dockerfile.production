@@ -12,7 +12,6 @@ WORKDIR /app
 
 # Copy package files first (better caching)
 COPY package.json yarn.lock .yarnrc.yml ./
-COPY .yarn ./.yarn
 
 # Install ALL dependencies (including dev dependencies for build)
 RUN yarn install --immutable
@@ -45,7 +44,6 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary files from builder
 COPY --from=builder /app/package.json /app/yarn.lock /app/.yarnrc.yml ./
-COPY --from=builder /app/.yarn ./.yarn
 
 # Copy node_modules (already installed)
 COPY --from=builder /app/node_modules ./node_modules
