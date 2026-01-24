@@ -5,8 +5,7 @@ import { observer } from "mobx-react"
 import { GrapherTabName } from "@ourworldindata/types"
 import { TabItem, Tabs } from "../tabs/Tabs.js"
 import { makeLabelForGrapherTab } from "../chart/ChartTabs"
-import { Popover } from "../popover/Popover"
-import { CONTROLS_ROW_HEIGHT } from "../captionedChart/CaptionedChart"
+import { Menu, MenuItem, Popover } from "react-aria-components"
 import { GrapherTabIcon } from "@ourworldindata/components"
 
 export interface ContentSwitchersManager {
@@ -43,6 +42,7 @@ export class ContentSwitchers extends React.Component<{
     }
 
     private isOverflowMenuOpen = false
+    private overflowButtonRef = React.createRef<HTMLButtonElement>()
 
     @computed private get manager(): ContentSwitchersManager {
         return this.props.manager
@@ -111,8 +111,8 @@ export class ContentSwitchers extends React.Component<{
                 ),
                 buttonProps: {
                     className: cx({ active: tab === this.activeTab }),
-                    "data-track-note": "chart_click_" + tab,
-                    "aria-label": makeLabelForGrapherTab(tab, {
+                    dataTrackNote: "chart_click_" + tab,
+                    ariaLabel: makeLabelForGrapherTab(tab, {
                         useGenericChartLabel: !hasMultipleChartTypes,
                     }),
                 },
@@ -126,7 +126,8 @@ export class ContentSwitchers extends React.Component<{
                 element: <>+&#8202;{this.hiddenTabs.length}</>,
                 buttonProps: {
                     className: "ContentSwitchers__OverflowMenuButton",
-                    "aria-label": "Show more chart types",
+                    ariaLabel: "Show more chart types",
+                    ref: this.overflowButtonRef,
                 },
             })
         }
@@ -166,32 +167,35 @@ export class ContentSwitchers extends React.Component<{
     private renderOverflowMenu(): React.ReactElement {
         const { hasMultipleChartTypes } = this
 
-        const style = {
-            top: CONTROLS_ROW_HEIGHT + 4, // small margin between the tabs and popover
-            right: 14, // roughly the half width of the +X button
-            transform: `translateX(50%)`,
-        }
-
         return (
             <Popover
                 className="ContentSwitchers__OverflowMenu"
+                placement="bottom"
+                triggerRef={this.overflowButtonRef}
                 isOpen={this.isOverflowMenuOpen}
-                onClose={this.hideOverflowMenu}
-                style={style}
+                onOpenChange={(isOpen) => {
+                    if (!isOpen) this.hideOverflowMenu()
+                    else this.showOverflowMenu()
+                }}
             >
-                {this.hiddenTabs.map((tab) => (
-                    <button
-                        key={tab}
-                        type="button"
-                        className="ContentSwitchers__OverflowMenuItem"
-                        onClick={() => this.onOverflowMenuSelect(tab)}
-                    >
-                        <TabContent
-                            tab={tab}
-                            hasMultipleChartTypes={hasMultipleChartTypes}
-                        />
-                    </button>
-                ))}
+                <Menu
+                    onAction={(key) =>
+                        this.onOverflowMenuSelect(key as GrapherTabName)
+                    }
+                >
+                    {this.hiddenTabs.map((tab) => (
+                        <MenuItem
+                            key={tab}
+                            id={tab}
+                            className="ContentSwitchers__OverflowMenuItem"
+                        >
+                            <TabContent
+                                tab={tab}
+                                hasMultipleChartTypes={hasMultipleChartTypes}
+                            />
+                        </MenuItem>
+                    ))}
+                </Menu>
             </Popover>
         )
     }
@@ -200,14 +204,16 @@ export class ContentSwitchers extends React.Component<{
         if (!this.shouldShow) return null
 
         return (
-            <Tabs
-                variant="slim"
-                className="ContentSwitchers"
-                items={this.tabItems}
-                selectedKey={this.selectedTabKey}
-                onChange={this.onTabChange}
-                slot={this.renderOverflowMenu()}
-            />
+            <div className="ContentSwitchers__Container">
+                <Tabs
+                    variant="slim"
+                    className="ContentSwitchers"
+                    items={this.tabItems}
+                    selectedKey={this.selectedTabKey}
+                    onChange={this.onTabChange}
+                />
+                {this.renderOverflowMenu()}
+            </div>
         )
     }
 }

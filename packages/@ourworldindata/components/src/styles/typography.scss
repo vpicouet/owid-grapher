@@ -197,6 +197,21 @@ body {
     @include h3-bold;
 }
 
+@mixin h3-semibold {
+    font-family: $serif-font-stack;
+    font-size: 1.125rem;
+    line-height: calc(4 / 3);
+    font-weight: 600;
+    display: block;
+    margin-top: 48px;
+    margin-bottom: 24px;
+    letter-spacing: 0;
+}
+
+.h3-semibold {
+    @include h3-semibold;
+}
+
 @mixin h4-semibold {
     font-family: $serif-font-stack;
     font-size: 1rem;
@@ -357,16 +372,17 @@ body {
 .body-2-regular {
     @include body-2-regular;
 }
-@mixin body-2-bold {
+
+@mixin body-2-bold-tight {
     font-family: $sans-serif-font-stack;
     font-size: 1rem;
-    line-height: 1.5;
+    line-height: 1.3125;
     font-weight: 700;
     letter-spacing: 0;
 }
 
-.body-2-bold {
-    @include body-2-bold;
+.body-2-bold-tight {
+    @include body-2-bold-tight;
 }
 
 @mixin body-2-regular-underlined {

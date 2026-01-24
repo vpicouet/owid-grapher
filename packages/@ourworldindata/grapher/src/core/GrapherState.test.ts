@@ -17,7 +17,6 @@ import {
     TimeBoundValue,
     TimeBound,
     TimeBounds,
-    isSubsetOf,
     queryParamsToStr,
     ColumnTypeNames,
     Url,
@@ -28,42 +27,16 @@ import {
     SampleColumnSlugs,
     SynthesizeGDPTable,
     OwidTable,
+    ErrorValueTypes,
 } from "@ourworldindata/core-table"
 import { legacyToCurrentGrapherQueryParams } from "./GrapherUrlMigrations"
 import { setSelectedEntityNamesParam } from "./EntityUrlBuilder"
 import { MapConfig } from "../mapCharts/MapConfig"
 import { SelectionArray } from "../selection/SelectionArray"
-import {
-    OwidDistinctColorScheme,
-    OwidDistinctLinesColorScheme,
-} from "../color/CustomSchemes"
 import { latestGrapherConfigSchema } from "./GrapherConstants.js"
 import { legacyToOwidTableAndDimensionsWithMandatorySlug } from "./LegacyToOwidTable.js"
 import { GrapherProgrammaticInterface } from "./Grapher.js"
 import { GrapherState } from "./GrapherState"
-
-const TestGrapherConfig = (): {
-    table: OwidTable
-    selectedEntityNames: any[]
-    dimensions: {
-        slug: SampleColumnSlugs
-        property: DimensionProperty
-        variableId: any
-    }[]
-} => {
-    const table = SynthesizeGDPTable({ entityCount: 10 })
-    return {
-        table,
-        selectedEntityNames: table.sampleEntityName(5),
-        dimensions: [
-            {
-                slug: SampleColumnSlugs.GDP,
-                property: DimensionProperty.y,
-                variableId: SampleColumnSlugs.GDP as any,
-            },
-        ],
-    }
-}
 
 it("regression fix: container options are not serialized", () => {
     const grapher = new GrapherState({ xAxis: { min: 1 } })
@@ -453,58 +426,6 @@ describe("authors can use maxTime", () => {
     })
 })
 
-describe("line chart to bar chart and bar chart race", () => {
-    const grapher = new GrapherState(TestGrapherConfig())
-
-    it("can create a new line chart with different start and end times", () => {
-        expect(grapher.activeChartType).toEqual(GRAPHER_CHART_TYPES.LineChart)
-        expect(grapher.endHandleTimeBound).toBeGreaterThan(
-            grapher.startHandleTimeBound
-        )
-    })
-
-    describe("switches from a line chart to a bar chart when there is only 1 year selected", () => {
-        const grapher = new GrapherState(TestGrapherConfig())
-        const lineSeries = grapher.chartState.series
-
-        expect(grapher.activeChartType).toEqual(GRAPHER_CHART_TYPES.LineChart)
-
-        grapher.startHandleTimeBound = 2000
-        grapher.endHandleTimeBound = 2000
-        expect(grapher.activeChartType).toEqual(GRAPHER_CHART_TYPES.DiscreteBar)
-
-        it("still has a timeline even though its now a bar chart", () => {
-            expect(grapher.hasTimeline).toBe(true)
-        })
-
-        it("color goes to monochrome when the chart switches from line chart to bar chart", () => {
-            const barSeries = grapher.chartState.series
-            const barColors = _.orderBy(barSeries, "seriesName").map(
-                (series) => series.color
-            )
-            const linecolors = _.orderBy(lineSeries, "seriesName").map(
-                (series) => series.color
-            )
-            expect(
-                isSubsetOf(
-                    linecolors,
-                    OwidDistinctLinesColorScheme.colorSets[0]
-                )
-            ).toBeTruthy()
-            expect(
-                isSubsetOf(barColors, OwidDistinctColorScheme.colorSets[0])
-            ).toBeTruthy()
-            expect(new Set(barColors).size).toEqual(1)
-        })
-    })
-
-    it("turns into a bar chart when constrained start & end handles are equal", () => {
-        grapher.startHandleTimeBound = 5000
-        grapher.endHandleTimeBound = Infinity
-        expect(grapher.activeChartType).toEqual(GRAPHER_CHART_TYPES.DiscreteBar)
-    })
-})
-
 describe("urls", () => {
     it("can change base url", () => {
         const url = new GrapherState({
@@ -654,6 +575,30 @@ describe("urls", () => {
         grapher.populateFromQueryParams({ tab: "map" })
         expect(grapher.activeTab).toEqual(GRAPHER_TAB_NAMES.WorldMap)
         expect(grapher.timelineHandleTimeBounds).toEqual([Infinity, Infinity])
+    })
+
+    it("stops animation when switching to a tab where playback is disabled", () => {
+        const grapher = new GrapherState({
+            chartTypes: [
+                GRAPHER_CHART_TYPES.LineChart,
+                GRAPHER_CHART_TYPES.SlopeChart,
+            ],
+        })
+
+        // Animations are enabled for the default line chart tab
+        expect(grapher.disablePlay).toBe(false)
+
+        // Play the animation
+        void grapher.timelineController.play()
+
+        // Switch to the slope tab (where timeline animation is disabled)
+        const previousTab = grapher.activeTab
+        grapher.setTab(GRAPHER_TAB_NAMES.SlopeChart)
+        grapher.onTabChange(previousTab, GRAPHER_TAB_NAMES.SlopeChart)
+
+        // Animation should be stopped
+        expect(grapher.disablePlay).toBe(true)
+        expect(grapher.isTimelineAnimationPlaying).toBe(false)
     })
 })
 
@@ -1436,12 +1381,18 @@ describe("tableForDisplay", () => {
 
     it("contains the selected entities only if entity selection is disabled", () => {
         const grapher = new GrapherState(manager)
-        expect(grapher.tableForDisplay.availableEntityNames.length).toBe(3)
+        expect(
+            grapher.tableForDisplayBeforeEntityFilter.availableEntityNames
+                .length
+        ).toBe(3)
     })
 
     it("contains all available entities if there is a map tab, even if entity selection is disabled", () => {
         const grapher = new GrapherState({ ...manager, hasMapTab: true })
-        expect(grapher.tableForDisplay.availableEntityNames.length).toBe(5)
+        expect(
+            grapher.tableForDisplayBeforeEntityFilter.availableEntityNames
+                .length
+        ).toBe(5)
     })
 
     it("contains all available entities if there is a scatter plot, even if entity selection is disabled", () => {
@@ -1449,7 +1400,10 @@ describe("tableForDisplay", () => {
             ...manager,
             chartTypes: ["ScatterPlot"],
         })
-        expect(grapher.tableForDisplay.availableEntityNames.length).toBe(5)
+        expect(
+            grapher.tableForDisplayBeforeEntityFilter.availableEntityNames
+                .length
+        ).toBe(5)
     })
 
     it("contains all available entities if there is a Marimekko chart, even if entity selection is disabled", () => {
@@ -1457,7 +1411,10 @@ describe("tableForDisplay", () => {
             ...manager,
             chartTypes: ["Marimekko"],
         })
-        expect(grapher.tableForDisplay.availableEntityNames.length).toBe(5)
+        expect(
+            grapher.tableForDisplayBeforeEntityFilter.availableEntityNames
+                .length
+        ).toBe(5)
     })
 })
 
@@ -1743,6 +1700,190 @@ describe("tableAfterColorAndSizeToleranceApplication", () => {
         expect(owidRowsByTime?.get(2003)).toMatchObject({
             value: 200,
             originalTime: 2004,
+        })
+    })
+})
+
+describe("tolerance is not applied twice (issue #4891)", () => {
+    // Tolerance should only be applied once during interpolation. With tolerance=3,
+    // data at 2018 should appear at 2015-2021, not beyond. The bug occurred when
+    // filterByTargetTimes applied tolerance a second time. This is normally hidden
+    // unless rows are removed between interpolation and filtering (e.g., showNoDataArea=false).
+
+    const createTable = (): OwidTable => {
+        const years: number[] = []
+        const entityNames: string[] = []
+        const testColumnValues: number[] = []
+
+        // United States provides a continuous range of years (2000-2024) to establish
+        // the full timeline. When complete() runs during interpolation, it creates rows
+        // for all these years for all entities.
+        for (let year = 2000; year <= 2024; year++) {
+            years.push(year)
+            entityNames.push("United States")
+            testColumnValues.push(year * 10)
+        }
+
+        // Belarus has data only at year 2018. With tolerance=3, this should be
+        // interpolated to years 2015-2021 (±3 years), but not to 2014 or earlier.
+        years.push(2018)
+        entityNames.push("Belarus")
+        testColumnValues.push(100)
+
+        return new OwidTable(
+            [
+                ["entityName", "year", "testColumn"],
+                ...years.map((year, i) => [
+                    entityNames[i],
+                    year,
+                    testColumnValues[i],
+                ]),
+            ],
+            [
+                {
+                    slug: "testColumn",
+                    type: ColumnTypeNames.Numeric,
+                    tolerance: 3,
+                },
+            ]
+        )
+    }
+
+    const table = createTable()
+
+    it("does not apply tolerance twice for Marimekko chart", () => {
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.Marimekko],
+            ySlugs: "testColumn",
+            maxTime: 2014,
+            // showNoDataArea=false causes the chart to filter out rows that
+            // have no data. This creates the scenario where filterByTargetTimes might
+            // not find an exact year match, exposing the bug (if not fixed).
+            showNoDataArea: false,
+        })
+
+        expect(grapher.endTime).toBe(2014)
+        const testColumnValues2014 = grapher.transformedTable
+            .filterByEntityNames(["Belarus"])
+            .get("testColumn").values
+
+        // Belarus should have no valid values at 2014 (outside tolerance=3)
+        expect(testColumnValues2014).toEqual([])
+
+        // But should have a valid value at 2015
+        grapher.maxTime = 2015
+        expect(grapher.endTime).toBe(2015)
+        const testColumnValues2015 = grapher.transformedTable
+            .filterByEntityNames(["Belarus"])
+            .get("testColumn").values
+        expect(testColumnValues2015).toEqual([100])
+    })
+
+    it("does not apply tolerance twice for DiscreteBar chart", () => {
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.DiscreteBar],
+            ySlugs: "testColumn",
+            selectedEntityNames: ["Belarus", "United States"],
+            maxTime: 2014,
+        })
+
+        const testColumnValues2014 = grapher.transformedTable
+            .filterByEntityNames(["Belarus"])
+            .get("testColumn").values
+
+        // Belarus should have no valid values at 2014 (outside tolerance=3)
+        expect(testColumnValues2014).toEqual([])
+
+        // But should have a valid value at 2015
+        grapher.maxTime = 2015
+        const testColumnValues2015 = grapher.transformedTable
+            .filterByEntityNames(["Belarus"])
+            .get("testColumn").values
+        expect(testColumnValues2015).toEqual([100])
+    })
+
+    it("does not apply tolerance twice for SlopeChart", () => {
+        const grapher = new GrapherState({
+            table,
+            chartTypes: [GRAPHER_CHART_TYPES.SlopeChart],
+            ySlugs: "testColumn",
+            selectedEntityNames: ["Belarus", "United States"],
+            minTime: 2014,
+            maxTime: 2021,
+        })
+
+        const transformedTable = grapher.transformedTable
+        const belarusTable = transformedTable.filterByEntityNames(["Belarus"])
+
+        const allValues =
+            belarusTable.get("testColumn").valuesIncludingErrorValues
+        const validValues = belarusTable.get("testColumn").values
+
+        // Belarus should have a error value at 2014 (outside tolerance=3)
+        // and a valid value at 2021 (within tolerance=3)
+        expect(allValues[0]).toEqual(ErrorValueTypes.NoValueWithinTolerance)
+        expect(allValues[1]).toEqual(100)
+
+        // Only 2021 should have a valid value
+        expect(validValues).toEqual([100])
+    })
+
+    it("does not apply tolerance twice for Map chart", () => {
+        const grapher = new GrapherState({
+            table,
+            hasMapTab: true,
+            tab: GRAPHER_TAB_CONFIG_OPTIONS.map,
+            ySlugs: "testColumn",
+            map: new MapConfig({ timeTolerance: 3, time: 2014 }),
+        })
+
+        const testColumnValues2014 = grapher.transformedTable
+            .filterByEntityNames(["Belarus"])
+            .get("testColumn").values
+
+        // Year 2014 is outside tolerance range; Belarus should have NO data
+        expect(testColumnValues2014).toEqual([])
+
+        // Year 2015 is within tolerance range; Belarus should have data
+        grapher.map.time = 2015
+        const testColumnValues2015 = grapher.transformedTable
+            .filterByEntityNames(["Belarus"])
+            .get("testColumn").values
+        expect(testColumnValues2015).toEqual([100])
+    })
+})
+
+describe("populateFromQueryParams", () => {
+    it("ignores overlay=embed", () => {
+        const grapher = new GrapherState({})
+        grapher.populateFromQueryParams({ overlay: "embed" })
+        expect(grapher.activeModal).toBeUndefined()
+    })
+
+    it("ignores invalid query param values", () => {
+        const grapher = new GrapherState({})
+        grapher.populateFromQueryParams({ overlay: "invalid" })
+        expect(grapher.activeModal).toBeUndefined()
+    })
+
+    it("sets axis scale type", () => {
+        const grapher = new GrapherState({
+            xAxis: { scaleType: ScaleType.log },
+        })
+        grapher.populateFromQueryParams({ xScale: "linear" })
+        expect(grapher.xAxis.scaleType).toBe("linear")
+    })
+
+    it("stores non-grapher query params in externalQueryParams", () => {
+        const grapher = new GrapherState({})
+        grapher.populateFromQueryParams({
+            tab: "map",
+            customParam: "customValue",
+        } as any)
+        expect(grapher.externalQueryParams).toEqual({
+            customParam: "customValue",
         })
     })
 })

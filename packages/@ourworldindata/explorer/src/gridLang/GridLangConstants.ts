@@ -1,4 +1,7 @@
-import { GrapherInterface } from "@ourworldindata/types"
+import {
+    GrapherInterface,
+    ORIGIN_URL_REGEX_PATTERNS,
+} from "@ourworldindata/types"
 
 export const CellHasErrorsClass = "CellHasErrorsClass"
 
@@ -39,7 +42,7 @@ export interface GrapherCellDef extends CellDef {
 }
 
 export interface ColumnCellDef extends CellDef {
-    display?: boolean
+    isDisplayProperty?: boolean
 }
 
 export interface ParsedCell {
@@ -166,6 +169,18 @@ export const UrlCellDef: CellDef = {
     regex: MatchUrlsOnlyRegex,
 }
 
+// Combines the patterns from ORIGIN_URL_REGEX_PATTERNS into a single regex for cell validation
+const AbsoluteOrRelativeUrlRegex = new RegExp(
+    ORIGIN_URL_REGEX_PATTERNS.map((regex) => regex.source).join("|")
+)
+
+export const AbsoluteOrRelativeUrlCellDef: CellDef = {
+    keyword: "",
+    cssClass: "UrlCellDef",
+    description: "",
+    regex: AbsoluteOrRelativeUrlRegex,
+}
+
 export const QueryStringCellDef: CellDef = {
     keyword: "",
     cssClass: "QueryStringCellDef",
@@ -225,6 +240,14 @@ export const IndicatorIdOrEtlPathCellDef: CellDef = {
     description: "A single indicator ID or a path to an ETL indicator.",
     regex: /^\d+|[\w\d_/-]+#[\w\d_/-]+$/,
     requirementsDescription: `Can only contain the characters a-zA-Z0-9-_/#`,
+}
+
+export const SlugOrIndicatorIdOrEtlPathCellDef: CellDef = {
+    keyword: "",
+    cssClass: "SlugOrIndicatorIdOrEtlPath",
+    description: "A column slug, indicator ID, or catalog path.",
+    regex: /^[a-zA-Z0-9-_]+$|^\d+$|^[\w\d_/-]+#[\w\d_/-]+$/,
+    requirementsDescription: `Can be a slug (a-zA-Z0-9-_), an indicator ID (digits), or a catalog path (a-zA-Z0-9-_/#)`,
 }
 
 export const IndicatorIdsOrEtlPathsCellDef: CellDef = {

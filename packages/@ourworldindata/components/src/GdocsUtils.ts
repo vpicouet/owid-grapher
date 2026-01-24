@@ -110,6 +110,12 @@ export function getPrefixedGdocPath(
         )
         .with(
             {
+                content: { type: OwidGdocType.Profile },
+            },
+            () => `${prefix}/profile/${gdoc.slug}`
+        )
+        .with(
+            {
                 content: {
                     type: P.optional(P.union(OwidGdocType.Fragment)),
                 },
@@ -169,6 +175,22 @@ export function getPageTitle(gdoc: OwidGdoc) {
                 },
             },
             (match) => match.content.title
+        )
+        .with(
+            {
+                content: { type: OwidGdocType.Profile },
+            },
+            (match) => {
+                const entityName = match.content.instantiatedEntity?.name
+                const isCountry = match.content.instantiatedEntity?.isCountry
+                const profileType = isCountry ? "Country" : "Region"
+                // e.g. "Energy Country Profile"
+                const profileTitle = `${match.content.title} ${profileType} Profile`
+
+                return entityName
+                    ? `${entityName} - ${profileTitle}`
+                    : ` ${profileTitle}`
+            }
         )
         .with(
             {

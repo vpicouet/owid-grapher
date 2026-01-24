@@ -8,6 +8,8 @@ import {
     GRAPHER_DB_PORT,
     BAKED_BASE_URL,
 } from "../settings/serverSettings.js"
+import { IS_ARCHIVE } from "../settings/clientSettings.js"
+import { PROD_URL } from "../site/SiteConstants.js"
 import { registerExitHandler } from "./cleanup.js"
 import { createTagGraph, Url } from "@ourworldindata/utils"
 import {
@@ -490,11 +492,12 @@ export const getPublishedGdocsWithTags = async (
         OwidGdocType.LinearTopicPage,
         OwidGdocType.TopicPage,
         OwidGdocType.AboutPage,
-    ]
+        OwidGdocType.Announcement,
+    ],
+    options: { excludeDeprecated?: boolean } = {}
 ): Promise<DBEnrichedPostGdocWithTags[]> => {
-    return knexRaw<DBRawPostGdocWithTags>(
-        knex,
-        `-- sql
+    const { excludeDeprecated = false } = options
+    const query = `-- sql
         SELECT
         g.manualBreadcrumbs,
         g.content,
@@ -523,12 +526,16 @@ export const getPublishedGdocsWithTags = async (
         g.published = 1
         AND g.type IN (:gdocTypes)
         AND g.publishedAt <= NOW()
-    GROUP BY g.id
-    ORDER BY g.publishedAt DESC`,
-        {
-            gdocTypes,
+        ${
+            excludeDeprecated
+                ? `AND (g.content ->> '$."deprecation-notice"' IS NULL)`
+                : ""
         }
-    ).then((rows) => rows.map(parsePostsGdocsWithTagsRow))
+    GROUP BY g.id
+    ORDER BY g.publishedAt DESC`
+    return knexRaw<DBRawPostGdocWithTags>(knex, query, {
+        gdocTypes,
+    }).then((rows) => rows.map(parsePostsGdocsWithTagsRow))
 }
 
 export const getNonGrapherExplorerViewCount = (
@@ -556,7 +563,9 @@ export const getNonGrapherExplorerViewCount = (
 }
 
 /**
- * 1. Fetch all records in tag_graph, isTopic = true when there is a published TP/LTP/Article with the same slug as the tag
+ * 1. Fetch all records in tag_graph:
+ *    - isTopic = true when there is a published TP/LTP with the same slug as the tag
+ *    - isSearchable = true when isTopic OR the tag has searchableInAlgolia set
  * 2. Group tags by their parentId
  * 3. Return the flat tag graph along with a __rootId property so that the UI knows which record is the root node
  */
@@ -574,7 +583,8 @@ export async function getFlatTagGraph(knex: KnexReadonlyTransaction): Promise<
             tg.weight,
             t.slug,
             t.name,
-            p.slug IS NOT NULL AS isTopic
+            p.slug IS NOT NULL AS isTopic,
+            (p.slug IS NOT NULL OR t.searchableInAlgolia = TRUE) AS isSearchable
         FROM
             tag_graph tg
         LEFT JOIN tags t ON
@@ -584,12 +594,7 @@ export async function getFlatTagGraph(knex: KnexReadonlyTransaction): Promise<
         -- order by descending weight, tiebreak by name
         ORDER BY tg.weight DESC, t.name ASC`,
         {
-            types: [
-                OwidGdocType.TopicPage,
-                OwidGdocType.LinearTopicPage,
-                // For sub-topics e.g. Nuclear Energy we use the article format
-                OwidGdocType.Article,
-            ],
+            types: [OwidGdocType.TopicPage, OwidGdocType.LinearTopicPage],
         }
     ).then((rows) => _.groupBy(rows, "parentId"))
 
@@ -705,9 +710,10 @@ export function getBestBreadcrumbs(
         return path.length > best.length ? path : best
     }, [])
 
+    const baseUrl = IS_ARCHIVE ? PROD_URL : BAKED_BASE_URL
     const breadcrumbs = longestPath.map((tag) => ({
         label: tag.name,
-        href: `${BAKED_BASE_URL}/${tag.slug}`,
+        href: `${baseUrl}/${tag.slug}`,
     }))
 
     return breadcrumbs
@@ -802,7 +808,8 @@ export function getMinimalTagsWithIsTopic(
         SELECT t.id,
         t.name,
         t.slug,
-        t.slug IS NOT NULL AND MAX(IF(pg.type IN (:types), TRUE, FALSE)) AS isTopic
+        t.slug IS NOT NULL AND MAX(IF(pg.type IN (:types), TRUE, FALSE)) AS isTopic,
+        (t.slug IS NOT NULL AND MAX(IF(pg.type IN (:types), TRUE, FALSE))) OR t.searchableInAlgolia AS isSearchable
         FROM tags t
         LEFT JOIN posts_gdocs_x_tags gt ON t.id = gt.tagId
         LEFT JOIN posts_gdocs pg ON gt.gdocId = pg.id
@@ -828,6 +835,19 @@ export async function getGrapherLinkTargets(
         SELECT target
         FROM posts_gdocs_links
         WHERE linkType = '${ContentGraphLinkType.Grapher}'
+        `
+    )
+}
+
+export async function getStaticVizLinkTargets(
+    knex: KnexReadonlyTransaction
+): Promise<Pick<DbPlainPostGdocLink, "target">[]> {
+    return knexRaw<Pick<DbPlainPostGdocLink, "target">>(
+        knex,
+        `-- sql
+        SELECT DISTINCT target
+        FROM posts_gdocs_links
+        WHERE linkType = '${ContentGraphLinkType.StaticViz}'
         `
     )
 }
@@ -945,17 +965,17 @@ export function getImageUsage(trx: KnexReadonlyTransaction): Promise<
     )
 }
 
-// A topic is any tag that has a slug matching the slug of a published topic page, linear topic page, or article.
-// We want to keep tags that have topic children (i.e. areas and sub-areas) but not leaf nodes that aren't topics
-function checkDoesFlatTagGraphNodeHaveAnyTopicChildren(
+// A searchable tag is either a topic (tag with a published topic page) or has searchableInAlgolia set.
+// We want to keep tags that have searchable children (i.e. areas and sub-areas) but not leaf nodes that aren't searchable
+function checkDoesFlatTagGraphNodeHaveAnySearchableChildren(
     node: FlatTagGraphNode,
     flatTagGraph: FlatTagGraph
 ): boolean {
-    if (node.isTopic) return true
+    if (node.isSearchable) return true
     const children = flatTagGraph[node.childId]
     if (!children) return false
     return children.some((child) =>
-        checkDoesFlatTagGraphNodeHaveAnyTopicChildren(child, flatTagGraph)
+        checkDoesFlatTagGraphNodeHaveAnySearchableChildren(child, flatTagGraph)
     )
 }
 
@@ -964,11 +984,11 @@ export async function generateTopicTagGraph(
 ): Promise<TagGraphRoot> {
     const { __rootId, ...parents } = await getFlatTagGraph(knex)
 
-    const tagGraphTopicsOnly = Object.entries(parents).reduce(
+    const tagGraphSearchableOnly = Object.entries(parents).reduce(
         (acc: FlatTagGraph, [parentId, children]) => {
             acc[Number(parentId)] = children.filter((child) => {
                 if (child.parentId === __rootId) return true
-                return checkDoesFlatTagGraphNodeHaveAnyTopicChildren(
+                return checkDoesFlatTagGraphNodeHaveAnySearchableChildren(
                     child,
                     parents
                 )
@@ -978,35 +998,44 @@ export async function generateTopicTagGraph(
         {} as FlatTagGraph
     )
 
-    return createTagGraph(tagGraphTopicsOnly, __rootId)
+    return createTagGraph(tagGraphSearchableOnly, __rootId)
 }
 
 /**
  * Fetch all topic tags from the database.
  * Topics are any tags that have a slug.
- * Returns id, name, and slug of each topic tag.
+ * Returns name and slug of each topic tag.
  * Note: This does not include area tags, which are the top-level children of the tag
  * graph root and do not have a slug.
  */
-export const getAllTopicSlugs = async (
+export const getAllTopicTags = async (
     trx: KnexReadonlyTransaction
-): Promise<string[]> => {
-    const results = await knexRaw<{ slug: string }>(
+): Promise<{ slug: string; name: string; id: number }[]> => {
+    return knexRaw<{ slug: string; name: string; id: number }>(
         trx,
         `-- sql
-        SELECT slug
-        FROM ${TagsTableName}
-        WHERE slug IS NOT NULL
-        `
+        SELECT t.slug, t.name, t.id
+        FROM ${TagsTableName} t
+        JOIN ${PostsGdocsTableName} pg ON pg.slug = t.slug
+        WHERE pg.published = TRUE
+        AND pg.type IN (:types)
+        AND t.slug IS NOT NULL
+        `,
+        {
+            types: [
+                OwidGdocType.TopicPage,
+                OwidGdocType.LinearTopicPage,
+                OwidGdocType.Article,
+            ],
+        }
     )
-
-    return results.map((row) => row.slug)
 }
 
 /**
  * Fetch all area and topic tag names from the database.
  * Areas are the top-level children of the tag graph root, and don't have a slug.
- * Topics are any tags that have a slug.
+ * Topics are tags whose slug matches a published topic-page or linear-topic-page,
+ * or tags with searchableInAlgolia set.
  */
 const getAllAreaAndTopicTagNames = async (
     trx: KnexReadonlyTransaction
@@ -1015,9 +1044,13 @@ const getAllAreaAndTopicTagNames = async (
         trx,
         `-- sql
         WITH topic_tags AS (
-            SELECT name
-            FROM ${TagsTableName}
-            WHERE slug IS NOT NULL
+            SELECT t.name
+            FROM ${TagsTableName} t
+            LEFT JOIN ${PostsGdocsTableName} pg
+                ON pg.slug = t.slug
+                AND pg.published = TRUE
+                AND pg.type IN ('topic-page', 'linear-topic-page')
+            WHERE pg.id IS NOT NULL OR t.searchableInAlgolia = TRUE
         ),
         area_tags AS (
             SELECT t.name

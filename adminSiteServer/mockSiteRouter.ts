@@ -1,5 +1,6 @@
 import express, { Router } from "express"
 import path from "path"
+import * as R from "remeda"
 import {
     renderFrontPage,
     renderGdocsPageBySlug,
@@ -10,7 +11,6 @@ import {
     feedbackPage,
     renderNotFoundPage,
     renderLatestPage,
-    countryProfileCountryPage,
     renderExplorerPage,
     makeAtomFeedNoTopicPages,
     renderDynamicCollectionPage,
@@ -21,6 +21,7 @@ import {
     renderGdocTombstone,
     renderExplorerIndexPage,
     renderSubscribePage,
+    renderGdoc,
 } from "../baker/siteRenderers.js"
 import {
     BAKED_BASE_URL,
@@ -30,12 +31,11 @@ import {
 
 import { expectInt, renderToHtmlPage } from "../serverUtils/serverUtil.js"
 import {
-    countryProfilePage,
     countriesIndexPage,
-} from "../baker/countryProfiles.js"
+    countryIndexPage,
+} from "../baker/countryIndexes.js"
 import { makeSitemap } from "../baker/sitemap.js"
 import { getChartConfigBySlug } from "../db/model/Chart.js"
-import { countryProfileSpecs } from "../site/countryProfileProjects.js"
 import { ExplorerAdminServer } from "../explorerAdminServer/ExplorerAdminServer.js"
 import { getVariableData, getVariableMetadata } from "../db/model/Variable.js"
 import { MultiEmbedderTestPage } from "../site/multiembedder/MultiEmbedderTestPage.js"
@@ -50,6 +50,9 @@ import {
     queryParamsToStr,
     EnrichedBlockImage,
     OwidGdocType,
+    getRegionBySlug,
+    getEntitiesForProfile,
+    ALL_GDOC_TYPES,
 } from "@ourworldindata/utils"
 import {
     EXPLORERS_ROUTE_FOLDER,
@@ -78,6 +81,7 @@ import {
 import { getMinimalGdocPostsByIds } from "../db/model/Gdoc/GdocBase.js"
 import { getMultiDimDataPageBySlug } from "../db/model/MultiDimDataPage.js"
 import { getParsedDodsDictionary } from "../db/model/Dod.js"
+import { getLatestArchivedPostPageVersionsIfEnabled } from "../db/model/ArchivedPostVersion.js"
 import { TopicTag } from "../site/DataInsightsIndexPage.js"
 import { getSlugForTopicTag } from "../baker/GrapherBakingUtils.js"
 import { SEARCH_BASE_PATH } from "../site/search/searchUtils.js"
@@ -85,6 +89,11 @@ import {
     enrichLatestPageItems,
     getLatestPageItems,
 } from "../db/model/Gdoc/GdocPost.js"
+import { getAndLoadGdocBySlug } from "../db/model/Gdoc/GdocFactory.js"
+import {
+    instantiateProfileForEntity,
+    GdocProfile,
+} from "../db/model/Gdoc/GdocProfile.js"
 
 // todo: switch to an object literal where the key is the path and the value is the request handler? easier to test, reflect on, and manipulate
 const mockSiteRouter = Router()
@@ -332,7 +341,9 @@ getPlainRouteWithROTransaction(
 
         if (topicTag && topicTag.slug !== undefined) {
             // if topic slug is not a valid topic, render all data insights
-            const validTopicSlugs = await db.getAllTopicSlugs(trx)
+            const validTopicSlugs = await db
+                .getAllTopicTags(trx)
+                .then((tags) => tags.map((tag) => tag.slug))
             if (!validTopicSlugs.includes(topicTag.slug)) {
                 topicTag = undefined
             }
@@ -387,7 +398,12 @@ getPlainRouteWithROTransaction(
 
         try {
             return res.send(
-                await renderGdocsPageBySlug(trx, pageNumberOrSlug, true)
+                await renderGdocsPageBySlug(
+                    trx,
+                    pageNumberOrSlug,
+                    [OwidGdocType.DataInsight],
+                    true
+                )
             )
         } catch (e) {
             console.error(e)
@@ -423,21 +439,6 @@ getPlainRouteWithROTransaction(
             )
         )
     }
-)
-
-countryProfileSpecs.forEach((spec) =>
-    getPlainRouteWithROTransaction(
-        mockSiteRouter,
-        `/${spec.rootPath}/:countrySlug`,
-        async (req, res, trx) => {
-            const countryPage = await countryProfileCountryPage(
-                spec,
-                req.params.countrySlug,
-                trx
-            )
-            res.send(countryPage)
-        }
-    )
 )
 
 getPlainRouteWithROTransaction(
@@ -530,11 +531,7 @@ getPlainRouteWithROTransaction(
     "/country/:countrySlug",
     async (req, res, trx) =>
         res.send(
-            await countryProfilePage(
-                trx,
-                req.params.countrySlug,
-                BAKED_BASE_URL
-            )
+            await countryIndexPage(trx, req.params.countrySlug, BAKED_BASE_URL)
         )
 )
 
@@ -543,11 +540,7 @@ mockSiteRouter.get("/feedback", async (req, res) =>
 )
 
 mockSiteRouter.get("/multiEmbedderTest", async (req, res) =>
-    res.send(
-        renderToHtmlPage(
-            MultiEmbedderTestPage(req.query.globalEntitySelector === "true")
-        )
-    )
+    res.send(renderToHtmlPage(MultiEmbedderTestPage()))
 )
 
 getPlainRouteWithROTransaction(
@@ -565,11 +558,10 @@ getPlainRouteNonIdempotentWithRWTransaction(
     "/team/:authorSlug",
     async (req, res, trx) => {
         try {
-            // We assume here that author slugs are unique across all gdocs (not
-            // just author gdocs)
             const page = await renderGdocsPageBySlug(
                 trx,
                 req.params.authorSlug,
+                [OwidGdocType.Author],
                 true
             )
             res.send(page)
@@ -621,8 +613,26 @@ getPlainRouteWithROTransaction(
             res.status(404).send(renderNotFoundPage())
             return
         }
-        const attachments = await getTombstoneAttachments(trx, tombstone)
-        res.status(404).send(await renderGdocTombstone(tombstone, attachments))
+        const archivedVersions =
+            await getLatestArchivedPostPageVersionsIfEnabled(trx, [
+                tombstone.gdocId,
+            ])
+        const pageData: TombstonePageData = {
+            ...R.pick(tombstone, [
+                "slug",
+                "reason",
+                "includeArchiveLink",
+                "relatedLinkUrl",
+                "relatedLinkTitle",
+                "relatedLinkDescription",
+                "relatedLinkThumbnail",
+            ]),
+            archiveUrl: tombstone.includeArchiveLink
+                ? archivedVersions[tombstone.gdocId]?.archiveUrl
+                : undefined,
+        }
+        const attachments = await getTombstoneAttachments(trx, pageData)
+        res.status(404).send(renderGdocTombstone(pageData, attachments))
     }
 )
 
@@ -672,13 +682,69 @@ getPlainRouteWithROTransaction(
 
 getPlainRouteWithROTransaction(
     mockSiteRouter,
+    "/profile/:profileSlug/:entity",
+    async (req, res, trx) => {
+        const { profileSlug, entity: entityParam } = req.params
+
+        if (!profileSlug || !entityParam) {
+            return res.status(404).send(renderNotFoundPage())
+        }
+
+        try {
+            const gdoc = await getAndLoadGdocBySlug(trx, profileSlug, [
+                OwidGdocType.Profile,
+            ])
+
+            if (!gdoc || gdoc.content.type !== OwidGdocType.Profile) {
+                return res.status(404).send(renderNotFoundPage())
+            }
+
+            const entity = getRegionBySlug(entityParam)
+            if (!entity) {
+                return res.status(404).send(renderNotFoundPage())
+            }
+
+            const entitiesInScope = getEntitiesForProfile(gdoc as GdocProfile)
+            const isEntityInScope = entitiesInScope.some(
+                (profileEntity) => profileEntity.code === entity.code
+            )
+            if (!isEntityInScope) {
+                return res.status(404).send(renderNotFoundPage())
+            }
+
+            const instantiatedProfile = instantiateProfileForEntity(
+                gdoc as GdocProfile,
+                entity
+            )
+
+            return res.send(renderGdoc(instantiatedProfile, true))
+        } catch (error) {
+            console.error("Error loading profile:", error)
+            return res.status(404).send(renderNotFoundPage())
+        }
+    }
+)
+
+getPlainRouteWithROTransaction(
+    mockSiteRouter,
     "/{*splat}",
     async (req, res, trx) => {
         // Remove leading and trailing slashes
         const slug = req.path.replace(/^\/|\/$/g, "")
 
         try {
-            const page = await renderGdocsPageBySlug(trx, slug, true)
+            const page = await renderGdocsPageBySlug(
+                trx,
+                slug,
+                // filter out the namespaced types that are handled above
+                ALL_GDOC_TYPES.filter(
+                    (type) =>
+                        type !== OwidGdocType.Profile &&
+                        type !== OwidGdocType.DataInsight &&
+                        type !== OwidGdocType.Author
+                ),
+                true
+            )
             res.send(page)
             return
         } catch (e) {

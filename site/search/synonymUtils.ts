@@ -1,6 +1,6 @@
 import { countries, excludeUndefined } from "@ourworldindata/utils"
 import * as R from "remeda"
-import { SynonymMap } from "./searchTypes.js"
+import { SynonymMap } from "@ourworldindata/types"
 
 export const synonyms = [
     ["owid", "our world in data"],
@@ -166,6 +166,7 @@ export const synonyms = [
     ["solar", "photovoltaic", "photovoltaics", "pv"],
     ["tb", "tuberculosis"],
     ["ntd", "neglected tropical diseases", "neglected tropical disease"],
+    ["fgm", "female genital mutilation"],
     ["people", "population"],
     ["production", "generation"],
     ["farm", "farming", "agriculture", "food production"],
@@ -182,7 +183,6 @@ export const synonyms = [
     ["migration", "immigration", "emigration"],
     ["urbanization", "urbanisation", "urban"],
     ["foreign aid", "development assistance", "oda"],
-    ["trade", "imports", "exports"],
     ["climate change", "global warming"],
     ["conflict", "war"],
     ["deforestation", "forest loss", "tree loss"],
@@ -272,6 +272,9 @@ export const synonyms = [
         "robotaxis",
     ],
     ["gaza", "palestine", "west bank"],
+    ["hpv", "human papillomavirus"],
+    ["tertiary", "university", "college", "post-secondary"],
+    ["fdi", "foreign direct investment"],
 ]
 
 /**

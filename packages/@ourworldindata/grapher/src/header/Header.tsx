@@ -18,7 +18,7 @@ import {
     GRAPHER_FRAME_PADDING_VERTICAL,
     GRAPHER_HEADER_CLASS,
 } from "../core/GrapherConstants"
-import { GRAPHER_DARK_TEXT, GRAY_100, GRAY_80 } from "../color/ColorConstants"
+import { GRAPHER_DARK_TEXT, GRAY_100 } from "../color/ColorConstants"
 
 interface HeaderProps {
     manager: HeaderManager
@@ -233,6 +233,10 @@ abstract class AbstractHeader<
                 <a
                     href={manager.canonicalUrl}
                     data-track-note="chart_click_title"
+                    {...(manager.isInIFrame && {
+                        target: "_blank",
+                        rel: "noopener",
+                    })}
                 >
                     <h1 style={this.title.htmlStyle}>
                         {this.title.renderHTML()}
@@ -247,6 +251,10 @@ abstract class AbstractHeader<
                 <a
                     href={manager.canonicalUrl}
                     data-track-note="chart_click_title"
+                    {...(manager.isInIFrame && {
+                        target: "_blank",
+                        rel: "noopener",
+                    })}
                 >
                     {this.title.renderHTML()}
                 </a>
@@ -331,6 +339,10 @@ export class StaticHeader extends AbstractHeader<StaticHeaderProps> {
                             fontFamily:
                                 "'Playfair Display', Georgia, 'Times New Roman', 'Liberation Serif', serif",
                         }}
+                        {...(manager.isInIFrame && {
+                            target: "_blank",
+                            rel: "noopener",
+                        })}
                     >
                         {title.renderSVG(x, y, {
                             textProps: { fill: GRAY_100 },
@@ -346,11 +358,7 @@ export class StaticHeader extends AbstractHeader<StaticHeaderProps> {
                                 : 0),
                         {
                             id: makeIdForHumanConsumption("subtitle"),
-                            textProps: {
-                                fill: this.manager.isSocialMediaExport
-                                    ? GRAY_80
-                                    : GRAPHER_DARK_TEXT,
-                            },
+                            textProps: { fill: GRAPHER_DARK_TEXT },
                             detailsMarker: this.manager.detailsMarkerInSvg,
                         }
                     )}

@@ -16,17 +16,13 @@ import {
     LinkedAuthor,
     LinkedChart,
 } from "@ourworldindata/types"
-import { excludeNullish, formatDate } from "@ourworldindata/utils"
-import {
-    formatCitation,
-    generateStickyNav,
-    generateToc,
-} from "./archieToEnriched.js"
+import { excludeNullish, formatDate, generateToc } from "@ourworldindata/utils"
+import { formatCitation, generateStickyNav } from "./archieToEnriched.js"
 import { parseFaqs } from "./rawToEnriched.js"
 import { htmlToEnrichedTextBlock } from "./htmlToEnriched.js"
 import { GdocBase, getMinimalAuthorsByNames } from "./GdocBase.js"
 import { KnexReadonlyTransaction, knexRaw } from "../../db.js"
-import { getLatestChartArchivedVersionsIfEnabled } from "../archival/archivalDb.js"
+import { getLatestArchivedChartPageVersionsIfEnabled } from "../ArchivedChartVersion.js"
 import * as db from "../../db.js"
 import { BLOG_POSTS_PER_PAGE } from "../../../settings/serverSettings.js"
 import { GdocAnnouncement } from "./GdocAnnouncement.js"
@@ -90,7 +86,11 @@ export class GdocPost extends GdocBase implements OwidGdocPostInterface {
 
     override _enrichSubclassContent = (content: Record<string, any>): void => {
         const isTocForSidebar = content["sidebar-toc"]
-        content.toc = generateToc(content.body, isTocForSidebar)
+        const isLinearTopicPage = content.type === OwidGdocType.LinearTopicPage
+        content.toc = generateToc(
+            content.body,
+            isTocForSidebar || isLinearTopicPage
+        )
 
         if (content.summary) {
             content.summary = content.summary.map((html: RawBlockText) =>
@@ -187,7 +187,7 @@ export class GdocPost extends GdocBase implements OwidGdocPostInterface {
             `,
             [this.tags.map((tag) => tag.id)]
         )
-        archivedVersions ??= await getLatestChartArchivedVersionsIfEnabled(
+        archivedVersions ??= await getLatestArchivedChartPageVersionsIfEnabled(
             knex,
             relatedCharts.map((c) => c.chartId)
         )
@@ -310,12 +310,18 @@ export const enrichLatestPageItems = async (
         (images) => images.map((image) => image.filename)
     )
 
+    const announcementAuthorImageFilenames = R.pipe(
+        linkedAuthors.map((author) => author.featuredImage),
+        excludeNullish
+    )
+
     // Fetch image metadata
     const imageMetadata = await getAllImages(knex).then((allImages) =>
         pick(keyBy(allImages, "filename"), [
             ...linkedDocumentFeaturedImageFilenames,
             ...articleFeaturedImageFilenames,
             ...announcementAndDataInsightImageFilenames,
+            ...announcementAuthorImageFilenames,
         ])
     )
 

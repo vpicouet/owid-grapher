@@ -1,5 +1,4 @@
 export {
-    pairs,
     type NoUndefinedValues,
     type AllKeysRequired,
     type PartialBy,
@@ -38,10 +37,10 @@ export {
     isTouchDevice,
     type Json,
     csvEscape,
-    urlToSlug,
     trimObject,
     fetchText,
     fetchJson,
+    fetchWithTimeout,
     getUserCountryInformation,
     stripHTML,
     getRandomNumberGenerator,
@@ -69,7 +68,6 @@ export {
     mapNullToUndefined,
     lowerCaseFirstLetterUnlessAbbreviation,
     sortNumeric,
-    findIndexFast,
     getClosestTimePairs,
     omitUndefinedValues,
     isInIFrame,
@@ -100,6 +98,7 @@ export {
     recursivelyMapArticleContent,
     traverseEnrichedBlock,
     checkNodeIsSpan,
+    generateToc,
     extractLinksFromMarkdown,
     getPaginationPageNumbers,
     spansToUnformattedPlainText,
@@ -142,6 +141,8 @@ export {
     merge,
     calculateTrendDirection,
     getDisplayUnit,
+    stripOuterParentheses,
+    dimensionsToViewId,
 } from "./Util.js"
 
 export {
@@ -162,7 +163,7 @@ export {
     getPhraseForArchivalDate,
 } from "./metadataHelpers.js"
 
-export { multiDimDimensionsToViewId, getAllVariableIds } from "./multiDim.js"
+export { getAllVariableIds } from "./multiDim.js"
 
 export { isPresent } from "./isPresent.js"
 
@@ -222,9 +223,17 @@ export {
     getCountryNamesForRegion,
     checkHasMembers,
     getRegionByName,
+    getRegionBySlug,
     getParentRegions,
     getSiblingRegions,
+    articulateEntity,
 } from "./regions.js"
+export {
+    instantiateProfile,
+    type ProfileEntity,
+    getEntitiesForProfile,
+    validateConditionalSectionLists,
+} from "./profiles.js"
 
 export {
     type GridBounds,
@@ -272,6 +281,7 @@ export {
     THUMBNAIL_WIDTH,
     LARGE_THUMBNAIL_WIDTH,
     LARGEST_IMAGE_WIDTH,
+    appendImageSizeSuffix,
     getSizes,
     generateSrcSet,
     getFilenameWithoutExtension,

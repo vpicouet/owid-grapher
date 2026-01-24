@@ -41,7 +41,7 @@ export class VerticalAxisGridLines extends React.Component<VerticalAxisGridLines
                 id={makeIdForHumanConsumption("horizontal-grid-lines")}
                 className={classNames("AxisGridLines", "horizontalLines")}
             >
-                {axis.getTickValues().map((t, i) => {
+                {axis.getTickValues().map((t) => {
                     const color = t.faint
                         ? FAINT_TICK_COLOR
                         : t.solid
@@ -49,12 +49,15 @@ export class VerticalAxisGridLines extends React.Component<VerticalAxisGridLines
                           : TICK_COLOR
                     const dasharray = this.props.dashPattern ?? "4,4"
 
+                    const className = t.value === 0 ? "zero-line" : undefined
+
                     return (
                         <line
                             id={makeIdForHumanConsumption(
                                 verticalAxis.formatTick(t.value)
                             )}
-                            key={i}
+                            className={className}
+                            key={t.value}
                             x1={bounds.left.toFixed(2)}
                             y1={axis.place(t.value)}
                             x2={bounds.right.toFixed(2)}
@@ -99,7 +102,7 @@ export class HorizontalAxisGridLines extends React.Component<HorizontalAxisGridL
                 id={makeIdForHumanConsumption("vertical-grid-lines")}
                 className={classNames("AxisGridLines", "verticalLines")}
             >
-                {axis.getTickValues().map((t, i) => {
+                {axis.getTickValues().map((t) => {
                     const color = t.faint
                         ? FAINT_TICK_COLOR
                         : t.solid
@@ -112,7 +115,7 @@ export class HorizontalAxisGridLines extends React.Component<HorizontalAxisGridL
                             id={makeIdForHumanConsumption(
                                 horizontalAxis.formatTick(t.value)
                             )}
-                            key={i}
+                            key={t.value}
                             x1={axis.place(t.value)}
                             y1={bounds.bottom.toFixed(2)}
                             x2={axis.place(t.value)}
@@ -380,12 +383,12 @@ export class VerticalAxisComponent extends React.Component<VerticalAxisComponent
                 )}
                 {showTickMarks && (
                     <g id={makeIdForHumanConsumption("tick-marks")}>
-                        {visibleTickLabels.map((label, i) => (
+                        {visibleTickLabels.map((label) => (
                             <VerticalAxisTickMark
                                 id={makeIdForHumanConsumption(
                                     label.formattedValue
                                 )}
-                                key={i}
+                                key={label.value}
                                 tickMarkYPosition={verticalAxis.place(
                                     label.value
                                 )}
@@ -399,11 +402,12 @@ export class VerticalAxisComponent extends React.Component<VerticalAxisComponent
                 )}
                 {!config.hideTickLabels && (
                     <g id={makeIdForHumanConsumption("tick-labels")}>
-                        {visibleTickLabels.map((label, i) => {
-                            const { y, xAlign, yAlign, formattedValue } = label
+                        {visibleTickLabels.map((label) => {
+                            const { value, y, xAlign, yAlign, formattedValue } =
+                                label
                             return (
                                 <text
-                                    key={i}
+                                    key={value}
                                     x={tickX.toFixed(2)}
                                     y={y}
                                     dy={dyFromAlign(
@@ -527,7 +531,7 @@ export class HorizontalAxisComponent extends React.Component<{
                     <g id={makeIdForHumanConsumption("tick-marks")}>
                         {visibleTickLabels.map((label) => (
                             <line
-                                key={label.formattedValue}
+                                key={label.value}
                                 id={makeIdForHumanConsumption(
                                     label.formattedValue
                                 )}
@@ -545,7 +549,7 @@ export class HorizontalAxisComponent extends React.Component<{
                     <g id={makeIdForHumanConsumption("tick-labels")}>
                         {visibleTickLabels.map((label) => (
                             <text
-                                key={label.formattedValue}
+                                key={label.value}
                                 x={label.x}
                                 y={tickLabelYPlacement}
                                 fill={tickColor || GRAPHER_DARK_TEXT}

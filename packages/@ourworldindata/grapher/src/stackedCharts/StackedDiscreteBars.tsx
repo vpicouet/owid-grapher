@@ -18,7 +18,6 @@ import { ScaleType, SeriesName, VerticalAlign } from "@ourworldindata/types"
 import {
     BASE_FONT_SIZE,
     DEFAULT_GRAPHER_BOUNDS,
-    GRAPHER_AREA_OPACITY_DEFAULT,
     GRAPHER_FONT_SCALE_12,
     GRAPHER_OPACITY_MUTE,
 } from "../core/GrapherConstants"
@@ -38,9 +37,11 @@ import {
     TooltipTable,
     makeTooltipRoundingNotice,
     makeTooltipToleranceNotice,
+    toTooltipTableColumns,
 } from "../tooltip/Tooltip"
 import {
     Bar,
+    BAR_OPACITY,
     PlacedItem,
     SizedItem,
     StackedPoint,
@@ -51,7 +52,7 @@ import { HorizontalAxis } from "../axis/Axis"
 import { HashMap, NodeGroup } from "react-move"
 import { easeQuadOut } from "d3-ease"
 import { StackedDiscreteBarChartState } from "./StackedDiscreteBarChartState"
-import { fitLabelToBarHeight } from "../barCharts/DiscreteBarChartHelpers.js"
+import { enrichSeriesWithLabels } from "../barCharts/DiscreteBarChartHelpers.js"
 
 const BAR_SPACING_FACTOR = 0.35
 
@@ -141,22 +142,22 @@ export class StackedDiscreteBars
     }
 
     @computed private get labelFontSize(): number {
-        // can't use `this.barHeight` due to a circular dependency
-        const barHeight = this.approximateBarHeight
+        const availableHeight = this.bounds.height / this.barCount
         return Math.min(
             GRAPHER_FONT_SCALE_12 * this.fontSize,
-
-            1.1 * barHeight
+            1.1 * availableHeight
         )
     }
 
     @computed private get labelStyle(): {
         fontSize: number
         fontWeight: number
+        lineHeight: number
     } {
         return {
             fontSize: this.labelFontSize,
             fontWeight: 700,
+            lineHeight: 1,
         }
     }
 
@@ -241,20 +242,12 @@ export class StackedDiscreteBars
     }
 
     @computed private get sizedItems(): readonly SizedItem[] {
-        // can't use `this.barHeight` due to a circular dependency
-        const barHeight = this.approximateBarHeight
-
-        return this.chartState.sortedItems.map((item) => {
-            const label = item.shortEntityName ?? item.entityName
-            const labelWrap = fitLabelToBarHeight({
-                label,
-                barHeight,
-                initialWidth: 0.3 * this.bounds.width,
-                maxWidth: 0.66 * this.bounds.width,
-                labelStyle: this.labelStyle,
-            })
-
-            return { ...item, label: labelWrap }
+        return enrichSeriesWithLabels({
+            series: this.chartState.sortedItems,
+            availableHeightPerSeries: this.bounds.height / this.barCount,
+            minLabelWidth: 0.3 * this.bounds.width,
+            maxLabelWidth: 0.66 * this.bounds.width,
+            fontSettings: this.labelStyle,
         })
     }
 
@@ -281,17 +274,6 @@ export class StackedDiscreteBars
     @computed private get barHeight(): number {
         const totalWhiteSpace = this.barCount * this.barSpacing
         return (this.innerBounds.height - totalWhiteSpace) / this.barCount
-    }
-
-    // useful if `barHeight` can't be used due to a cyclic dependency
-    // keep in mind though that this is not exactly the same as `barHeight`
-    @computed private get approximateBarHeight(): number {
-        const { height } = this.bounds
-        const approximateMaxBarHeight = height / this.barCount
-        const approximateBarSpacing =
-            approximateMaxBarHeight * BAR_SPACING_FACTOR
-        const totalWhiteSpace = this.barCount * approximateBarSpacing
-        return (height - totalWhiteSpace) / this.barCount
     }
 
     @computed get fontSize(): number {
@@ -529,6 +511,12 @@ export class StackedDiscreteBars
             labelBounds.height < 0.85 * barHeight
         const labelColor = isDarkColor(bar.color) ? "#fff" : "#000"
 
+        const opacity = isHover
+            ? BAR_OPACITY.FOCUS
+            : isFaint
+              ? BAR_OPACITY.MUTE
+              : BAR_OPACITY.DEFAULT
+
         return (
             <g
                 id={makeIdForHumanConsumption(bar.seriesName)}
@@ -545,16 +533,8 @@ export class StackedDiscreteBars
                     width={barWidth}
                     height={barHeight}
                     fill={bar.color}
-                    opacity={
-                        isHover
-                            ? 1
-                            : isFaint
-                              ? 0.1
-                              : GRAPHER_AREA_OPACITY_DEFAULT
-                    }
-                    style={{
-                        transition: "height 200ms ease",
-                    }}
+                    opacity={opacity}
+                    style={{ transition: "height 200ms ease" }}
                 />
                 {showLabelInsideBar && (
                     <text
@@ -578,7 +558,7 @@ export class StackedDiscreteBars
     @computed private get tooltip(): React.ReactElement | undefined {
         const {
                 tooltipState: { target, position, fading },
-                formatColumn: { unit, shortUnit },
+                formatColumn: { displayUnit },
                 manager: { endTime: targetTime },
                 inputTable: { timeColumn },
             } = this,
@@ -620,14 +600,14 @@ export class StackedDiscreteBars
                     offsetX={20}
                     offsetY={-16}
                     title={target.entityName}
-                    subtitle={unit !== shortUnit ? unit : undefined}
+                    subtitle={displayUnit}
                     subtitleFormat="unit"
                     footer={footer}
                     dissolve={fading}
                     dismiss={() => (this.tooltipState.target = null)}
                 >
                     <TooltipTable
-                        columns={[this.formatColumn]}
+                        columns={toTooltipTableColumns(this.formatColumn)}
                         totals={[item.totalValue]}
                         rows={item.bars.map((bar) => {
                             const {
@@ -642,7 +622,7 @@ export class StackedDiscreteBars
                                 blurred,
                                 focused: name === target.seriesName,
                                 values: [!blurred ? value : undefined],
-                                notice:
+                                originalTime:
                                     !blurred && time !== targetTime
                                         ? timeColumn.formatValue(time)
                                         : undefined,

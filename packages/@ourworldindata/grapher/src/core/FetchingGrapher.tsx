@@ -12,7 +12,7 @@ import { legacyToCurrentGrapherQueryParams } from "./GrapherUrlMigrations.js"
 import { unstable_batchedUpdates } from "react-dom"
 import { Bounds } from "@ourworldindata/utils"
 import { migrateGrapherConfigToLatestVersion } from "../schema/migrations/migrate.js"
-import { useMaybeGlobalGrapherStateRef } from "../chart/GuidedChartUtils.js"
+import { useMaybeGlobalGrapherStateRef } from "../chart/guidedChartUtils.js"
 
 export interface FetchingGrapherProps {
     config?: GrapherProgrammaticInterface
@@ -116,6 +116,8 @@ export function FetchingGrapher(
     React.useEffect(() => {
         let isCancelled = false
 
+        grapherState.current.isDataReady = false
+
         async function fetchData(): Promise<void> {
             const inputTable = await fetchInputTableForConfig({
                 dimensions:
@@ -131,6 +133,8 @@ export function FetchingGrapher(
             if (isCancelled) return
 
             if (inputTable) grapherState.current.inputTable = inputTable
+
+            grapherState.current.isDataReady = true
         }
         void fetchData()
 
@@ -148,5 +152,14 @@ export function FetchingGrapher(
         grapherState,
     ])
 
-    return <Grapher grapherState={grapherState.current} />
+    return (
+        <Grapher
+            // Force remount when the slug changes to make sure the GA
+            // grapher_view event is fired when navigating between different
+            // graphers using the same FetchingGrapher instance (e.g. in the
+            // All charts block)
+            key={grapherState.current.slug}
+            grapherState={grapherState.current}
+        />
+    )
 }

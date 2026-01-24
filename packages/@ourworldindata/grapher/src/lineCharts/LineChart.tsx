@@ -9,7 +9,6 @@ import {
     excludeUndefined,
     isMobile,
     Bounds,
-    Color,
     HorizontalAlign,
     isTouchDevice,
 } from "@ourworldindata/utils"
@@ -26,6 +25,7 @@ import {
     TooltipState,
     TooltipTable,
     makeTooltipRoundingNotice,
+    toTooltipTableColumns,
 } from "../tooltip/Tooltip"
 import { NoDataModal } from "../noDataModal/NoDataModal"
 import { extent } from "d3-array"
@@ -42,6 +42,8 @@ import {
     LinePoint,
     PlacedLineChartSeries,
     RenderLineChartSeries,
+    CATEGORICAL_LEGEND_STYLE,
+    NUMERIC_LEGEND_STYLE,
     LEGEND_PADDING,
     VARIABLE_COLOR_STROKE_WIDTH,
     DEFAULT_STROKE_WIDTH,
@@ -63,12 +65,12 @@ import {
 } from "../chart/ChartUtils"
 import { CategoricalBin, ColorScaleBin } from "../color/ColorScaleBin"
 import { ColorScale } from "../color/ColorScale"
-import { GRAPHER_BACKGROUND_DEFAULT, GRAY_50 } from "../color/ColorConstants"
+import { GRAPHER_BACKGROUND_DEFAULT } from "../color/ColorConstants"
 import { darkenColorForLine } from "../color/ColorUtils"
 import {
     HorizontalColorLegendManager,
     HorizontalNumericColorLegend,
-} from "../horizontalColorLegend/HorizontalColorLegends"
+} from "../legend/HorizontalColorLegends"
 import {
     AnnotationsMap,
     getAnnotationsForSeries,
@@ -83,6 +85,7 @@ import { LineChartState } from "./LineChartState.js"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
 import { InteractionState } from "../interaction/InteractionState"
+import { LegendStyleConfig } from "../legend/LegendInteractionState"
 
 export type LineChartProps = ChartComponentProps<LineChartState>
 
@@ -266,10 +269,11 @@ export class LineChart
                                       )
                                   )
                                 : series.color
-                            const color =
-                                !series.focus.background || series.hover.active
-                                    ? valueColor
-                                    : GRAY_50
+                            const isBackground =
+                                series.focus.background && !series.hover.active
+                            const opacity = isBackground
+                                ? GRAPHER_OPACITY_MUTE
+                                : 1
 
                             return (
                                 <circle
@@ -277,7 +281,8 @@ export class LineChart
                                     cx={horizontalAxis.place(point.x)}
                                     cy={verticalAxis.place(point.y)}
                                     r={this.lineStrokeWidth / 2 + 3.5}
-                                    fill={color}
+                                    fill={valueColor}
+                                    fillOpacity={opacity}
                                     stroke={
                                         this.manager.backgroundColor ??
                                         GRAPHER_BACKGROUND_DEFAULT
@@ -339,16 +344,16 @@ export class LineChart
         )
 
         const formattedTime = formatColumn.formatTime(target.time),
-            { unit, shortUnit } = formatColumn,
+            { displayUnit: unitLabel } = formatColumn,
             { isRelativeMode, startTime } = this.manager
 
         const title = formattedTime
         const titleAnnotation = this.xAxis.label ? `(${this.xAxis.label})` : ""
 
         const columns = [formatColumn]
-        if (hasColorScale) columns.push(colorColumn)
+        if (hasColorScale && colorColumn.slug !== formatColumn.slug)
+            columns.push(colorColumn)
 
-        const unitLabel = unit !== shortUnit ? unit : undefined
         const subtitle =
             isRelativeMode && startTime
                 ? `% change since ${formatColumn.formatTime(startTime)}`
@@ -389,7 +394,7 @@ export class LineChart
                 dismiss={this.dismissTooltip}
             >
                 <TooltipTable
-                    columns={columns}
+                    columns={toTooltipTableColumns(columns)}
                     rows={sortedData.map((series) => {
                         const {
                             seriesName,
@@ -782,13 +787,13 @@ export class LineChart
     }
 
     numericBinSize = 6
-    numericBinStrokeWidth = 1
-    legendTextColor = "#555"
     legendTickSize = 1
 
-    @computed get numericBinStroke(): Color {
-        return this.manager.backgroundColor ?? GRAPHER_BACKGROUND_DEFAULT
-    }
+    // Used when faceted
+    categoricalLegendStyleConfig: LegendStyleConfig = CATEGORICAL_LEGEND_STYLE
+
+    // Used when the lines are colored by a numeric scale
+    numericLegendStyleConfig = NUMERIC_LEGEND_STYLE
 
     @computed private get numericLegend():
         | HorizontalNumericColorLegend
@@ -952,13 +957,12 @@ export class LineChart
                   )
             return {
                 legendTitle: this.legendTitle,
-                legendTextColor: this.legendTextColor,
                 legendTickSize: this.legendTickSize,
                 numericBinSize: this.numericBinSize,
-                numericBinStroke: this.numericBinStroke,
-                numericBinStrokeWidth: this.numericBinStrokeWidth,
                 numericLegendData,
                 categoricalLegendData,
+                categoricalLegendStyleConfig: this.categoricalLegendStyleConfig,
+                numericLegendStyleConfig: this.numericLegendStyleConfig,
             }
         }
         return undefined

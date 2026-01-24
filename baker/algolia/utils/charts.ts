@@ -3,12 +3,11 @@ import {
     KeyChartLevel,
     ContentGraphLinkType,
     parseChartConfig,
-} from "@ourworldindata/types"
-import * as db from "../../../db/db.js"
-import {
     ChartRecord,
     ChartRecordType,
-} from "../../../site/search/searchTypes.js"
+    ChartSlugRedirectsTableName,
+} from "@ourworldindata/types"
+import * as db from "../../../db/db.js"
 import { getAnalyticsPageviewsByUrlObj } from "../../../db/model/Pageview.js"
 import { getRelatedArticles } from "../../../db/model/Post.js"
 import { getPublishedLinksTo } from "../../../db/model/Link.js"
@@ -21,6 +20,7 @@ import {
 import { maybeAddChangeInPrefix, processAvailableEntities } from "./shared.js"
 import { GrapherState } from "@ourworldindata/grapher"
 import { toPlaintext } from "@ourworldindata/components"
+import { getMaxViews7d, PageviewsByUrl } from "./pageviews.js"
 
 const computeChartScore = (record: Omit<ChartRecord, "score">): number => {
     const { numRelatedArticles, views_7d } = record
@@ -62,6 +62,41 @@ const parseAndProcessChartRecords = (
     }
 }
 
+async function getChartRedirectSlugsByChartId(
+    knex: db.KnexReadonlyTransaction,
+    chartIds: number[]
+): Promise<Map<number, string[]>> {
+    const redirectMap = new Map<number, string[]>()
+    if (chartIds.length === 0) return redirectMap
+
+    const redirects = await knex<{
+        chart_id: number
+        slug: string
+    }>(ChartSlugRedirectsTableName)
+        .select("chart_id", "slug")
+        .whereIn("chart_id", chartIds)
+
+    for (const redirect of redirects) {
+        const existing = redirectMap.get(redirect.chart_id)
+        if (existing) existing.push(redirect.slug)
+        else redirectMap.set(redirect.chart_id, [redirect.slug])
+    }
+
+    return redirectMap
+}
+
+function getChartViews7d(
+    pageviews: PageviewsByUrl,
+    slug: string,
+    redirectSlugs: string[]
+): number {
+    const urls = [
+        `/grapher/${slug}`,
+        ...redirectSlugs.map((redirectSlug) => `/grapher/${redirectSlug}`),
+    ]
+    return getMaxViews7d(pageviews, urls)
+}
+
 export const getChartsRecords = async (
     knex: db.KnexReadonlyTransaction
 ): Promise<ChartRecord[]> => {
@@ -82,7 +117,26 @@ export const getChartsRecords = async (
                      LEFT JOIN charts_x_entities ce ON c.id = ce.chartId
                      LEFT JOIN entities e ON ce.entityId = e.id
             WHERE cc.full ->> "$.isPublished" = 'true'
-                AND c.isIndexable IS TRUE
+            -- NOT tagged "Unlisted"
+            AND NOT EXISTS (
+                SELECT 1 FROM chart_tags ct_unlisted
+                JOIN tags t_unlisted ON ct_unlisted.tagId = t_unlisted.id
+                WHERE ct_unlisted.chartId = c.id AND t_unlisted.name = 'Unlisted'
+            )
+            -- AND has at least one indexable tag (topic page OR searchableInAlgolia)
+            AND EXISTS (
+                SELECT 1 FROM chart_tags ct_topic
+                JOIN tags t_topic ON ct_topic.tagId = t_topic.id
+                LEFT JOIN posts_gdocs pg ON pg.slug = t_topic.slug
+                WHERE ct_topic.chartId = c.id
+                AND (
+                    t_topic.searchableInAlgolia = TRUE
+                    OR (
+                        pg.published = TRUE
+                        AND pg.type IN ('topic-page', 'linear-topic-page')
+                    )
+                )
+            )
             GROUP BY c.id
         )
         SELECT c.id,
@@ -105,6 +159,10 @@ export const getChartsRecords = async (
     const parsedRows = chartsToIndex.map(parseAndProcessChartRecords)
 
     const pageviews = await getAnalyticsPageviewsByUrlObj(knex)
+    const chartRedirectSlugsByChartId = await getChartRedirectSlugsByChartId(
+        knex,
+        parsedRows.map((row) => row.id)
+    )
 
     const topicHierarchiesByChildName =
         await db.getTopicHierarchiesByChildName(knex)
@@ -156,7 +214,11 @@ export const getChartsRecords = async (
             titleLength: c.config.title?.length ?? 0,
             // Number of references to this chart in all our posts and pages
             numRelatedArticles: relatedArticles.length + linksFromGdocs.length,
-            views_7d: pageviews[`/grapher/${c.slug}`]?.views_7d ?? 0,
+            views_7d: getChartViews7d(
+                pageviews,
+                c.slug,
+                chartRedirectSlugsByChartId.get(c.id) ?? []
+            ),
             isIncomeGroupSpecificFM: false,
         } as ChartRecord
         const score = computeChartScore(record)

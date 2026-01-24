@@ -22,10 +22,6 @@
         }
     }
 
-    .newsletter-subscription-form__subheader {
-        display: none;
-    }
-
     .newsletter-subscription-form__checkbox-image {
         display: block;
         width: 84px;
@@ -103,7 +99,7 @@
     }
 
     .owid-socials__label {
-        @include body-2-bold;
+        @include body-2-bold-tight;
         display: inline-block;
         margin-left: 8px;
         height: unset;

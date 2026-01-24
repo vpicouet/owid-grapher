@@ -11,7 +11,6 @@ import {
     SiteFooterContext,
     TagGraphRoot,
 } from "@ourworldindata/utils"
-import { hydrateProminentLink } from "./blocks/ProminentLink.js"
 import {
     DataPageV2Content,
     OWID_DATAPAGE_CONTENT_ROOT_ID,
@@ -50,11 +49,15 @@ import { NewsletterSubscriptionForm } from "./NewsletterSubscription.js"
 import { NewsletterSubscriptionContext } from "./newsletter.js"
 import { SUBSCRIBE_PAGE_FORM_CONTAINER_ID } from "@ourworldindata/types"
 
-function hydrateSearchPage() {
+function runSearchPage() {
     const root = document.getElementById("search-page-root")
     const topicTagGraph = window._OWID_TOPIC_TAG_GRAPH as TagGraphRoot
     if (root) {
-        hydrateRoot(root, <SearchWrapper topicTagGraph={topicTagGraph} />)
+        createRoot(root).render(
+            <BrowserRouter>
+                <SearchWrapper topicTagGraph={topicTagGraph} />
+            </BrowserRouter>
+        )
     }
 }
 
@@ -137,6 +140,7 @@ function hydrateDataPageV2Content({
                 {...props}
                 grapherConfig={grapherConfig}
                 isPreviewing={isPreviewing}
+                archiveContext={window._OWID_ARCHIVE_CONTEXT}
             />
         </DebugProvider>
     )
@@ -209,8 +213,8 @@ function runSiteNavigation(hideDonationFlag?: boolean) {
         }
 
         let archiveInfo: ArchiveMetaInformation | undefined
-        if (window._OWID_ARCHIVE_INFO) {
-            archiveInfo = window._OWID_ARCHIVE_INFO
+        if (window._OWID_ARCHIVE_CONTEXT) {
+            archiveInfo = window._OWID_ARCHIVE_CONTEXT
         }
 
         const root = createRoot(siteNavigationElem)
@@ -238,13 +242,17 @@ function runSiteTools() {
 
 const hydrateOwidGdoc = (debug?: boolean, isPreviewing?: boolean) => {
     const wrapper = document.querySelector("#owid-document-root")
-    const props = deserializeOwidGdocPageData(window._OWID_GDOC_PROPS)
     if (!wrapper) return
+    const props = deserializeOwidGdocPageData(window._OWID_GDOC_PROPS)
     hydrateRoot(
         wrapper,
         <AriaAnnouncerProvider>
             <DebugProvider debug={debug}>
-                <OwidGdoc {...props} isPreviewing={isPreviewing} />
+                <OwidGdoc
+                    {...props}
+                    isPreviewing={isPreviewing}
+                    archiveContext={window._OWID_ARCHIVE_CONTEXT}
+                />
             </DebugProvider>
             <AriaAnnouncer />
         </AriaAnnouncerProvider>
@@ -265,6 +273,7 @@ const hydrateMultiDimDataPageContent = (isPreviewing?: boolean) => {
                     config={MultiDimDataPageConfig.fromObject(configObj)}
                     {...props}
                     isPreviewing={isPreviewing}
+                    archiveContext={window._OWID_ARCHIVE_CONTEXT}
                 />
             </BrowserRouter>
         </DebugProvider>
@@ -280,7 +289,7 @@ interface SiteFooterScriptsArgs {
 }
 
 export const runSiteFooterScriptsForArchive = (args: SiteFooterScriptsArgs) => {
-    const { context, isPreviewing } = args || {}
+    const { debug, context, isPreviewing } = args || {}
 
     switch (context) {
         case SiteFooterContext.dataPageV2:
@@ -306,6 +315,15 @@ export const runSiteFooterScriptsForArchive = (args: SiteFooterScriptsArgs) => {
             // runSiteTools()
             // runCookiePreferencesManager()
             void runDetailsOnDemand()
+            break
+        case SiteFooterContext.gdocsDocument:
+            hydrateOwidGdoc(debug, isPreviewing)
+            // runAllGraphersLoadedListener()
+            runSiteNavigation()
+            runFootnotes()
+            void runDetailsOnDemand()
+            // runSiteTools()
+            // runCookiePreferencesManager()
             break
         default:
             console.error(
@@ -372,22 +390,18 @@ export const runSiteFooterScripts = async (
             await hydrateDataInsightsIndexPage()
         // falls through
         case SiteFooterContext.searchPage:
-            hydrateSearchPage()
+            runSearchPage()
         // falls through
         case SiteFooterContext.subscribePage:
             hydrateSubscribePage()
         // falls through
         default:
             // Features that were not ported over to gdocs, are only being run on WP pages:
-            // - global entity selector
-            // - country-aware prominent links
             // - embedding charts through MultiEmbedderSingleton.embedAll()
             runSiteNavigation(hideDonationFlag)
             hydrateCodeSnippets()
-            MultiEmbedderSingleton.setUpGlobalEntitySelectorForEmbeds()
             MultiEmbedderSingleton.embedAll(isPreviewing)
             runAllGraphersLoadedListener()
-            hydrateProminentLink(MultiEmbedderSingleton.selection)
             runFootnotes()
             runSiteTools()
             runCookiePreferencesManager()

@@ -209,6 +209,22 @@ export function enumerateGdocComponentsWithoutChildren(
                     path
                 )
             )
+            .with({ type: "explore-data-section" }, (exploreDataSection) =>
+                handleComponent(
+                    exploreDataSection,
+                    [{ prop: "content", iterator: iterateArrayProp }],
+                    parentPath,
+                    path
+                )
+            )
+            .with({ type: "conditional-section" }, (conditionalSection) =>
+                handleComponent(
+                    conditionalSection,
+                    [{ prop: "content", iterator: iterateArrayProp }],
+                    parentPath,
+                    path
+                )
+            )
             .with({ type: "expander" }, (expander) =>
                 handleComponent(
                     expander,
@@ -351,9 +367,9 @@ export function enumerateGdocComponentsWithoutChildren(
                         "recirc",
                         "resource-panel",
                         "research-and-writing",
-                        "scroller",
                         "sdg-grid",
                         "sdg-toc",
+                        "ltp-toc",
                         "topic-page-intro",
                         "all-charts",
                         "entry-summary",
@@ -361,6 +377,8 @@ export function enumerateGdocComponentsWithoutChildren(
                         "pill-row",
                         "homepage-search",
                         "homepage-intro",
+                        "featured-metrics",
+                        "featured-data-insights",
                         "latest-data-insights",
                         "aside",
                         "text",
@@ -370,7 +388,8 @@ export function enumerateGdocComponentsWithoutChildren(
                         "donors",
                         "socials",
                         "subscribe-banner",
-                        "narrative-chart"
+                        "narrative-chart",
+                        "static-viz"
                     ),
                 },
                 (c) => handleComponent(c, [], parentPath, path)

@@ -1,20 +1,21 @@
-import { useCallback, useContext, useState } from "react"
+import React, { useCallback, useState } from "react"
 import {
+    AssetMap,
     generateSourceProps,
     ImageMetadata,
+    readFromAssetMap,
     triggerDownloadFromBlob,
 } from "@ourworldindata/utils"
 import cx from "classnames"
 import { CLOUDFLARE_IMAGES_URL } from "../../../settings/clientSettings.js"
-import { DocumentContext } from "../DocumentContext.js"
+import { useDocumentContext } from "../DocumentContext.js"
 import { useImage } from "../utils.js"
 import { BlockErrorFallback } from "./BlockErrorBoundary.js"
 import { SMALL_BREAKPOINT_MEDIA_QUERY } from "../../SiteConstants.js"
 import { useMediaQuery } from "usehooks-ts"
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faDownload } from "@fortawesome/free-solid-svg-icons"
 import { Container } from "./layout.js"
 import { Lightbox } from "../../Lightbox.js"
+import { FloatingDownloadButton } from "./FloatingDownloadButton.js"
 
 // generates rules that tell the browser:
 // below the medium breakpoint, the image will be 95vw wide
@@ -65,15 +66,30 @@ const containerSizes: Record<ImageParentContainer, string> = {
 
 export const LIGHTBOX_IMAGE_CLASS = "lightbox-image"
 
+function makeSrc(image: ImageMetadata, assetMap?: AssetMap) {
+    if (!image.cloudflareId) {
+        throw new Error("Image has no cloudflareId")
+    }
+    return readFromAssetMap(assetMap, {
+        path: image.filename,
+        fallback: `${CLOUDFLARE_IMAGES_URL}/${image.cloudflareId}/w=${image.originalWidth}`,
+    })
+}
+
 export default function Image(props: {
-    filename: string
+    filename?: string
     smallFilename?: string
     alt?: string
     hasOutline?: boolean
     className?: string
     containerType?: ImageParentContainer
     shouldLightbox?: boolean
+    shouldHideDownloadButton?: boolean
     preferSmallFilename?: boolean
+    // Manually-passed image data (for StaticViz)
+    imageData?: ImageMetadata
+    smallImageData?: ImageMetadata
+    DownloadButton?: React.ReactNode
 }) {
     const {
         filename,
@@ -81,7 +97,11 @@ export default function Image(props: {
         hasOutline,
         containerType = "default",
         shouldLightbox = true,
+        shouldHideDownloadButton = false,
         preferSmallFilename,
+        imageData,
+        smallImageData,
+        DownloadButton,
     } = props
 
     const className = cx("image", props.className, {
@@ -91,10 +111,20 @@ export default function Image(props: {
     // Whether we should show the lightbox and a download button
     const isInteractive = shouldLightbox && containerType !== "thumbnail"
 
-    const { isPreviewing } = useContext(DocumentContext)
+    const { archiveContext, isPreviewing } = useDocumentContext()
+    const isOnArchivalPage = archiveContext?.type === "archive-page"
+    const assetMap = isOnArchivalPage
+        ? archiveContext?.assets?.runtime
+        : undefined
     const isSmall = useMediaQuery(SMALL_BREAKPOINT_MEDIA_QUERY)
-    const image = useImage(filename)
-    const smallImage = useImage(smallFilename)
+
+    // Always call hooks unconditionally, then choose which data to use
+    const imageFromHook = useImage(filename)
+    const smallImageFromHook = useImage(smallFilename)
+
+    // Use manually-passed image data if provided, otherwise use filename-based lookup
+    const image = imageData || imageFromHook
+    const smallImage = smallImageData || smallImageFromHook
     const activeImage =
         (isSmall || preferSmallFilename) && smallImage ? smallImage : image
     const [isLightboxOpen, setIsLightboxOpen] = useState(false)
@@ -118,17 +148,17 @@ export default function Image(props: {
     const handleDownload = useCallback(async () => {
         if (!activeImage) return
         const { filename } = activeImage
-        const src = makeSrc(activeImage)
+        const src = makeSrc(activeImage, assetMap)
         if (src && filename) {
             const response = await fetch(src)
             const blob = await response.blob()
             triggerDownloadFromBlob(filename, blob)
         }
-    }, [activeImage])
+    }, [activeImage, assetMap])
 
     if (!activeImage || !activeImage.cloudflareId) {
         if (isPreviewing) {
-            return renderImageError(filename)
+            return renderImageError(filename || "unknown")
         }
         // Don't render anything if we're not previewing (i.e. a bake) and the image is not found
         return null
@@ -136,19 +166,23 @@ export default function Image(props: {
 
     const alt = props.alt ?? activeImage.defaultAlt
 
-    function makeSrc(image: ImageMetadata) {
-        if (!image.cloudflareId) {
-            throw new Error("Image has no cloudflareId")
-        }
-        return `${CLOUDFLARE_IMAGES_URL}/${image.cloudflareId}/w=${image.originalWidth}`
-    }
-
-    const imageSrc = makeSrc(activeImage)
+    const imageSrc = makeSrc(activeImage, assetMap)
     const sourceProps = generateSourceProps(
         smallImage,
         activeImage,
-        CLOUDFLARE_IMAGES_URL
+        CLOUDFLARE_IMAGES_URL,
+        assetMap
     )
+
+    const downloadButton = !isInteractive
+        ? null
+        : (DownloadButton ??
+          (!shouldHideDownloadButton && (
+              <FloatingDownloadButton
+                  label="Download"
+                  onClick={() => void handleDownload()}
+              />
+          )))
 
     return (
         <div className={className}>
@@ -175,28 +209,7 @@ export default function Image(props: {
                     height={activeImage.originalHeight ?? undefined}
                 />
             </picture>
-            {isInteractive && (
-                <div className="article-block__image-download-button-container">
-                    <button
-                        aria-label={`Download ${filename}`}
-                        className="article-block__image-download-button"
-                        onClick={(e) => {
-                            e.preventDefault()
-                            void handleDownload()
-                        }}
-                    >
-                        <div className="article-block__image-download-button-background-layer">
-                            <FontAwesomeIcon
-                                icon={faDownload}
-                                className="article-block__image-download-button-icon"
-                            />
-                            <span className="article-block__image-download-button-text">
-                                Download image
-                            </span>
-                        </div>
-                    </button>
-                </div>
-            )}
+            {downloadButton}
             {isLightboxOpen && (
                 <Lightbox
                     imgSrc={imageSrc}

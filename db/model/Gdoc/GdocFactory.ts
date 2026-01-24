@@ -52,6 +52,7 @@ import { GdocAuthor } from "./GdocAuthor.js"
 import { extractFilenamesFromBlock } from "./gdocUtils.js"
 import { getGdocComponentsWithoutChildren } from "./extractGdocComponentInfo.js"
 import { GdocAnnouncement } from "./GdocAnnouncement.js"
+import { GdocProfile } from "./GdocProfile.js"
 
 export function gdocFromJSON(
     json: Record<string, any>
@@ -61,7 +62,8 @@ export function gdocFromJSON(
     | GdocHomepage
     | GdocAbout
     | GdocAuthor
-    | GdocAnnouncement {
+    | GdocAnnouncement
+    | GdocProfile {
     if (typeof json.content === "string") {
         json.content = JSON.parse(json.content)
     }
@@ -113,6 +115,9 @@ export function gdocFromJSON(
             // TODO: better validation here?
             () => GdocAnnouncement.create({ ...(json as any) })
         )
+        .with(OwidGdocType.Profile, () =>
+            GdocProfile.create({ ...(json as any) })
+        )
         .exhaustive()
 }
 
@@ -154,6 +159,7 @@ export async function updateGdocContentOnly(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ): Promise<void> {
     gdoc.updateMarkdown()
     await knex
@@ -297,8 +303,12 @@ export async function getMinimalGdocBaseObjects(
 export async function getPublishedGdocBaseObjectBySlug(
     knex: KnexReadonlyTransaction,
     slug: string,
-    fetchLinkedTags: boolean
+    fetchLinkedTags: boolean,
+    types: OwidGdocType[]
 ): Promise<OwidGdocBaseInterface | undefined> {
+    if (types.length === 0) {
+        throw new Error("At least one Gdoc type must be provided")
+    }
     const row = await knexRawFirst<DbRawPostGdoc>(
         knex,
         `-- sql
@@ -306,8 +316,9 @@ export async function getPublishedGdocBaseObjectBySlug(
             FROM posts_gdocs
             WHERE slug = ?
             AND published = 1
-            AND publishedAt <= NOW()`,
-        [slug]
+            AND publishedAt <= NOW()
+            AND type IN (?)`,
+        [slug, types]
     )
     if (!row) return undefined
     const enrichedRow = parsePostsGdocsRow(row)
@@ -338,9 +349,15 @@ export async function getPublishedGdocBaseObjectBySlug(
     return gdoc
 }
 
+/**
+ * From a slug, get a Gdoc object with all its metadata and state loaded, in its correct subclass.
+ * Only fetch the Gdoc if it matches one of the provided types.
+ * (There can be multiple published gdocs with the same slug if they are of different types)
+ */
 export async function getAndLoadGdocBySlug(
     knex: KnexReadonlyTransaction,
-    slug: string
+    slug: string,
+    types: OwidGdocType[]
 ): Promise<
     | GdocPost
     | GdocDataInsight
@@ -348,11 +365,12 @@ export async function getAndLoadGdocBySlug(
     | GdocAbout
     | GdocAuthor
     | GdocAnnouncement
+    | GdocProfile
 > {
-    const base = await getPublishedGdocBaseObjectBySlug(knex, slug, true)
+    const base = await getPublishedGdocBaseObjectBySlug(knex, slug, true, types)
     if (!base) {
         throw new Error(
-            `No published Google Doc with slug "${slug}" found in the database`
+            `No published Google Doc with slug "${slug}" with types "${types.join(", ")}" found in the database`
         )
     }
     return loadGdocFromGdocBase(knex, base)
@@ -370,6 +388,7 @@ export async function getAndLoadGdocById(
     | GdocAbout
     | GdocAuthor
     | GdocAnnouncement
+    | GdocProfile
 > {
     const base = await getGdocBaseObjectById(knex, id, true)
     if (!base)
@@ -405,6 +424,7 @@ export async function loadGdocFromGdocBase(
     | GdocAbout
     | GdocAuthor
     | GdocAnnouncement
+    | GdocProfile
 > {
     const shouldLoadState = options?.loadState ?? true
 
@@ -434,11 +454,18 @@ export async function loadGdocFromGdocBase(
         .with(OwidGdocType.Homepage, () => GdocHomepage.create(base))
         .with(OwidGdocType.Author, () => GdocAuthor.create(base))
         .with(OwidGdocType.Announcement, () => GdocAnnouncement.create(base))
+        .with(OwidGdocType.Profile, () => GdocProfile.create(base))
         .exhaustive()
 
     if (contentSource === GdocsContentSource.Gdocs) {
         // TODO: if we get here via fromJSON then we have already done this - optimize that?
         await gdoc.fetchAndEnrichGdoc(acceptSuggestions)
+        const updatedType = _.get(gdoc, "content.type") as unknown
+        if (!checkIsOwidGdocType(updatedType)) {
+            throw new Error(
+                `Fetched Google Doc with id "${gdoc.id}" has invalid type "${updatedType}"`
+            )
+        }
     }
 
     if (shouldLoadState) {
@@ -700,6 +727,7 @@ export function getDbEnrichedGdocFromOwidGdoc(
     const enrichedGdoc = {
         manualBreadcrumbs: gdoc.manualBreadcrumbs,
         content: gdoc.content,
+        contentMd5: gdoc.contentMd5,
         createdAt: gdoc.createdAt,
         id: gdoc.id,
         markdown: gdoc.markdown,
@@ -715,7 +743,15 @@ export function getDbEnrichedGdocFromOwidGdoc(
 export async function upsertGdoc(
     knex: KnexReadWriteTransaction,
     gdoc: GdocBase
-): Promise<DbEnrichedPostGdoc> {
+): Promise<
+    | GdocPost
+    | GdocDataInsight
+    | GdocHomepage
+    | GdocAbout
+    | GdocAuthor
+    | GdocAnnouncement
+    | GdocProfile
+> {
     let sql = undefined
     try {
         gdoc.updateMarkdown()
@@ -783,6 +819,7 @@ export async function setImagesInContentGraph(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ): Promise<void> {
     const id = gdoc.id
     // Deleting and recreating these is simpler than tracking orphans over the next code block

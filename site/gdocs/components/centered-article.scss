@@ -1,5 +1,3 @@
-@use "sass:color";
-
 #gdoc-admin-bar {
     display: none;
     position: absolute;
@@ -54,7 +52,10 @@
         height: 0;
         // Above explorer chrome
         z-index: 3;
-        margin-top: -48px;
+        margin-top: -32px;
+        @include md-down {
+            margin-top: -64px;
+        }
         .entry-sidebar {
             height: 100vh;
             position: absolute;
@@ -109,15 +110,20 @@
 
             .toggle-toc {
                 margin-left: 0;
-                transform: translateX(calc(100% + 16px));
+                transform: translateX(calc(100% + 32px));
                 position: absolute;
                 top: 0;
                 bottom: 0;
                 right: 0;
-                padding: 16px 0;
+                padding: 32px 0;
                 pointer-events: none;
                 display: unset;
                 transition: transform 300ms ease;
+                @include md-down {
+                    padding: 18px 0;
+                    transform: translateX(calc(100% + 16px));
+                }
+
                 button {
                     @include popover-box-button;
                     z-index: 20;
@@ -127,10 +133,10 @@
                     white-space: nowrap;
                     box-shadow: none;
                     background: #fff;
-                    border: 1px solid $blue-20;
-                    line-height: 1.25;
-                    padding: 6px;
-                    border-radius: 4px;
+                    border: 1px solid $blue-70;
+                    padding: 6.5px 16px;
+                    line-height: 16px;
+                    border-radius: 0;
 
                     &:hover {
                         background: #fff;
@@ -145,10 +151,11 @@
                     }
 
                     span {
+                        @include note-12-medium;
+                        line-height: 16px;
                         color: $blue-90;
-                        margin-left: 5px;
+                        margin-left: 8px;
                         position: relative;
-                        top: 1px;
                     }
                 }
             }
@@ -351,119 +358,6 @@ h3.article-block__heading {
     }
 }
 
-.article-block__image,
-.key-insight__asset-container {
-    width: 100%;
-    margin: 32px 0;
-
-    .image {
-        position: relative;
-    }
-
-    & .image--has-outline picture {
-        outline: 1px solid $gray-10;
-    }
-
-    @include touch-device {
-        &:has(.article-block__image-download-button-container) {
-            margin-bottom: 16px;
-        }
-    }
-
-    picture {
-        // fixes strange extra height that is otherwise added to the element on firefox
-        display: flex;
-
-        // fixes wrong img aspect ratio in Safari < 14, see https://stackoverflow.com/a/61196907/10670163
-        align-items: flex-start;
-    }
-
-    img {
-        width: 100%;
-
-        &.lightbox-image {
-            cursor: zoom-in;
-        }
-    }
-
-    &:hover {
-        .article-block__image-download-button {
-            opacity: 1;
-        }
-    }
-
-    .article-block__image-download-button-container {
-        bottom: 16px;
-        right: 16px;
-        position: absolute;
-        overflow: hidden;
-
-        @include touch-device {
-            position: initial;
-            margin-top: 16px;
-
-            .article-block__image-download-button {
-                opacity: 1;
-                transform: none;
-                width: 100%;
-            }
-            .article-block__image-download-button-background-layer {
-                display: flex;
-                justify-content: center;
-                height: 40px;
-                color: $blue-90;
-                background-color: $blue-20;
-            }
-            .article-block__image-download-button-text {
-                opacity: 1;
-            }
-        }
-    }
-
-    .article-block__image-download-button {
-        background: transparent;
-        transform: translateX(calc(100% - 28px));
-        transition: 0.3s ease;
-        backdrop-filter: blur(1px);
-        padding: 0;
-        opacity: 0;
-
-        &:hover,
-        &:focus {
-            transform: translateX(0);
-            opacity: 1;
-            .article-block__image-download-button-text {
-                opacity: 1;
-            }
-        }
-    }
-
-    .article-block__image-download-button-background-layer {
-        background-color: color.scale($gray-70, $alpha: -25%);
-        display: flex;
-        align-items: center;
-        cursor: pointer;
-        border: none;
-        color: #fff;
-        height: 28px;
-        padding-left: 8px;
-        padding-right: 8px;
-    }
-
-    .article-block__image-download-button-icon {
-        width: 12px;
-        height: 12px;
-        margin-right: 4px;
-    }
-    .article-block__image-download-button-text {
-        @include label-2-medium;
-        display: inline-block;
-        line-height: 16px;
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-}
-
 .article-block__video {
     margin: 32px 0;
     text-align: center;
@@ -520,6 +414,9 @@ h3.article-block__heading {
     text-align: center;
     text-wrap: balance;
     margin-top: 16px;
+    a {
+        @include owid-link-90;
+    }
 }
 
 h2.article-block__heading.has-supertitle {
@@ -558,9 +455,6 @@ h3.article-block__heading.has-supertitle {
 .centered-article-header__breadcrumbs-container {
     .centered-article-header__breadcrumbs {
         @include body-3-regular;
-        @include sm-only {
-            @include note-1-medium;
-        }
         &.breadcrumbs-white {
             color: $white;
         }
@@ -574,12 +468,16 @@ h3.article-block__heading.has-supertitle {
         // unless the breadcrumbs are longer than a single line.
         --header-breadcrumb-margin-top: 40px;
 
+        margin-top: var(--header-breadcrumb-margin-top);
+        margin-bottom: calc(-1.6em - var(--header-breadcrumb-margin-top));
+
+        @include sm-only {
+            @include note-1-medium;
+        }
+
         @include md-down {
             --header-breadcrumb-margin-top: 18px;
         }
-
-        margin-top: var(--header-breadcrumb-margin-top);
-        margin-bottom: calc(-1.6em - var(--header-breadcrumb-margin-top));
 
         a {
             @include owid-link-90;
@@ -608,15 +506,19 @@ h3.article-block__heading.has-supertitle {
 
     .centered-article-header__title {
         @include display-2-semibold;
-        margin-top: 0;
-        margin-bottom: 24px;
-        color: $blue-90;
-        text-wrap: balance;
+        & {
+            margin-top: 0;
+            margin-bottom: 24px;
+            color: $blue-90;
+            text-wrap: balance;
+        }
 
         @include md-down {
             @include h2-bold;
-            margin: 0 16px;
-            margin-bottom: 8px;
+            & {
+                margin: 0 16px;
+                margin-bottom: 8px;
+            }
         }
     }
 }
@@ -639,7 +541,7 @@ h3.article-block__heading.has-supertitle {
     border-top: 1px solid $blue-10;
     padding: 32px 0;
     color: $blue-60;
-    @include body-1-regular;
+    @include body-3-regular;
 
     a {
         text-underline-offset: 5px;
@@ -650,25 +552,8 @@ h3.article-block__heading.has-supertitle {
         }
     }
 
-    .centered-article-header__byline {
-        margin: 0 16px;
-        @include md-down {
-            @include body-3-regular;
-        }
-    }
-
-    .centered-article-header__dateline {
-        margin: 0 16px;
-        @include md-down {
-            @include body-3-regular;
-            font-size: 0.75rem;
-            margin-top: 4px;
-        }
-    }
-
     .centered-article-header__links a {
         @include md-down {
-            @include body-3-regular;
             margin: 0;
             &:last-child {
                 margin-top: 4px;
@@ -694,6 +579,21 @@ h3.article-block__heading.has-supertitle {
             margin-bottom: 16px;
         }
     }
+}
+
+.centered-article-header__meta-container-left {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 24px;
+}
+
+.centered-article-header__browse-versions-button {
+    @include owid-link-60;
+    padding: 0;
+    background-color: transparent;
+    display: inline;
+    cursor: pointer;
 }
 
 .footnote-container,
@@ -863,8 +763,14 @@ p.article-block__text + #article-licence {
     grid-row: span 3;
 
     margin-bottom: 8px;
-    a {
+    .span-link {
         @include owid-link-90;
+    }
+    .guided-chart-link {
+        svg {
+            height: 12px;
+            top: 0px;
+        }
     }
 
     @include md-down {
@@ -1047,59 +953,6 @@ div.raw-html-table__container {
     position: sticky;
 }
 
-.article-block__scroller {
-    margin-bottom: 32px;
-    position: relative;
-
-    .scroller__chart {
-        margin: 0;
-    }
-
-    @include sm-up {
-        .scroller__paragraph {
-            height: 50vh;
-            margin: 200px 0;
-
-            &:first-child {
-                margin-top: 0;
-            }
-        }
-        .scroller__chart {
-            position: sticky;
-            top: calc((100vh - 550px) / 2);
-        }
-    }
-
-    @include sm-only {
-        .scroller__paragraph-container {
-            pointer-events: none;
-            z-index: 1;
-        }
-
-        .scroller__chart-container {
-            position: sticky;
-            bottom: 0;
-            z-index: 0;
-        }
-
-        .GrapherComponent {
-            box-shadow: none;
-        }
-
-        .scroller__paragraph-intersection-wrapper {
-            height: 100vh;
-        }
-
-        .scroller__paragraph {
-            @include body-2-regular;
-            background: white;
-            padding: 8px;
-            outline: 1px solid $gray-10;
-            pointer-events: all;
-        }
-    }
-}
-
 .article-block__cookie-notice {
     .cookie-preferences {
         margin: 0;
@@ -1124,7 +977,7 @@ div.raw-html-table__container {
         .description,
         .last-updated {
             @include body-3-regular;
-            color: $blue-65;
+            color: $blue-70;
         }
 
         .cookie-preference {
@@ -1263,70 +1116,12 @@ div.raw-html-table__container {
     }
 }
 
-.article-block__prominent-link {
-    margin-bottom: 8px;
-    color: $blue-90;
-    background-color: $blue-5;
-    padding: 16px;
-
-    > .prominent-link__image {
-        height: 100%;
-        width: 100%;
-        margin-top: 4px;
-    }
-
-    .prominent-link__image--centered,
-    .prominent-link__text--centered {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-
-    .prominent-link__heading-wrapper {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-    }
-
-    .prominent-link__icon-external {
-        color: $blue-60;
-        margin-top: 4px;
-    }
-
-    &:hover .prominent-link__icon-external {
-        color: $blue-90;
-    }
-
-    p {
-        margin: 0;
-        @include sm-only {
-            overflow: hidden;
-            display: -webkit-box;
-            -webkit-box-orient: vertical;
-            -webkit-line-clamp: 3;
-        }
-    }
-
-    h3 {
-        display: inline-block;
-        margin: 0 0 4px 0;
-        &:hover {
-            text-decoration: underline;
-        }
-    }
-
-    // Last consecutive sibling.
-    &:has(+ :not(.article-block__prominent-link)) {
-        margin-bottom: 32px;
-    }
-}
-
-@include sm-only {
-    .article-block__text + .article-block__prominent-link {
+.article-block__text + .article-block__prominent-link {
+    margin-top: 16px; // makes 32px gap with the default 16px bottom margin of text blocks, for symmetry with bottom margin 👆
+    @include sm-only {
         margin-top: 8px;
     }
 }
-
 .article-block__key-insights {
     .slide[data-active="true"] {
         // Have to override the WP styles, which we can undo once they're removed
@@ -1439,6 +1234,10 @@ div.raw-html-table__container {
         width: calc(100% - 56px);
         overflow: hidden;
         text-overflow: ellipsis;
+        // Explicit line-height to prevent Safari from clipping descenders (g,
+        // y, p, etc.) with overflow: hidden. The taller line box gives room for
+        // descenders inside the clipping boundary.
+        line-height: 1.4;
     }
 
     .aa-Form {

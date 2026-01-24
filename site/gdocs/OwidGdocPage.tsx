@@ -20,15 +20,18 @@ import {
     spansToUnformattedPlainText,
     extractGdocPageData,
     OwidGdocPageData,
+    readFromAssetMap,
 } from "@ourworldindata/utils"
 import { getCanonicalUrl, getPageTitle } from "@ourworldindata/components"
 import { DebugProvider } from "./DebugProvider.js"
 import { match, P } from "ts-pattern"
 import {
     ARCHIVED_THUMBNAIL_FILENAME,
+    ArchiveContext,
     EnrichedBlockText,
     OwidGdocPostInterface,
     OwidGdocAuthorInterface,
+    OwidGdocProfileInterface,
 } from "@ourworldindata/types"
 import { DATA_INSIGHT_ATOM_FEED_PROPS } from "../SiteConstants.js"
 import { Html } from "../Html.js"
@@ -80,6 +83,9 @@ function getPageDesc(gdoc: OwidGdocUnionType): string | undefined {
                   )
                 : undefined
         })
+        .with({ content: { type: OwidGdocType.Profile } }, (gdoc) => {
+            return gdoc.content.excerpt
+        })
         .with(
             {
                 content: {
@@ -95,7 +101,7 @@ type JsonLdAuthor = Person | Organization
 
 function makeJsonLdAuthors(
     baseUrl: string,
-    gdoc: OwidGdocPostInterface
+    gdoc: OwidGdocPostInterface | OwidGdocProfileInterface
 ): JsonLdAuthor[] {
     return gdoc.content.authors.map((gdocAuthor) => {
         if (gdocAuthor.toLowerCase().includes("our world in data")) {
@@ -129,7 +135,7 @@ function JsonLdArticle({
     baseUrl,
     imageUrl,
 }: {
-    gdoc: OwidGdocPostInterface
+    gdoc: OwidGdocPostInterface | OwidGdocProfileInterface
     baseUrl: string
     imageUrl?: string
 }) {
@@ -221,16 +227,30 @@ function isPostPredicate(
     )
 }
 
+function isProfilePredicate(
+    gdoc: OwidGdocUnionType
+): gdoc is OwidGdocProfileInterface {
+    return gdoc.content.type === OwidGdocType.Profile
+}
+
+function isArticleLikePredicate(
+    gdoc: OwidGdocUnionType
+): gdoc is OwidGdocPostInterface | OwidGdocProfileInterface {
+    return isPostPredicate(gdoc) || isProfilePredicate(gdoc)
+}
+
 export default function OwidGdocPage({
     baseUrl,
     gdoc,
     debug,
     isPreviewing = false,
+    archiveContext,
 }: {
     baseUrl: string
     gdoc: OwidGdocUnionType
     debug?: boolean
     isPreviewing?: boolean
+    archiveContext?: ArchiveContext
 }) {
     const { content, createdAt, publishedAt } = gdoc
 
@@ -238,9 +258,11 @@ export default function OwidGdocPage({
     const featuredImageFilename = getFeaturedImageFilename(gdoc)
     const canonicalUrl = getCanonicalUrl(baseUrl, gdoc)
     const pageTitle = getPageTitle(gdoc)
+    const isOnArchivalPage = archiveContext?.type === "archive-page"
+    const assetMaps = isOnArchivalPage ? archiveContext.assets : undefined
     const isDataInsight = gdoc.content.type === OwidGdocType.DataInsight
     const isAuthor = checkIsAuthor(gdoc)
-    const isPost = isPostPredicate(gdoc)
+    const isArticleLike = isArticleLikePredicate(gdoc)
 
     let imageUrl
     if (
@@ -256,7 +278,11 @@ export default function OwidGdocPage({
         ])
         if (cloudflareId) {
             // "public" is a hard-coded variant that doesn't need to know the image's width
-            imageUrl = `${CLOUDFLARE_IMAGES_URL}/${cloudflareId}/public`
+            const fallbackUrl = `${CLOUDFLARE_IMAGES_URL}/${cloudflareId}/public`
+            imageUrl = readFromAssetMap(assetMaps?.runtime, {
+                path: featuredImageFilename,
+                fallback: fallbackUrl,
+            })
         }
     }
 
@@ -273,6 +299,8 @@ export default function OwidGdocPage({
                 imageUrl={imageUrl} // uriEncoding is taken care of inside the Head component
                 atom={isDataInsight ? DATA_INSIGHT_ATOM_FEED_PROPS : undefined}
                 baseUrl={baseUrl}
+                staticAssetMap={assetMaps?.static}
+                archiveContext={archiveContext}
             >
                 {!isAuthor && !isDataInsight && (
                     <CitationMeta
@@ -282,7 +310,7 @@ export default function OwidGdocPage({
                         canonicalUrl={canonicalUrl}
                     />
                 )}
-                {isPost && (
+                {isArticleLike && (
                     <JsonLdArticle
                         gdoc={gdoc}
                         baseUrl={baseUrl}
@@ -307,11 +335,16 @@ export default function OwidGdocPage({
             <body>
                 <SiteHeader
                     isOnHomepage={gdoc.content.type === OwidGdocType.Homepage}
+                    archiveInfo={isOnArchivalPage ? archiveContext : undefined}
                 />
                 <div id="owid-document-root">
                     <AriaAnnouncerProvider>
                         <DebugProvider debug={debug}>
-                            <OwidGdoc {...gdoc} isPreviewing={isPreviewing} />
+                            <OwidGdoc
+                                {...gdoc}
+                                isPreviewing={isPreviewing}
+                                archiveContext={archiveContext}
+                            />
                         </DebugProvider>
                         <AriaAnnouncer />
                     </AriaAnnouncerProvider>
@@ -320,6 +353,7 @@ export default function OwidGdocPage({
                     context={SiteFooterContext.gdocsDocument}
                     debug={debug}
                     isPreviewing={isPreviewing}
+                    archiveContext={archiveContext}
                 />
             </body>
         </Html>

@@ -10,6 +10,7 @@ import {
 } from "./ChartEditor.js"
 import { computed, action, observable, runInAction, makeObservable } from "mobx"
 import {
+    BAKED_BASE_URL,
     BAKED_GRAPHER_URL,
     GRAPHER_DYNAMIC_THUMBNAIL_URL,
 } from "../settings/clientSettings.js"
@@ -34,6 +35,7 @@ import { ReuploadImageForDataInsightModal } from "./ReuploadImageForDataInsightM
 import { ImageUploadResponse } from "./imagesHelpers.js"
 import { DataInsightMinimalInformation } from "../adminShared/AdminTypes.js"
 import { notification } from "antd"
+import { getCanonicalUrl } from "@ourworldindata/components"
 
 const BASE_URL = BAKED_GRAPHER_URL.replace(/^https?:\/\//, "")
 
@@ -143,6 +145,7 @@ export class EditorReferencesTabForChart extends Component<{
                             <ReferencesDataInsights
                                 references={this.references}
                             />
+                            <ReferencesStaticViz references={this.references} />
                         </>
                     ) : (
                         <p>No references found</p>
@@ -421,16 +424,26 @@ const ReferencesWordpressPosts = (props: {
 }
 
 const ReferencesGdocPosts = (props: {
-    references: Pick<References, "postsGdocs">
+    references: Pick<References, "postsGdocs" | "dataInsights">
 }) => {
     if (!props.references.postsGdocs?.length) return null
+
     return (
         <>
-            <p>Public gdocs pages that embed or reference this chart:</p>
+            <p>Published content that references this chart</p>
             <ul className="list-group">
                 {props.references.postsGdocs.map((post) => (
                     <li key={post.id} className="list-group-item">
-                        <a href={post.url} target="_blank" rel="noopener">
+                        <a
+                            href={getCanonicalUrl(BAKED_BASE_URL, {
+                                slug: post.slug,
+                                content: {
+                                    type: post.type,
+                                },
+                            })}
+                            target="_blank"
+                            rel="noopener"
+                        >
                             <strong>{post.title}</strong>
                         </a>{" "}
                         (
@@ -506,6 +519,30 @@ const ReferencesNarrativeCharts = (props: {
     )
 }
 
+const ReferencesStaticViz = (props: {
+    references: Pick<References, "staticViz">
+}) => {
+    if (!props.references.staticViz?.length) return null
+    return (
+        <>
+            <p>Static visualizations created from this chart:</p>
+            <ul className="list-group">
+                {props.references.staticViz.map((staticViz) => (
+                    <li key={staticViz.id} className="list-group-item">
+                        <a
+                            href={`/admin/static-viz/${staticViz.id}`}
+                            target="_blank"
+                            rel="noopener"
+                        >
+                            <strong>{staticViz.name}</strong>
+                        </a>
+                    </li>
+                ))}
+            </ul>
+        </>
+    )
+}
+
 const NotificationContext = createContext(null)
 
 const ReferencesDataInsights = (props: {
@@ -542,7 +579,9 @@ const ReferencesDataInsights = (props: {
         <div className="ReferencesDataInsights">
             <NotificationContext.Provider value={null}>
                 {notificationContextHolder}
-                <p>Data insights based on this chart</p>
+                <p>
+                    Published and unpublished data insights based on this chart
+                </p>
                 <ul className="list-group">
                     {props.references.dataInsights.map((dataInsight) => (
                         <Fragment key={dataInsight.gdocId}>

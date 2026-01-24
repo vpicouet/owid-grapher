@@ -276,6 +276,31 @@ usa,1,usa,-5,1`
 
         expect(table2.filterByTargetTimes([2000, 2007], 1).numRows).toBe(1)
     })
+
+    it("keeps the correct row when entity times are unsorted and tolerance is used", () => {
+        const table = new OwidTable([
+            {
+                entityName: "usa",
+                entityId: 1,
+                entityCode: "usa",
+                time: 2001,
+                value: 1,
+            },
+            {
+                entityName: "usa",
+                entityId: 1,
+                entityCode: "usa",
+                time: 2000,
+                value: 2,
+            },
+        ])
+
+        const filtered = table.filterByTargetTimes([2000], 1)
+
+        expect(filtered.numRows).toBe(1)
+        expect(filtered.get("time").values[0]).toBe(2000)
+        expect(filtered.get("value").values[0]).toBe(2)
+    })
 })
 
 describe("rolling averages", () => {
@@ -511,7 +536,9 @@ describe("tolerance", () => {
     )
 
     function applyTolerance(table: OwidTable): OwidTable {
-        return table.interpolateColumnWithTolerance("gdp", 1)
+        return table.interpolateColumnWithTolerance("gdp", {
+            toleranceOverride: 1,
+        })
     }
 
     // Applying the tolerance twice to ensure operation is idempotent.
@@ -593,7 +620,9 @@ describe("tolerance", () => {
                 { slug: "year", type: ColumnTypeNames.Year },
             ]
         )
-        const toleranceTable = table.interpolateColumnWithTolerance("gdp", 1)
+        const toleranceTable = table.interpolateColumnWithTolerance("gdp", {
+            toleranceOverride: 1,
+        })
         // tests assume sorted by [entityName, year]
         expect(
             toleranceTable.get("entityName")?.valuesIncludingErrorValues
@@ -613,7 +642,9 @@ it("assigns originalTime as 'originalTime' in owidRows", () => {
     const csv = `gdp,year,entityName,entityId,entityCode
 1000,2019,USA,,
 1001,2020,UK,,`
-    const table = new OwidTable(csv).interpolateColumnWithTolerance("gdp", 1)
+    const table = new OwidTable(csv).interpolateColumnWithTolerance("gdp", {
+        toleranceOverride: 1,
+    })
     const owidRows = table.get("gdp").owidRows
     expect(owidRows).toEqual(
         expect.not.arrayContaining([

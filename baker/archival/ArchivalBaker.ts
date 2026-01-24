@@ -8,6 +8,7 @@ import {
     DbEnrichedImage,
     DbPlainArchivedChartVersion,
     DbPlainArchivedMultiDimVersion,
+    DbPlainArchivedPostVersion,
     DbRawChartConfig,
     GrapherInterface,
     MultiDimDataPageConfigEnriched,
@@ -15,6 +16,7 @@ import {
     GrapherChecksumsObjectWithHash,
     MultiDimChecksumsObjectWithHash,
     ExplorerChecksumsObjectWithHash,
+    PostChecksumsObjectWithHash,
 } from "@ourworldindata/types"
 import fs from "fs-extra"
 import path from "path"
@@ -25,6 +27,8 @@ import findProjectBaseDir from "../../settings/findBaseDir.js"
 import { bakeSingleGrapherPageForArchival } from "../GrapherBaker.js"
 import { bakeSingleMultiDimDataPageForArchival } from "../MultiDimBaker.js"
 import { bakeSingleExplorerPageForArchival } from "../ExplorerBaker.js"
+import { bakeSinglePostPageForArchival } from "../SiteBaker.js"
+import { grapherToPng } from "../GrapherImageBaker.js"
 import {
     hashAndCopyFile,
     hashAndWriteFile,
@@ -33,31 +37,78 @@ import {
     GrapherArchivalManifest,
     MultiDimArchivalManifest,
     ExplorerArchivalManifest,
+    PostArchivalManifest,
     assembleGrapherArchivalUrl,
     assembleGrapherManifest,
     assembleExplorerArchivalUrl,
     assembleMultiDimArchivalUrl,
     assembleMultiDimManifest,
     assembleExplorerManifest,
+    assemblePostArchivalUrl,
+    assemblePostManifest,
 } from "../../serverUtils/archivalUtils.js"
 import pMap from "p-map"
 import {
-    getAllChartVersionsForChartId,
-    getAllMultiDimVersionsForId,
-    getAllExplorerVersionsForSlug,
-    getLatestGrapherArchivedVersionsFromDb,
-    getLatestMultiDimArchivedVersionsFromDb,
-    getLatestExplorerArchivedVersionsFromDb,
-} from "../../db/model/archival/archivalDb.js"
-import { ARCHIVE_BASE_URL } from "../../settings/serverSettings.js"
+    ARCHIVE_BASE_URL,
+    CLOUDFLARE_IMAGES_URL,
+} from "../../settings/serverSettings.js"
 import {
+    appendImageSizeSuffix,
     ArchivalTimestamp,
     convertToArchivalDateStringIfNecessary,
     getAllVariableIds,
+    LARGE_THUMBNAIL_WIDTH,
+    LARGEST_IMAGE_WIDTH,
 } from "@ourworldindata/utils"
 import { PROD_URL } from "../../site/SiteConstants.js"
 import { getParsedDodsDictionary } from "../../db/model/Dod.js"
 import { ExplorerProgram } from "@ourworldindata/explorer"
+import {
+    getArchivedChartVersionsByChartId,
+    getLatestArchivedChartVersions,
+} from "../../db/model/ArchivedChartVersion.js"
+import {
+    getArchivedExplorerVersionsByExplorerSlug,
+    getLatestArchivedExplorerVersions,
+} from "../../db/model/ArchivedExplorerVersion.js"
+import {
+    getArchivedMultiDimVersionsByMultiDimId,
+    getLatestArchivedMultiDimVersions,
+} from "../../db/model/ArchivedMultiDimVersion.js"
+import {
+    getArchivedPostVersionsByPostId,
+    getLatestArchivedPostVersions,
+} from "../../db/model/ArchivedPostVersion.js"
+
+export interface MinimalChartInfo {
+    chartId: number
+    chartConfigId: string
+    config: GrapherInterface
+}
+
+export interface MinimalPostInfo {
+    postId: string
+    postSlug: string
+}
+
+export interface MinimalMultiDimInfo {
+    id: number
+    slug: string
+    config: MultiDimDataPageConfigEnriched
+}
+
+export interface MinimalNarrativeChartInfo {
+    id: number
+    name: string
+    config: GrapherInterface
+}
+
+export interface MinimalImageInfo {
+    id: number
+    filename: string
+    cloudflareId: string
+    originalWidth: number
+}
 
 export const projBaseDir = findProjectBaseDir(__dirname)
 if (!projBaseDir) throw new Error("Could not find project base directory")
@@ -66,7 +117,6 @@ const IGNORED_FILES_PATTERNS = [
     /^_headers$/,
     /\.DS_Store$/,
     /^images(\/.*)?$/,
-    /^sdg.*$/,
     /^identifyadmin.html$/,
 ]
 export const copyPublicDir = async (archiveDir: string) => {
@@ -288,16 +338,223 @@ export const archiveChartConfigs = async (
     return results.reduce((acc, result) => ({ ...acc, ...result }), {})
 }
 
-export interface MinimalChartInfo {
-    chartId: number
-    chartConfigId: string
-    config: GrapherInterface
+const bakeImage = async (
+    image: MinimalImageInfo,
+    archiveDir: string
+): Promise<Record<string, string>> => {
+    const imagesDir = path.join(archiveDir, "images")
+    await fs.mkdirp(imagesDir)
+
+    const additionalWidths = [
+        LARGE_THUMBNAIL_WIDTH,
+        LARGEST_IMAGE_WIDTH,
+    ].filter((width) => image.originalWidth > width)
+
+    const bakedFiles: Record<string, string> = {}
+    const fetchedImages: Record<number, Buffer> = {}
+
+    const fetchImage = async (width: number): Promise<Buffer> => {
+        if (fetchedImages[width]) return fetchedImages[width]
+        const url = `${CLOUDFLARE_IMAGES_URL}/${image.cloudflareId}/w=${width}`
+        const response = await fetch(url)
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch image ${image.id} (${width}w) from ${url}: ${response.status}`
+            )
+        }
+        const buffer = Buffer.from(await response.arrayBuffer())
+        fetchedImages[width] = buffer
+        return buffer
+    }
+
+    const writeImage = async (filename: string, buffer: Buffer) => {
+        const targetPath = path.join(imagesDir, filename)
+        const targetPathWithHash = await hashAndWriteFile(targetPath, buffer)
+        bakedFiles[filename] = `/images/${path.basename(targetPathWithHash)}`
+    }
+
+    const originalBuffer = await fetchImage(image.originalWidth)
+    await writeImage(image.filename, originalBuffer)
+
+    for (const width of additionalWidths) {
+        const derivedFilename = appendImageSizeSuffix(image.filename, width)
+        const buffer = await fetchImage(width)
+        await writeImage(derivedFilename, buffer)
+    }
+
+    return bakedFiles
 }
 
-export interface MinimalMultiDimInfo {
-    id: number
-    slug: string
-    config: MultiDimDataPageConfigEnriched
+export const archiveImages = async (
+    imagesByPostId: Record<string, MinimalImageInfo[]>,
+    archiveDir: string
+): Promise<Record<string, AssetMap>> => {
+    const uniqueImages = _.uniqBy(
+        Object.values(imagesByPostId).flat(),
+        (image) => image.id
+    )
+
+    if (uniqueImages.length === 0) return {}
+
+    console.log("Images to archive:", uniqueImages.length)
+
+    const bakedFilesByImageId: Record<number, Record<string, string>> = {}
+    await pMap(
+        uniqueImages,
+        async (image) => {
+            const bakedFiles = await bakeImage(image, archiveDir)
+            bakedFilesByImageId[image.id] = bakedFiles
+        },
+        { concurrency: 40 }
+    )
+
+    const imageFilesByPostId: Record<string, AssetMap> = {}
+    for (const [postId, postImages] of Object.entries(imagesByPostId)) {
+        const postImageFiles: AssetMap = {}
+        for (const image of postImages) {
+            const bakedFiles = bakedFilesByImageId[image.id]
+            if (!bakedFiles) continue
+            for (const [filename, hashedPath] of Object.entries(bakedFiles)) {
+                postImageFiles[filename] = hashedPath
+            }
+        }
+        imageFilesByPostId[postId] = postImageFiles
+    }
+
+    return imageFilesByPostId
+}
+
+const bakeVideo = async (url: string, archiveDir: string): Promise<string> => {
+    const videosDir = path.join(archiveDir, "videos")
+    await fs.mkdirp(videosDir)
+
+    const response = await fetch(url)
+    if (!response.ok) {
+        throw new Error(`Failed to fetch video from ${url}: ${response.status}`)
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer())
+    const urlFilename = path.basename(new URL(url).pathname)
+    const targetPath = path.join(videosDir, urlFilename)
+    const targetPathWithHash = await hashAndWriteFile(targetPath, buffer)
+    return `/videos/${path.basename(targetPathWithHash)}`
+}
+
+export const archiveVideos = async (
+    videosByPostId: Record<string, string[]>,
+    archiveDir: string
+): Promise<Record<string, AssetMap>> => {
+    const uniqueVideos = _.uniq(Object.values(videosByPostId).flat())
+    if (uniqueVideos.length === 0) return {}
+
+    console.log("Videos to archive:", uniqueVideos.length)
+
+    const bakedFilesByVideoUrl: Record<string, string> = {}
+    await pMap(
+        uniqueVideos,
+        async (url) => {
+            const hashedPath = await bakeVideo(url, archiveDir)
+            bakedFilesByVideoUrl[url] = hashedPath
+        },
+        { concurrency: 10 }
+    )
+
+    const videoFilesByPostId: Record<string, AssetMap> = {}
+    for (const [postId, postVideos] of Object.entries(videosByPostId)) {
+        const postVideoFiles: AssetMap = {}
+        for (const url of postVideos) {
+            const hashedPath = bakedFilesByVideoUrl[url]
+            postVideoFiles[url] = hashedPath
+        }
+        videoFilesByPostId[postId] = postVideoFiles
+    }
+
+    return videoFilesByPostId
+}
+
+const bakeNarrativeChartImage = async (
+    narrativeChart: MinimalNarrativeChartInfo,
+    archiveDir: string
+): Promise<{ name: string; hashedPath: string }> => {
+    const narrativeChartsDir = path.join(archiveDir, "images/narrative-charts")
+    await fs.mkdirp(narrativeChartsDir)
+    const png = await grapherToPng(narrativeChart.config)
+    const filename = `${narrativeChart.name}.png`
+    const targetPath = path.join(narrativeChartsDir, filename)
+    const targetPathWithHash = await hashAndWriteFile(targetPath, png)
+    return {
+        name: narrativeChart.name,
+        hashedPath: `/images/narrative-charts/${path.basename(targetPathWithHash)}`,
+    }
+}
+
+export const archiveNarrativeCharts = async (
+    knex: db.KnexReadonlyTransaction,
+    narrativeChartsByPostId: Record<string, Set<string>>,
+    archiveDir: string
+): Promise<Record<string, AssetMap>> => {
+    const uniqueNarrativeChartNames = _.uniq(
+        Object.values(narrativeChartsByPostId).flatMap((names) =>
+            Array.from(names)
+        )
+    )
+
+    if (uniqueNarrativeChartNames.length === 0) return {}
+
+    console.log(
+        "Narrative charts to archive:",
+        uniqueNarrativeChartNames.length
+    )
+
+    // Load narrative chart configs from database
+    type NarrativeChartRow = {
+        id: number
+        name: string
+        config: string
+    }
+
+    const narrativeChartRows = await knex("narrative_charts as nc")
+        .select("nc.id", "nc.name", "cc.full as config")
+        .join("chart_configs as cc", "nc.chartConfigId", "cc.id")
+        .whereIn("nc.name", uniqueNarrativeChartNames)
+        .then((rows: NarrativeChartRow[]) =>
+            rows.map((row) => ({
+                id: row.id,
+                name: row.name,
+                config: JSON.parse(row.config) as GrapherInterface,
+            }))
+        )
+
+    // Render images and write them to disk
+    const bakedFilesByNarrativeChartName: Record<string, string> = {}
+    await pMap(
+        narrativeChartRows,
+        async (narrativeChart) => {
+            const { name, hashedPath } = await bakeNarrativeChartImage(
+                narrativeChart,
+                archiveDir
+            )
+            bakedFilesByNarrativeChartName[name] = hashedPath
+        },
+        { concurrency: 10 }
+    )
+
+    // Map back to post IDs
+    const narrativeChartFilesByPostId: Record<string, AssetMap> = {}
+    for (const [postId, narrativeChartNames] of Object.entries(
+        narrativeChartsByPostId
+    )) {
+        const postNarrativeChartFiles: AssetMap = {}
+        for (const name of narrativeChartNames) {
+            const hashedPath = bakedFilesByNarrativeChartName[name]
+            if (hashedPath) {
+                postNarrativeChartFiles[name] = hashedPath
+            }
+        }
+        narrativeChartFilesByPostId[postId] = postNarrativeChartFiles
+    }
+
+    return narrativeChartFilesByPostId
 }
 
 export const createCommonArchivalContext = async (
@@ -335,7 +592,7 @@ export const bakeArchivalGrapherPagesToFolder = async (
     variableFiles: Record<number, AssetMap>
 ) => {
     const grapherIds = grapherChecksumsObjsToBeArchived.map((c) => c.chartId)
-    const latestArchivalVersions = await getLatestGrapherArchivedVersionsFromDb(
+    const latestArchivalVersions = await getLatestArchivedChartVersions(
         knex,
         grapherIds
     ).then((rows) => _.keyBy(rows, (v) => v.grapherId))
@@ -396,10 +653,10 @@ export const bakeArchivalMultiDimPagesToFolder = async (
     const multiDimIds = multiDimChecksumsObjsToBeArchived.map(
         (c) => c.multiDimId
     )
-    const latestArchivalVersions =
-        await getLatestMultiDimArchivedVersionsFromDb(knex, multiDimIds).then(
-            (rows) => _.keyBy(rows, (v) => v.multiDimId)
-        )
+    const latestArchivalVersions = await getLatestArchivedMultiDimVersions(
+        knex,
+        multiDimIds
+    ).then((rows) => _.keyBy(rows, (v) => v.multiDimId))
 
     let i = 0
     for (const multiDimInfo of multiDimConfigs) {
@@ -450,10 +707,10 @@ export const bakeArchivalExplorerPagesToFolder = async (
     const manifests: Record<string, ExplorerArchivalManifest> = {}
 
     const slugs = explorerChecksumsObjsToBeArchived.map((c) => c.explorerSlug)
-    const latestArchivalVersions =
-        await getLatestExplorerArchivedVersionsFromDb(knex, slugs).then(
-            (rows) => _.keyBy(rows, (v) => v.explorerSlug)
-        )
+    const latestArchivalVersions = await getLatestArchivedExplorerVersions(
+        knex,
+        slugs
+    ).then((rows) => _.keyBy(rows, (v) => v.explorerSlug))
 
     let i = 0
     for (const program of explorerPrograms) {
@@ -501,6 +758,7 @@ export const bakeArchivalExplorerPagesToFolder = async (
             : undefined
 
         const archiveNavigation: ArchiveSiteNavigationInfo = {
+            contentType: "data",
             liveUrl: `${PROD_URL}/explorers/${program.slug}`,
             previousVersion,
             versionsFileUrl: `/versions/explorers/${program.slug}.json`,
@@ -539,6 +797,60 @@ export const bakeArchivalExplorerPagesToFolder = async (
     return { manifests }
 }
 
+export const bakeArchivalPostPagesToFolder = async (
+    knex: db.KnexReadonlyTransaction,
+    postChecksumsObjsToBeArchived: PostChecksumsObjectWithHash[],
+    postInfos: MinimalPostInfo[],
+    commonCtx: CommonArchivalContext,
+    imageFilesByPostId: Record<string, AssetMap> = {},
+    videoFilesByPostId: Record<string, AssetMap> = {},
+    narrativeChartFilesByPostId: Record<string, AssetMap> = {}
+) => {
+    await fs.mkdirp(path.join(commonCtx.archiveDir))
+    console.log(`Baking post pages locally to dir '${commonCtx.archiveDir}'`)
+
+    const manifests: Record<string, PostArchivalManifest> = {}
+
+    const postIds = postChecksumsObjsToBeArchived.map((c) => c.postId)
+    const latestArchivalVersions = await getLatestArchivedPostVersions(
+        knex,
+        postIds
+    ).then((rows) => _.keyBy(rows, (v) => v.postId))
+
+    let i = 0
+    for (const postInfo of postInfos) {
+        i++
+
+        const checksumsObj = postChecksumsObjsToBeArchived.find(
+            (c) => c.postId === postInfo.postId
+        )
+        if (!checksumsObj)
+            throw new Error(
+                `Could not find checksums for post '${postInfo.postSlug}', this shouldn't happen`
+            )
+
+        const imageFiles = imageFilesByPostId[postInfo.postId] || {}
+        const videoFiles = videoFilesByPostId[postInfo.postId] || {}
+        const narrativeChartFiles =
+            narrativeChartFilesByPostId[postInfo.postId] || {}
+        await bakePostPageForArchival(knex, commonCtx.archiveDir, postInfo, {
+            ...commonCtx,
+            checksumsObj,
+            latestArchivalVersions,
+            imageFiles,
+            videoFiles,
+            narrativeChartFiles,
+        }).then((manifest) => {
+            manifests[postInfo.postSlug] = manifest
+        })
+
+        console.log(`${i}/${postInfos.length} ${postInfo.postSlug}`)
+    }
+    console.log(`Baked ${postInfos.length} post pages`)
+
+    return { manifests }
+}
+
 export interface CommonArchivalContext {
     date: ArchivalTimestamp
     baseArchiveDir: string
@@ -571,6 +883,20 @@ interface MultiDimBakeContext extends CommonArchivalContext {
             "multiDimId" | "multiDimSlug" | "archivalTimestamp"
         >
     >
+}
+
+interface PostBakeContext extends CommonArchivalContext {
+    checksumsObj: PostChecksumsObjectWithHash
+    latestArchivalVersions: Record<
+        string,
+        Pick<
+            DbPlainArchivedPostVersion,
+            "postId" | "postSlug" | "archivalTimestamp"
+        >
+    >
+    imageFiles: AssetMap
+    videoFiles: AssetMap
+    narrativeChartFiles: AssetMap
 }
 
 async function bakeGrapherPageForArchival(
@@ -626,6 +952,7 @@ async function bakeGrapherPageForArchival(
           }
         : undefined
     const archiveNavigation: ArchiveSiteNavigationInfo = {
+        contentType: "data",
         liveUrl: `${PROD_URL}/grapher/${config.slug}`,
         previousVersion,
         versionsFileUrl: `/versions/charts/${chartInfo.chartId}.json`,
@@ -650,6 +977,82 @@ async function bakeGrapherPageForArchival(
         manifest,
         archiveInfo,
     })
+    return manifest
+}
+
+async function bakePostPageForArchival(
+    trx: db.KnexReadonlyTransaction,
+    dir: string,
+    postInfo: MinimalPostInfo,
+    ctx: PostBakeContext
+) {
+    const { postId, postSlug } = postInfo
+    const {
+        commonRuntimeFiles,
+        staticAssetMap,
+        checksumsObj,
+        date,
+        latestArchivalVersions,
+        imageFiles,
+        videoFiles,
+        narrativeChartFiles,
+    } = ctx
+
+    if (!ARCHIVE_BASE_URL) throw new Error("ARCHIVE_BASE_URL is missing")
+
+    const runtimeAssetMap = {
+        ...commonRuntimeFiles,
+        ...imageFiles,
+        ...videoFiles,
+        ...narrativeChartFiles,
+    }
+    const manifest = await assemblePostManifest({
+        staticAssetMap,
+        runtimeAssetMap,
+        checksumsObj,
+        archivalDate: date.formattedDate,
+        postId,
+    })
+
+    const previousVersionInfo = latestArchivalVersions[postId] ?? undefined
+    const previousVersion: UrlAndMaybeDate | undefined = previousVersionInfo
+        ? {
+              date: previousVersionInfo.archivalTimestamp,
+              url: assemblePostArchivalUrl(
+                  previousVersionInfo.archivalTimestamp,
+                  previousVersionInfo.postSlug,
+                  { relative: true }
+              ),
+          }
+        : undefined
+
+    const archiveNavigation: ArchiveSiteNavigationInfo = {
+        contentType: "writing",
+        liveUrl: `${PROD_URL}/${postSlug}`,
+        previousVersion,
+        versionsFileUrl: `/versions/posts/${postId}.json`,
+    }
+
+    const fullUrl = assemblePostArchivalUrl(date.formattedDate, postSlug, {
+        relative: false,
+    })
+
+    const archiveInfo: ArchiveMetaInformation = {
+        archivalDate: date.formattedDate,
+        archiveNavigation,
+        archiveUrl: fullUrl,
+        assets: {
+            runtime: runtimeAssetMap,
+            static: staticAssetMap,
+        },
+        type: "archive-page",
+    }
+
+    await bakeSinglePostPageForArchival(dir, postSlug, trx, {
+        manifest,
+        archiveContext: archiveInfo,
+    })
+
     return manifest
 }
 
@@ -696,7 +1099,7 @@ export async function generateChartVersionsFiles(
     await pMap(
         chartIds,
         async (chartId) => {
-            const chartVersions = await getAllChartVersionsForChartId(
+            const chartVersions = await getArchivedChartVersionsByChartId(
                 knex,
                 chartId
             ).then((rows) =>
@@ -797,6 +1200,7 @@ export const bakeMultiDimDataPageForArchival = async (
         : undefined
 
     const archiveNavigation: ArchiveSiteNavigationInfo = {
+        contentType: "data",
         liveUrl: `${PROD_URL}/grapher/${slug}`,
         previousVersion,
         versionsFileUrl: `/versions/multi-dim/${id}.json`,
@@ -840,22 +1244,23 @@ export async function generateMultiDimVersionsFiles(
     await pMap(
         multiDimIds,
         async (multiDimId) => {
-            const multiDimVersions = await getAllMultiDimVersionsForId(
-                knex,
-                multiDimId
-            ).then((rows) =>
-                rows.map((r) => ({
-                    archivalDate: convertToArchivalDateStringIfNecessary(
-                        r.archivalTimestamp
-                    ),
-                    url: assembleMultiDimArchivalUrl(
-                        r.archivalTimestamp,
-                        r.multiDimSlug,
-                        { relative: true }
-                    ),
-                    slug: r.multiDimSlug,
-                }))
-            )
+            const multiDimVersions =
+                await getArchivedMultiDimVersionsByMultiDimId(
+                    knex,
+                    multiDimId
+                ).then((rows) =>
+                    rows.map((r) => ({
+                        archivalDate: convertToArchivalDateStringIfNecessary(
+                            r.archivalTimestamp
+                        ),
+                        url: assembleMultiDimArchivalUrl(
+                            r.archivalTimestamp,
+                            r.multiDimSlug,
+                            { relative: true }
+                        ),
+                        slug: r.multiDimSlug,
+                    }))
+                )
 
             const fileContent = {
                 multiDimId: multiDimId,
@@ -890,22 +1295,23 @@ export async function generateExplorerVersionsFiles(
     await pMap(
         explorerSlugs,
         async (slug) => {
-            const explorerVersions = await getAllExplorerVersionsForSlug(
-                knex,
-                slug
-            ).then((rows) =>
-                rows.map((r) => ({
-                    archivalDate: convertToArchivalDateStringIfNecessary(
-                        r.archivalTimestamp
-                    ),
-                    url: assembleExplorerArchivalUrl(
-                        r.archivalTimestamp,
-                        r.explorerSlug,
-                        { relative: true }
-                    ),
-                    slug: r.explorerSlug,
-                }))
-            )
+            const explorerVersions =
+                await getArchivedExplorerVersionsByExplorerSlug(
+                    knex,
+                    slug
+                ).then((rows) =>
+                    rows.map((r) => ({
+                        archivalDate: convertToArchivalDateStringIfNecessary(
+                            r.archivalTimestamp
+                        ),
+                        url: assembleExplorerArchivalUrl(
+                            r.archivalTimestamp,
+                            r.explorerSlug,
+                            { relative: true }
+                        ),
+                        slug: r.explorerSlug,
+                    }))
+                )
 
             const fileContent = {
                 explorerSlug: slug,
@@ -923,5 +1329,55 @@ export async function generateExplorerVersionsFiles(
     )
     console.log(
         `Finished generating explorer versions files for ${explorerSlugs.length} explorers`
+    )
+}
+
+export async function generatePostVersionsFiles(
+    knex: db.KnexReadWriteTransaction,
+    dir: string,
+    postIds: string[]
+) {
+    console.log(`Generating post versions files for ${postIds.length} posts`)
+    const targetPath = path.join(dir, "versions", "posts")
+    await fs.mkdirp(targetPath)
+
+    await pMap(
+        postIds,
+        async (postId) => {
+            const postVersions = await getArchivedPostVersionsByPostId(
+                knex,
+                postId
+            ).then((rows) =>
+                rows.map((r) => ({
+                    archivalDate: convertToArchivalDateStringIfNecessary(
+                        r.archivalTimestamp
+                    ),
+                    url: assemblePostArchivalUrl(
+                        r.archivalTimestamp,
+                        r.postSlug,
+                        { relative: true }
+                    ),
+                    slug: r.postSlug,
+                }))
+            )
+
+            const fileContent = {
+                postId,
+                versions: postVersions,
+            }
+
+            await fs.writeFile(
+                path.join(targetPath, `${postId}.json`),
+                JSON.stringify(fileContent, undefined, 2),
+                {
+                    encoding: "utf8",
+                }
+            )
+        },
+        { concurrency: 10 }
+    )
+
+    console.log(
+        `Finished generating post versions files for ${postIds.length} posts`
     )
 }

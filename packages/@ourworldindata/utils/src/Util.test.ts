@@ -20,7 +20,6 @@ import {
     getClosestTimePairs,
     differenceObj,
     numberMagnitude,
-    urlToSlug,
     toRectangularMatrix,
     slugifySameCase,
     slugify,
@@ -33,9 +32,10 @@ import {
     imemo,
     normaliseToSingleDigitNumber,
     getUniqueNamesFromTagHierarchies,
+    stripOuterParentheses,
 } from "./Util.js"
 import {
-    BlockImageSize,
+    BlockSize,
     OwidEnrichedGdocBlock,
     SortOrder,
     TagGraphRoot,
@@ -51,6 +51,7 @@ describe(findClosestTime, () => {
             it("returns undefined", () => {
                 const years = [2010, 2015, 2017]
                 expect(findClosestTime(years, 2014, 0)).toEqual(undefined)
+                expect(findClosestTime([], 2014)).toEqual(undefined)
             })
 
             it("can also get the index", () => {
@@ -81,6 +82,9 @@ describe(findClosestTime, () => {
             const years = [1990, 2016]
             expect(findClosestTime(years, 2013)).toEqual(2016)
             expect(findClosestTime(years, 2002)).toEqual(1990)
+            expect(findClosestTime(years, 1980)).toEqual(1990)
+            expect(findClosestTime(years, 2020)).toEqual(2016)
+            expect(findClosestTimeIndex([], 2020)).toEqual(undefined)
         })
     })
 
@@ -507,18 +511,6 @@ describe(differenceObj, () => {
     })
 })
 
-describe(urlToSlug, () => {
-    const slug = "covid-vaccinations"
-    it("gets slug from full url", () => {
-        expect(urlToSlug(`https://ourworldindata.org/${slug}#anchor`)).toEqual(
-            `${slug}`
-        )
-    })
-    it("gets slug from multi-level path", () => {
-        expect(urlToSlug(`/coronavirus/${slug}`)).toEqual(`${slug}`)
-    })
-})
-
 describe(toRectangularMatrix, () => {
     it("converts a non-rectangular array to a rectangular one", () => {
         const arr = [
@@ -664,6 +656,7 @@ describe(traverseEnrichedBlock, () => {
         {
             type: "chart",
             url: "https://ourworldindata.org/grapher/population",
+            size: BlockSize.Wide,
             parseErrors: [],
         },
         {
@@ -688,7 +681,7 @@ describe(traverseEnrichedBlock, () => {
                     type: "image",
                     filename: "logo.png",
                     hasOutline: false,
-                    size: BlockImageSize.Narrow,
+                    size: BlockSize.Narrow,
                     parseErrors: [],
                 },
             ],
@@ -854,6 +847,7 @@ describe(flattenNonTopicNodes, () => {
                                     children: [],
                                     id: 4,
                                     isTopic: true,
+                                    isSearchable: true,
                                     name: "Life Expectancy",
                                     path: [1, 2, 3, 4],
                                     slug: "life-expectancy",
@@ -862,6 +856,7 @@ describe(flattenNonTopicNodes, () => {
                             ],
                             id: 3,
                             isTopic: false,
+                            isSearchable: false,
                             name: "Life & Death",
                             path: [1, 2, 3],
                             slug: null,
@@ -870,6 +865,7 @@ describe(flattenNonTopicNodes, () => {
                     ],
                     id: 2,
                     isTopic: false,
+                    isSearchable: false,
                     name: "Health",
                     path: [1, 2],
                     slug: null,
@@ -878,6 +874,7 @@ describe(flattenNonTopicNodes, () => {
             ],
             id: 1,
             isTopic: false,
+            isSearchable: false,
             name: "tag-graph-root",
             path: [1],
             slug: null,
@@ -889,13 +886,14 @@ describe(flattenNonTopicNodes, () => {
         )
     })
 
-    it("Removes non-area non-topic nodes that don't have children", () => {
+    it("Removes non-area non-searchable nodes that don't have children", () => {
         const root: TagGraphRoot = {
             id: 1,
             name: "tag-graph-root",
             slug: null,
             weight: 0,
             isTopic: false,
+            isSearchable: false,
             path: [1],
             children: [
                 {
@@ -904,6 +902,7 @@ describe(flattenNonTopicNodes, () => {
                     slug: null,
                     weight: 0,
                     isTopic: false,
+                    isSearchable: false,
                     children: [
                         {
                             id: 3,
@@ -911,6 +910,7 @@ describe(flattenNonTopicNodes, () => {
                             slug: null,
                             weight: 0,
                             isTopic: false,
+                            isSearchable: false,
                             children: [],
                             path: [1, 2, 3],
                         },
@@ -1063,5 +1063,25 @@ describe(getUniqueNamesFromTagHierarchies, () => {
                 topicHierarchiesByChildName
             )
         ).toEqual(["Environment", "Water Topic"])
+    })
+})
+
+describe(stripOuterParentheses, () => {
+    it("removes a single pair of outer parentheses", () => {
+        expect(stripOuterParentheses("(example)")).toBe("example")
+    })
+
+    it("returns the string unchanged if there are no outer parentheses", () => {
+        expect(stripOuterParentheses("no parentheses")).toBe("no parentheses")
+    })
+
+    it("doesn't remove inner parentheses", () => {
+        expect(stripOuterParentheses("example (with inner)")).toBe(
+            "example (with inner)"
+        )
+    })
+
+    it("trims whitespace before checking for parentheses", () => {
+        expect(stripOuterParentheses("   (trimmed)   ")).toBe("trimmed")
     })
 })

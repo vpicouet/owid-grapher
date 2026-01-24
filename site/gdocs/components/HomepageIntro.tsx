@@ -7,7 +7,7 @@ import {
 } from "@ourworldindata/types"
 import { dayjs, formatAuthors } from "@ourworldindata/utils"
 import { useLinkedChart, useLinkedDocument } from "../utils.js"
-import { DocumentContext } from "../DocumentContext.js"
+import { useDocumentContext } from "../DocumentContext.js"
 import Image, { ImageParentContainer } from "./Image.js"
 import { BlockErrorFallback } from "./BlockErrorBoundary.js"
 import * as R from "remeda"
@@ -43,7 +43,7 @@ function FeaturedWorkTile({
     id,
 }: FeaturedWorkTileProps) {
     const { linkedDocument, errorMessage } = useLinkedDocument(url)
-    const { isPreviewing } = useContext(DocumentContext)
+    const { isPreviewing } = useDocumentContext()
     const linkedDocumentFeaturedImage = linkedDocument?.["featured-image"]
     const thumbnailFilename = filename ?? linkedDocumentFeaturedImage
     const href = linkedDocument?.url ?? url
@@ -183,7 +183,7 @@ function HomepageAnnouncement(props: {
                 </span>
                 <h3
                     id={`announcement-${announcement.id}`}
-                    className="homepage-intro__announcement-title body-2-bold"
+                    className="homepage-intro__announcement-title body-2-bold-tight"
                 >
                     {announcement.title}
                 </h3>
@@ -207,7 +207,7 @@ function HomepageAnnouncements() {
         <div className="homepage-intro__announcements span-cols-1 span-md-cols-2">
             <div className="homepage-intro__announcements-header">
                 <AnnouncementsIcon />
-                <h4 className="h2-bold">Updates and Announcements</h4>
+                <h4 className="h3-bold">Updates and Announcements</h4>
             </div>
             <ul className="homepage-intro__announcements-list">
                 {announcements.map((announcement, i) => (
@@ -295,7 +295,7 @@ export function HomepageIntro({ className, featuredWork }: HomepageIntroProps) {
                 <HomepageAnnouncements />
                 <div className="span-cols-1 span-md-cols-2">
                     <div className="homepage-intro__newsletter-signup">
-                        <NewsletterSubscriptionHeader />
+                        <NewsletterSubscriptionHeader showSubheading />
                         <NewsletterSubscriptionForm
                             context={NewsletterSubscriptionContext.Homepage}
                         />

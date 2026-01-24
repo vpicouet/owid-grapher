@@ -1,3 +1,5 @@
+@use "sass:math";
+
 @mixin owid-link-90 {
     color: $blue-90;
     text-decoration: underline;
@@ -183,11 +185,11 @@
 @mixin h3-style {
     font-family: $serif-font-stack;
     font-size: 1.75rem;
+    font-weight: 400;
+    line-height: 1.25em;
     @include md-up {
         font-size: 2.25rem;
     }
-    font-weight: 400;
-    line-height: 1.25em;
 }
 
 @mixin h4-style {
@@ -425,7 +427,6 @@
 @mixin hide-site-chrome {
     .site-header,
     .alert-banner,
-    .offset-subnavigation,
     .donate-footer,
     .cookie-notice,
     .site-footer {
@@ -449,7 +450,9 @@
 
 @mixin datapage-section-title {
     @include h2-bold;
-    margin: 0 0 24px;
+    & {
+        margin: 0 0 24px;
+    }
     @include sm-up {
         margin: 0 0 32px;
     }
@@ -458,9 +461,6 @@
 @mixin expandable-paragraph__expand-button--full {
     display: block;
     height: 40px;
-    @include sm-up {
-        display: inline-block;
-    }
     padding: 8px 24px;
     @include body-3-medium;
     text-align: center;
@@ -469,6 +469,9 @@
     cursor: pointer;
     border: none;
     transition: background-color 0.1s ease-in-out;
+    @include sm-up {
+        display: inline-block;
+    }
 
     &:hover {
         background-color: $blue-10;
@@ -477,7 +480,7 @@
 
 @mixin related-topics {
     h4 {
-        color: $blue-40;
+        color: $blue-50;
     }
 
     ul {
@@ -562,5 +565,65 @@
     position: relative;
     width: 100%;
     height: 0;
-    padding-bottom: percentage(1 / $ratio);
+    padding-bottom: math.percentage(math.div(1, $ratio));
+}
+
+// This mixin calculates the width of an item in a flex container given the
+// number of items we want per row. This is useful for situations where we want
+// the benefits of a grid (n items per row) but need to use flexbox for other
+// reasons (e.g. centering the last row of items rather than aligning it to the
+// grid).
+//
+// The calculation is as follows:
+// - We want the size of individual links to be such that we could fit N of them
+//   side by side, with (N-1) gaps in between.
+// - This makes up 100% of the width: N * link width + (N-1) * gap = 100%
+// - Solving for link width: link width = (100% - (N-1) * gap) / N
+@mixin flex-item-width-for-row-of($items-per-row) {
+    width: calc(
+        (100% - (var(--grid-gap) * #{$items-per-row - 1})) / #{$items-per-row}
+    );
+}
+
+@mixin heading-variant-base {
+    text-wrap: unset;
+    position: relative;
+    @include sm-only {
+        font-size: 1.5rem;
+        line-height: 2rem;
+    }
+}
+
+// Shared styles for heading variant decorative pseudo-elements
+// At lg, heading takes up 6 columns, so 200% is 12 columns then we add a missing gutter
+// Using percentages instead of absolute values because different browsers calculate the grid size differently
+@mixin heading-variant-pseudo-widths {
+    @include md-up {
+        width: calc(200% + var(--grid-gap));
+        left: calc(-50% - var(--grid-gap) / 2);
+    }
+    @include md-only {
+        width: 120%;
+        left: -10%;
+    }
+    @include sm-only {
+        width: 100%;
+        left: 0;
+    }
+}
+
+/* Add a light gray line above a heading when it's in the main article body (i.e. not an all-charts block, or in a two-column section) */
+@mixin h1-hr {
+    text-wrap: unset;
+    position: relative;
+    margin-top: 96px;
+    @include heading-variant-base;
+
+    &::before {
+        content: "";
+        position: absolute;
+        top: -48px;
+        border-top: 1px solid $blue-10;
+        @include heading-variant-pseudo-widths;
+    }
 }

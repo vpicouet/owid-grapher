@@ -12,6 +12,7 @@ import {
     dyFromAlign,
     isTouchDevice,
     domainExtent,
+    calculateTrendDirection,
 } from "@ourworldindata/utils"
 import { observable, computed, action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
@@ -49,6 +50,7 @@ import { NoDataSection } from "../scatterCharts/NoDataSection"
 
 import { LineLegend, LineLegendProps } from "../lineLegend/LineLegend"
 import {
+    formatTooltipRangeValues,
     makeTooltipRoundingNotice,
     makeTooltipToleranceNotice,
     Tooltip,
@@ -58,7 +60,7 @@ import {
 import { TooltipFooterIcon } from "../tooltip/TooltipProps"
 
 import { Halo } from "@ourworldindata/components"
-import { HorizontalColorLegendManager } from "../horizontalColorLegend/HorizontalColorLegends"
+import { HorizontalColorLegendManager } from "../legend/HorizontalColorLegends"
 import { CategoricalBin } from "../color/ColorScaleBin"
 import {
     GRAPHER_BACKGROUND_DEFAULT,
@@ -77,6 +79,7 @@ import {
 } from "./SlopeChartHelpers"
 import { Slope } from "./Slope"
 import { MarkX } from "./MarkX"
+import { CATEGORICAL_LEGEND_STYLE } from "../lineCharts/LineChartConstants"
 
 type SVGMouseOrTouchEvent =
     | React.MouseEvent<SVGGElement>
@@ -334,7 +337,10 @@ export class SlopeChart
                         color: series.color,
                     })
             )
-            return { categoricalLegendData }
+            return {
+                categoricalLegendData,
+                categoricalLegendStyleConfig: CATEGORICAL_LEGEND_STYLE,
+            }
         }
         return undefined
     }
@@ -807,8 +813,13 @@ export class SlopeChart
                 dismiss={() => (this.tooltipState.target = null)}
             >
                 <TooltipValueRange
-                    column={series.column}
-                    values={values}
+                    label={series.column.displayName}
+                    unit={series.column.displayUnit}
+                    values={formatTooltipRangeValues(values, series.column)}
+                    trend={calculateTrendDirection(...values)}
+                    isRoundedToSignificantFigures={
+                        series.column.roundsToSignificantFigures
+                    }
                     labelVariant="unit-only"
                 />
             </Tooltip>

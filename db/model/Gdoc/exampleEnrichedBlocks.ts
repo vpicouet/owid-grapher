@@ -1,5 +1,5 @@
 import {
-    BlockImageSize,
+    BlockSize,
     EnrichedBlockChart,
     EnrichedBlockPerson,
     EnrichedBlockText,
@@ -46,6 +46,7 @@ const enrichedBlockText: EnrichedBlockText = {
 const enrichedChart: EnrichedBlockChart = {
     type: "chart",
     url: "https://ourworldindata.org/grapher/total-cases-covid-19",
+    size: BlockSize.Wide,
     parseErrors: [],
 }
 
@@ -115,9 +116,7 @@ export const enrichedBlockExamples: Record<
         type: "chart",
         url: "https://ourworldindata.org/grapher/total-cases-covid-19",
         height: "400",
-        row: "1",
-        column: "1",
-        position: "featured",
+        size: BlockSize.Wide,
         caption: boldLinkExampleText,
         parseErrors: [],
     },
@@ -125,9 +124,7 @@ export const enrichedBlockExamples: Record<
         type: "narrative-chart",
         name: "world-has-become-less-democratic",
         height: "400",
-        row: "1",
-        column: "1",
-        position: "featured",
+        size: BlockSize.Wide,
         caption: boldLinkExampleText,
         parseErrors: [],
     },
@@ -158,17 +155,6 @@ export const enrichedBlockExamples: Record<
     donors: {
         type: "donors",
         value: {},
-        parseErrors: [],
-    },
-    scroller: {
-        type: "scroller",
-        blocks: [
-            {
-                url: "https://ourworldindata.org/grapher/total-cases-covid-19",
-                text: enrichedBlockText,
-                type: "enriched-scroller-item",
-            },
-        ],
         parseErrors: [],
     },
     callout: {
@@ -231,7 +217,8 @@ export const enrichedBlockExamples: Record<
         hasOutline: true,
         alt: "",
         caption: [spanSimpleText],
-        size: BlockImageSize.Wide,
+        size: BlockSize.Wide,
+        visibility: "desktop",
         parseErrors: [],
     },
     video: {
@@ -241,6 +228,15 @@ export const enrichedBlockExamples: Record<
         caption: boldLinkExampleText,
         shouldLoop: true,
         shouldAutoplay: false,
+        visibility: "mobile",
+        parseErrors: [],
+    },
+    "static-viz": {
+        type: "static-viz",
+        name: "some-static-viz",
+        size: BlockSize.Wide,
+        caption: boldLinkExampleText,
+        hasOutline: true,
         parseErrors: [],
     },
     list: {
@@ -294,6 +290,7 @@ export const enrichedBlockExamples: Record<
             {
                 type: "chart",
                 url: "https://ourworldindata.org/grapher/life-expectancy",
+                size: BlockSize.Wide,
                 parseErrors: [],
             },
             {
@@ -419,6 +416,20 @@ export const enrichedBlockExamples: Record<
         items: [enrichedBlockText],
         parseErrors: [],
     },
+    "explore-data-section": {
+        type: "explore-data-section",
+        title: "Explore the data",
+        align: "center",
+        content: [enrichedBlockText],
+        parseErrors: [],
+    },
+    "conditional-section": {
+        type: "conditional-section",
+        content: [enrichedBlockText],
+        include: ["Europe"],
+        exclude: [],
+        parseErrors: [],
+    },
     "prominent-link": {
         type: "prominent-link",
         url: "https://ourworldindata.org/grapher/total-cases-covid-19",
@@ -430,6 +441,11 @@ export const enrichedBlockExamples: Record<
     "sdg-toc": {
         type: "sdg-toc",
         value: {},
+        parseErrors: [],
+    },
+    "ltp-toc": {
+        type: "ltp-toc",
+        title: "Contents",
         parseErrors: [],
     },
     "missing-data": {
@@ -582,6 +598,7 @@ export const enrichedBlockExamples: Record<
         heading: "Featured Work",
         "hide-authors": true,
         "hide-date": true,
+        variant: "featured",
         primary: [
             {
                 value: {
@@ -856,6 +873,14 @@ export const enrichedBlockExamples: Record<
                 isNew: false,
             },
         ],
+        parseErrors: [],
+    },
+    "featured-metrics": {
+        type: "featured-metrics",
+        parseErrors: [],
+    },
+    "featured-data-insights": {
+        type: "featured-data-insights",
         parseErrors: [],
     },
     "latest-data-insights": {

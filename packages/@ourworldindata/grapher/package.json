@@ -8,10 +8,6 @@
   "directories": {
     "lib": "src"
   },
-  "scripts": {
-    "build": "",
-    "typecheck": "tsc --noEmit"
-  },
   "keywords": [],
   "author": "",
   "dependencies": {
@@ -19,12 +15,13 @@
     "@fortawesome/free-brands-svg-icons": "^6.7.2",
     "@fortawesome/free-solid-svg-icons": "^6.7.2",
     "@fortawesome/react-fontawesome": "^0.2.2",
+    "@internationalized/date": "^3.10.0",
     "@ourworldindata/components": "workspace:^",
     "@ourworldindata/core-table": "workspace:^",
     "@ourworldindata/types": "workspace:^",
     "@ourworldindata/utils": "workspace:^",
-    "@sentry/browser": "^10.22.0",
-    "@sentry/react": "^10.22.0",
+    "@sentry/browser": "^10.27.0",
+    "@sentry/react": "^10.27.0",
     "@tippyjs/react": "^4.2.6",
     "@turf/boolean-intersects": "^7.2.0",
     "@turf/center": "^7.2.0",
@@ -42,13 +39,11 @@
     "react-dom": "^19.2.0",
     "react-flip-toolkit": "^7.2.4",
     "react-move": "^6.5.0",
-    "react-select": "^5.10.2",
     "remeda": "^2.32.0",
-    "simple-statistics": "^7.3.2",
+    "simple-statistics": "^7.8.8",
     "topojson-client": "^3.1.0",
     "ts-pattern": "^5.8.0",
     "url-join": "^5.0.0",
-    "url-parse": "^1.5.10",
     "versor": "^0.2.0"
   },
   "devDependencies": {
@@ -63,11 +58,9 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@types/topojson-client": "^3.1.1",
-    "@types/url-parse": "^1.4.8",
     "eslint": "^9.37.0",
     "eslint-plugin-react-hooks": "^5.2.0",
-    "typescript": "~5.9.2",
-    "vitest": "^4.0.1"
+    "vitest": "^4.0.15"
   },
   "license": "MIT"
 }

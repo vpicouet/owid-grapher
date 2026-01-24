@@ -1,8 +1,8 @@
 import cx from "classnames"
+import { useContext } from "react"
 
 import Callout from "./Callout.js"
 import ChartStory from "./ChartStory.js"
-import Scroller from "./Scroller.js"
 import Chart from "./Chart.js"
 import Donors from "./Donors.js"
 import PullQuote from "./PullQuote.js"
@@ -36,6 +36,7 @@ import { KeyInsights } from "./KeyInsights.js"
 import { ResearchAndWriting } from "./ResearchAndWriting.js"
 import { AllCharts } from "./AllCharts.js"
 import Video from "./Video.js"
+import StaticViz from "./StaticViz.js"
 import { Table } from "./Table.js"
 import { ExplorerTiles } from "./ExplorerTiles.js"
 import KeyIndicator from "./KeyIndicator.js"
@@ -49,10 +50,16 @@ import Person from "./Person.js"
 import NarrativeChart from "./NarrativeChart.js"
 import { Container, getLayout } from "./layout.js"
 import { Expander } from "./Expander.js"
-import { ChartConfigType } from "@ourworldindata/types"
+import { BlockSize, ChartConfigType } from "@ourworldindata/types"
 import { useLinkedChart } from "../utils.js"
 import { ResourcePanel } from "./ResourcePanel.js"
 import { Cta } from "./Cta.js"
+import { AttachmentsContext } from "../AttachmentsContext.js"
+import { FeaturedMetrics } from "../../FeaturedMetrics.js"
+import { FeaturedDataInsights } from "../../FeaturedDataInsights.js"
+import { BlockQueryClientProvider } from "./BlockQueryClientProvider.js"
+import { ExploreDataSection } from "./ExploreDataSection.js"
+import { LTPTableOfContents } from "./LTPTableOfContents.js"
 
 function ArticleBlockInternal({
     b: block,
@@ -67,8 +74,12 @@ function ArticleBlockInternal({
     shouldRenderLinks?: boolean
     interactiveImages?: boolean
 }) {
+    const { tags } = useContext(AttachmentsContext)
     block.type = block.type.toLowerCase() as any // this comes from the user and may not be all lowercase, enforce it here
 
+    const { linkedChart } = useLinkedChart(
+        block.type === "chart" ? block.url : ""
+    )
     // Special handling for mdims in side-by-side blocks to align them with
     // other charts.
     const isSideBySide = block.type === "side-by-side"
@@ -120,22 +131,37 @@ function ArticleBlockInternal({
             />
         ))
         .with({ type: "chart" }, (block) => {
-            const { isExplorer, queryStr } = Url.fromURL(block.url)
-            const areControlsHidden = queryStr.includes("hideControls=true")
+            const resolvedUrl = linkedChart?.resolvedUrl ?? block.url
+            const { isExplorer, queryParams } = Url.fromURL(resolvedUrl)
+            const areControlsHidden = queryParams.hideControls === "true"
+            const size = block.size ?? BlockSize.Wide
             const layoutSubtype =
-                isExplorer && !areControlsHidden ? "explorer" : "chart"
+                isExplorer && !areControlsHidden
+                    ? `explorer--${size}`
+                    : `chart--${size}`
             return (
                 <Chart
-                    className={getLayout(layoutSubtype, containerType)}
+                    className={cx(
+                        "article-block__chart",
+                        getLayout(layoutSubtype, containerType),
+                        {
+                            "hide-sm-only": block.visibility === "desktop",
+                            "show-sm-only": block.visibility === "mobile",
+                        }
+                    )}
                     d={block}
                     fullWidthOnMobile={true}
                 />
             )
         })
         .with({ type: "narrative-chart" }, (block) => {
+            const size = block.size ?? BlockSize.Wide
             return (
                 <NarrativeChart
-                    className={getLayout("chart", containerType)}
+                    className={cx(
+                        "article-block__chart",
+                        getLayout(`chart--${size}`, containerType)
+                    )}
                     d={block}
                     fullWidthOnMobile={true}
                 />
@@ -149,12 +175,6 @@ function ArticleBlockInternal({
         ))
         .with({ type: "donors" }, (_block) => (
             <Donors className={getLayout("donors", containerType)} />
-        ))
-        .with({ type: "scroller" }, (block) => (
-            <Scroller
-                className={getLayout("scroller", containerType)}
-                d={block}
-            />
         ))
         .with({ type: "callout" }, (block) => (
             <Callout
@@ -172,7 +192,11 @@ function ArticleBlockInternal({
             <figure
                 className={cx(
                     "article-block__image",
-                    getLayout(`image--${block.size}`, containerType)
+                    getLayout(`image--${block.size}`, containerType),
+                    {
+                        "hide-sm-only": block.visibility === "desktop",
+                        "show-sm-only": block.visibility === "mobile",
+                    }
                 )}
             >
                 <Image
@@ -198,12 +222,27 @@ function ArticleBlockInternal({
         ))
         .with({ type: "video" }, (block) => (
             <Video
-                className={getLayout("video", containerType)}
+                className={cx(getLayout("video", containerType), {
+                    "hide-sm-only": block.visibility === "desktop",
+                    "show-sm-only": block.visibility === "mobile",
+                })}
                 url={block.url}
                 shouldLoop={block.shouldLoop}
                 shouldAutoplay={block.shouldAutoplay}
                 caption={block.caption}
                 filename={block.filename}
+            />
+        ))
+        .with({ type: "static-viz" }, (block) => (
+            <StaticViz
+                className={cx(
+                    "article-block__static-viz",
+                    getLayout(`static-viz--${block.size}`, containerType)
+                )}
+                name={block.name}
+                containerType={containerType as ImageParentContainer}
+                hasOutline={block.hasOutline}
+                caption={block.caption}
             />
         ))
         .with({ type: "people" }, (block) => (
@@ -595,6 +634,31 @@ function ArticleBlockInternal({
                 ))}
             </div>
         ))
+        .with({ type: "explore-data-section" }, (block) => (
+            <ExploreDataSection
+                title={block.title}
+                align={block.align}
+                className={getLayout("explore-data-section")}
+            >
+                {block.content.map((item, i) => (
+                    <ArticleBlock key={i} b={item} />
+                ))}
+            </ExploreDataSection>
+        ))
+        .with({ type: "conditional-section" }, (block) => (
+            <>
+                {block.content.map((item, i) => (
+                    <ArticleBlock
+                        key={i}
+                        b={item}
+                        containerType={containerType}
+                        toc={toc}
+                        shouldRenderLinks={shouldRenderLinks}
+                        interactiveImages={interactiveImages}
+                    />
+                ))}
+            </>
+        ))
         .with({ type: "prominent-link" }, (block) => (
             <ProminentLink
                 className={getLayout("prominent-link", containerType)}
@@ -622,6 +686,32 @@ function ArticleBlockInternal({
                     className={getLayout("toc", containerType)}
                 />
             )
+        })
+        .with({ type: "ltp-toc" }, (block) => {
+            const layoutClassName = getLayout("ltp-toc", containerType)
+            const tagName = tags[0]?.name
+
+            if (!tagName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Linear topic TOC requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return toc?.length ? (
+                <LTPTableOfContents
+                    title={block.title}
+                    toc={toc}
+                    tagName={tagName}
+                    className={layoutClassName}
+                />
+            ) : null
         })
         .with({ type: "missing-data" }, () => (
             <MissingData className={getLayout("missing-data", containerType)} />
@@ -786,6 +876,61 @@ function ArticleBlockInternal({
                     className={getLayout("homepage-intro")}
                     {...block}
                 />
+            )
+        })
+        .with({ type: "featured-metrics" }, () => {
+            const layoutClassName = getLayout("featured-metrics", containerType)
+            const topicName = tags[0]?.name
+
+            if (!topicName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Featured metrics requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return (
+                <BlockQueryClientProvider>
+                    <FeaturedMetrics
+                        topicName={topicName}
+                        className={layoutClassName}
+                    />
+                </BlockQueryClientProvider>
+            )
+        })
+        .with({ type: "featured-data-insights" }, () => {
+            const layoutClassName = getLayout(
+                "featured-data-insights",
+                containerType
+            )
+            const topicName = tags[0]?.name
+
+            if (!topicName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Featured data insights requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return (
+                <BlockQueryClientProvider>
+                    <FeaturedDataInsights
+                        topicName={topicName}
+                        className={layoutClassName}
+                    />
+                </BlockQueryClientProvider>
             )
         })
         .with({ type: "socials" }, (block) => (

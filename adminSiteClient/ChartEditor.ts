@@ -17,7 +17,7 @@ import {
 } from "@ourworldindata/utils"
 import { DbChartTagJoin } from "@ourworldindata/types"
 import { action, computed, observable, runInAction, makeObservable } from "mobx"
-import { BAKED_GRAPHER_URL } from "../settings/clientSettings.js"
+import { BAKED_GRAPHER_URL, ENV } from "../settings/clientSettings.js"
 import {
     AbstractChartEditor,
     AbstractChartEditorManager,
@@ -40,7 +40,27 @@ export interface NarrativeChartMinimalInformation {
 }
 
 export const getFullReferencesCount = (references: References): number => {
-    return Object.values(references).reduce((acc, ref) => acc + ref.length, 0)
+    // Get a unique count so double references (e.g. via grapher-url + inline link) are not overcounted.
+    const allRefs = Object.values(
+        references
+    ).flat() as References[keyof References][]
+    const uniqueRefs = new Set(
+        allRefs.map((ref) => {
+            if (typeof ref === "string") return `string:${ref}`
+            if (!ref || typeof ref !== "object") {
+                return `unknown:${String(ref)}`
+            }
+            const typedRef = ref as {
+                type?: string
+                slug?: string
+                id?: string | number
+            }
+            const type = typedRef.type ?? "unknown"
+            const slug = typedRef.slug ?? typedRef.id ?? "unknown"
+            return `${type}:${slug}`
+        })
+    )
+    return uniqueRefs.size
 }
 
 export interface ChartEditorManager extends AbstractChartEditorManager {
@@ -150,7 +170,12 @@ export class ChartEditor extends AbstractChartEditor<ChartEditorManager> {
         // Chart title and slug may be autocalculated from data, in which case they won't be in props
         // But the server will need to know what we calculated in order to do its job
         if (!patchConfig.title) patchConfig.title = grapherState.displayTitle
-        if (!patchConfig.slug) patchConfig.slug = grapherState.displaySlug
+
+        // Only auto-generate slug when publishing. Drafts can have empty slugs to avoid
+        // unnecessary slug collisions.
+        if (grapherState.isPublished && !patchConfig.slug) {
+            patchConfig.slug = grapherState.displaySlug
+        }
 
         // it only makes sense to enable inheritance if the chart has a parent
         const shouldEnableInheritance =
@@ -271,6 +296,56 @@ export class ChartEditor extends AbstractChartEditor<ChartEditorManager> {
             })
         }
     }
+
+    async deleteGrapher(): Promise<void> {
+        const { grapherState } = this
+
+        await deleteChart({
+            admin: this.manager.admin,
+            chartId: grapherState.id,
+            chartSlug: grapherState.slug,
+            references: this.references,
+            onSuccess: () => {
+                // Redirect to the charts index page after successful deletion
+                window.location.href = "/admin/charts"
+            },
+        })
+    }
+}
+
+export async function deleteChart(params: {
+    admin: Admin
+    chartId?: number
+    chartSlug?: string
+    references?: References
+    onSuccess?: () => void
+}): Promise<void> {
+    const { admin, chartId, chartSlug, references, onSuccess } = params
+
+    // Delete only makes sense for saved charts
+    if (chartId === undefined || chartId === 0) return
+
+    // Check for references
+    if (references && getFullReferencesCount(references) > 0) {
+        window.alert(
+            `Cannot delete chart ${chartSlug} because it is used in ${getFullReferencesCount(
+                references
+            )} places. See the references tab in the chart editor for details.`
+        )
+        return
+    }
+
+    // Confirm deletion
+    let confirmMessage = `Delete the chart ${chartSlug}? This action cannot be undone!`
+    if (ENV === "staging") {
+        confirmMessage +=
+            "\n\n⚠️ WARNING: You are on a staging server. Deleted charts are NOT synced to production servers. If this chart exists on production, it will remain there even after deletion here."
+    }
+    if (!window.confirm(confirmMessage)) return
+
+    const json = await admin.requestJSON(`/api/charts/${chartId}`, {}, "DELETE")
+
+    if (json.success) onSuccess?.()
 }
 
 export async function fetchMergedGrapherConfigByVariableId(

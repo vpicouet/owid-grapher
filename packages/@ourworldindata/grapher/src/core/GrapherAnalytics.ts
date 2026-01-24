@@ -1,7 +1,6 @@
 import {
     EventCategory,
     GrapherErrorAction,
-    type EntityControlEvent,
     type EntitySelectorEvent,
     type GrapherImageDownloadEvent,
     type GrapherInteractionEvent,
@@ -11,9 +10,11 @@ import {
 
 const DEBUG = false
 
+type GAEventWithClear = GAEvent & { _clear: boolean }
+
 // Add type information for dataLayer global provided by Google Tag Manager
 type WindowWithDataLayer = Window & {
-    dataLayer?: (GAEvent | GAConsent)[]
+    dataLayer?: (GAEventWithClear | GAConsent)[]
 }
 declare const window: WindowWithDataLayer
 
@@ -42,9 +43,11 @@ export class GrapherAnalytics {
         slug: string,
         ctx?: { viewConfigId?: string; narrativeChartName?: string }
     ): void {
+        const { path, pathNext } = splitPathForGA4(`/grapher/${slug}`)
         this.logToGA({
             event: EventCategory.GrapherView,
-            grapherPath: `/grapher/${slug}`,
+            grapherPath: path,
+            grapherPathNext: pathNext,
             viewConfigId: ctx?.viewConfigId,
             narrativeChartName: ctx?.narrativeChartName,
         })
@@ -71,15 +74,6 @@ export class GrapherAnalytics {
             event: EventCategory.ExplorerView,
             explorerPath: `/explorers/${slug}`,
             explorerView: JSON.stringify(view),
-        })
-    }
-
-    /** Logs events for the globel entity selector used on country pages */
-    logGlobalEntitySelector(action: EntityControlEvent, note?: string): void {
-        this.logToGA({
-            event: EventCategory.GlobalEntitySelectorUsage,
-            eventAction: action,
-            eventContext: note,
         })
     }
 
@@ -137,11 +131,15 @@ export class GrapherAnalytics {
             narrativeChartName?: string
         }
     ): void {
+        const { path, pathNext } = splitPathForGA4(
+            getPathname(ctx.grapherUrl) ?? ""
+        )
         this.logToGA({
             event: EventCategory.GrapherClick,
             eventAction: action,
             eventTarget: ctx.label,
-            grapherPath: getPathname(ctx.grapherUrl),
+            grapherPath: path,
+            grapherPathNext: pathNext,
             narrativeChartName: ctx.narrativeChartName,
         })
     }
@@ -179,7 +177,14 @@ export class GrapherAnalytics {
             console.log("Analytics.logToGA", event)
             return
         }
-        if (typeof window !== "undefined") window.dataLayer?.push(event)
+        if (typeof window !== "undefined") {
+            // It's very important that we clear (_clear) the data layer whenever we push an event,
+            // otherwise it will retain all properties from previous events which can lead to
+            // confusing and incorrect events data being sent.
+            // See https://www.simoahava.com/analytics/two-simple-data-model-tricks/.
+            // see also https://github.com/google/data-layer-helper/blob/4a65b385db1fac710d33bf5d1345e598e3d117fc/README.md#preventing-default-recursive-merge
+            window.dataLayer?.push({ ...event, _clear: true })
+        }
     }
 
     updateGAConsentSettings(consent: GAConsentParams): void {
@@ -208,12 +213,24 @@ function getPathname(url?: string): string | undefined {
         return undefined
     }
 }
+// GA4 truncates all string parameters at 100 characters.
+// If path exceeds this, split into path (first 100 chars) and pathNext (chars 101-200)
+export function splitPathForGA4(path: string): {
+    path: string
+    pathNext?: string
+} {
+    if (path.length <= 100) return { path }
+    return { path: path.slice(0, 100), pathNext: path.slice(100) }
+}
 
 function grapherAnalyticsContextToGAEventFields(
     ctx: GrapherAnalyticsContext
 ): Partial<GAEvent> {
+    const fullPath = ctx.slug ? `/grapher/${ctx.slug}` : undefined
+    const { path, pathNext } = splitPathForGA4(fullPath ?? "")
     return {
-        grapherPath: ctx.slug ? `/grapher/${ctx.slug}` : undefined,
+        grapherPath: path,
+        grapherPathNext: pathNext,
         viewConfigId: ctx.viewConfigId,
         narrativeChartName: ctx.narrativeChartName,
     }

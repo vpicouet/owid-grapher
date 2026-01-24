@@ -27,6 +27,7 @@ import {
     OwidRow,
     OwidTableSlugs,
     ErrorValue,
+    ToleranceOptions,
 } from "@ourworldindata/types"
 import { CoreTable } from "./CoreTable.js"
 import { ErrorValueTypes, isNotErrorValue } from "./ErrorValues.js"
@@ -34,6 +35,7 @@ import {
     getOriginalTimeColumnSlug,
     makeOriginalValueSlugFromColumnSlug,
     makeOriginalTimeSlugFromColumnSlug,
+    makeOriginalStartTimeSlugFromColumnSlug,
     timeColumnSlugFromColumnDef,
     toPercentageColumnDef,
 } from "./OwidTableUtil.js"
@@ -199,21 +201,38 @@ export class OwidTable extends CoreTable<OwidRow, OwidColumnDef> {
     filterByTargetTimes(targetTimes: Time[], tolerance = 0): this {
         const timeColumn = this.timeColumn!
         const timeValues = timeColumn.valuesIncludingErrorValues
+
+        // The common case here is that the tolerance is set to 0, in which case we can simply filter
+        // the time column for the target times.
+        if (tolerance === 0) {
+            const targetTimesSet = new Set(targetTimes)
+            return this.columnFilter(
+                timeColumn.slug,
+                (time) => targetTimesSet.has(time as number),
+                `Keep only rows with time equal to one of the target times: ${targetTimes.join(
+                    ", "
+                )}`
+            )
+        }
+
+        // If tolerance isn't 0, then we need to find the closest time for each entity, while incorporating the tolerance.
         const entityNameToIndices = this.rowIndicesByEntityName
         const matchingIndices = new Set<number>()
         this.availableEntityNames.forEach((entityName) => {
             const indices = entityNameToIndices.get(entityName) || []
-            const allTimes = indices.map(
-                (index) => timeValues[index]
-            ) as number[]
+            const allTimesAsc = indices
+                .map((index) => ({ time: timeValues[index] as number, index }))
+                .sort((a, b) => a.time - b.time)
 
             targetTimes.forEach((targetTime) => {
                 const index = findClosestTimeIndex(
-                    allTimes,
+                    allTimesAsc.map((t) => t.time),
                     targetTime,
                     tolerance
                 )
-                if (index !== undefined) matchingIndices.add(indices[index])
+                const closest =
+                    index === undefined ? undefined : allTimesAsc[index]
+                if (closest !== undefined) matchingIndices.add(closest.index)
             })
         })
 
@@ -641,30 +660,48 @@ export class OwidTable extends CoreTable<OwidRow, OwidColumnDef> {
         const rows: OwidRow[] = []
         entityNameToIndices.forEach((indices) => {
             const [startRow, endRow] = this.rowsAt(indices)
-            const newRow: OwidRow = {
-                ...endRow,
-            }
+
+            const newRow: OwidRow = { ...endRow }
             columns.forEach((col) => {
                 const timeSlug = col.originalTimeColumnSlug
-                const yearsElapsed = endRow[timeSlug] - startRow[timeSlug]
-                newRow[col.slug] = cagr(
-                    startRow[col.slug],
-                    endRow[col.slug],
-                    yearsElapsed
+
+                const startTime = startRow[timeSlug]
+                const endTime = endRow[timeSlug]
+                const yearsElapsed = endTime - startTime
+
+                const startValue = startRow[col.slug]
+                const endValue = endRow[col.slug]
+
+                // Update to average annual change
+                newRow[col.slug] = cagr(startValue, endValue, yearsElapsed)
+
+                // Add original start time column
+                const startTimeSlug = makeOriginalStartTimeSlugFromColumnSlug(
+                    col.slug
                 )
+                newRow[startTimeSlug] = startTime
             })
+
             rows.push(newRow)
         })
 
-        const newDefs = replaceDef(
-            this.defs,
-            columns.map((col) =>
-                toPercentageColumnDef(
-                    col.def,
-                    ColumnTypeNames.PercentChangeOverTime
+        const newDefs = [
+            ...replaceDef(
+                this.defs,
+                columns.map((col) =>
+                    toPercentageColumnDef(
+                        col.def,
+                        ColumnTypeNames.PercentChangeOverTime
+                    )
                 )
-            )
-        )
+            ),
+            ...columns.map((col) => {
+                return {
+                    ...this.timeColumn.def,
+                    slug: makeOriginalStartTimeSlugFromColumnSlug(col.slug),
+                }
+            }),
+        ]
 
         return this.transform(
             rows,
@@ -763,11 +800,11 @@ export class OwidTable extends CoreTable<OwidRow, OwidColumnDef> {
         timeColumnSlug: ColumnSlug,
         interpolation: InterpolationProvider<K>,
         context: K
-    ): { values: number[]; times: number[] } {
+    ): { values: CoreValueType[]; times: number[] } {
         const groupBoundaries = withAllRows.groupBoundaries(this.entityNameSlug)
-        const newValues = withAllRows
-            .get(columnSlug)
-            .valuesIncludingErrorValues.slice() as number[]
+        const col = withAllRows.get(columnSlug)
+        const validIndices = col.validRowIndices
+        const newValues = col.valuesIncludingErrorValues.slice()
         const newTimes = withAllRows
             .get(timeColumnSlug)
             .valuesIncludingErrorValues.slice() as Time[]
@@ -775,6 +812,7 @@ export class OwidTable extends CoreTable<OwidRow, OwidColumnDef> {
             interpolation(
                 newValues,
                 newTimes,
+                validIndices,
                 context,
                 groupBoundaries[index],
                 groupBoundaries[index + 1]
@@ -791,8 +829,7 @@ export class OwidTable extends CoreTable<OwidRow, OwidColumnDef> {
     // There are finicky details in both of them that complicate this
     interpolateColumnWithTolerance(
         columnSlug: ColumnSlug,
-        toleranceOverride?: number,
-        toleranceStrategyOverride?: ToleranceStrategy
+        { toleranceStrategyOverride, toleranceOverride }: ToleranceOptions = {}
     ): this {
         // If the column doesn't exist, return the table unchanged.
         if (!this.has(columnSlug)) return this

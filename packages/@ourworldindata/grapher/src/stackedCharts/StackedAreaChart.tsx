@@ -26,6 +26,7 @@ import {
     TooltipState,
     TooltipTable,
     makeTooltipRoundingNotice,
+    toTooltipTableColumns,
 } from "../tooltip/Tooltip"
 import { StackedAreaChartState } from "./StackedAreaChartState.js"
 import { AREA_OPACITY, StackedSeries } from "./StackedConstants"
@@ -41,7 +42,7 @@ import { select, type BaseType, type Selection } from "d3-selection"
 import { ChartInterface } from "../chart/ChartInterface"
 import { ChartManager } from "../chart/ChartManager"
 import { StackedAreas } from "./StackedAreas"
-import { HorizontalColorLegendManager } from "../horizontalColorLegend/HorizontalColorLegends"
+import { HorizontalColorLegendManager } from "../legend/HorizontalColorLegends"
 import { CategoricalBin } from "../color/ColorScaleBin"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
 import { InteractionState } from "../interaction/InteractionState"
@@ -235,7 +236,18 @@ export class StackedAreaChart
                         })
                 )
                 .toReversed()
-            return { categoricalLegendData }
+
+            return {
+                categoricalLegendData,
+                legendStyleConfig: {
+                    marker: {
+                        default: { opacity: AREA_OPACITY.DEFAULT },
+                        focused: { opacity: AREA_OPACITY.FOCUS },
+                        muted: { opacity: AREA_OPACITY.MUTE },
+                    },
+                    text: { muted: { opacity: AREA_OPACITY.MUTE } },
+                },
+            }
         }
         return undefined
     }
@@ -434,7 +446,7 @@ export class StackedAreaChart
 
         const formatColumn = this.chartState.formatColumn,
             formattedTime = formatColumn.formatTime(bottomSeriesPoint.position),
-            { unit, shortUnit } = formatColumn
+            { displayUnit } = formatColumn
 
         const title = formattedTime
         const titleAnnotation = this.xAxis.label ? `(${this.xAxis.label})` : ""
@@ -465,14 +477,14 @@ export class StackedAreaChart
                 style={{ maxWidth: "50%" }}
                 title={title}
                 titleAnnotation={titleAnnotation}
-                subtitle={unit !== shortUnit ? unit : undefined}
+                subtitle={displayUnit}
                 subtitleFormat="unit"
                 footer={footer}
                 dissolve={fading}
                 dismiss={this.dismissTooltip}
             >
                 <TooltipTable
-                    columns={[formatColumn]}
+                    columns={toTooltipTableColumns(formatColumn)}
                     totals={[totalValue]}
                     rows={series.toReversed().map((series) => {
                         const { seriesName: name, color, points } = series

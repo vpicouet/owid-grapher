@@ -2,7 +2,7 @@ import { faArrowRight } from "@fortawesome/free-solid-svg-icons"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { commafyNumber } from "@ourworldindata/utils"
 import * as React from "react"
-import { SearchDataTopicsResponse } from "./searchTypes.js"
+import { SearchDataTopicsResponse } from "@ourworldindata/types"
 import { useSearchContext } from "./SearchContext.js"
 import { useSelectedRegionNames } from "./searchHooks.js"
 import { SearchChartHitComponent } from "./SearchChartHitComponent.js"
@@ -17,7 +17,7 @@ export const SearchDataTopic = ({
         analytics,
     } = useSearchContext()
 
-    const selectedRegionNames = useSelectedRegionNames(true)
+    const selectedRegionNames = useSelectedRegionNames()
 
     if (charts.nbHits === 0) return null
     const titleLabel = title.replaceAll(" and ", " & ")

@@ -1,5 +1,5 @@
 import * as _ from "lodash-es"
-import { LongFormPage, PageOverrides } from "../site/LongFormPage.js"
+import { LongFormPage } from "../site/LongFormPage.js"
 import { LatestPage } from "../site/LatestPage.js"
 import { SearchPage } from "../site/search/SearchPage.js"
 import { DynamicCollectionPage } from "../site/collections/DynamicCollectionPage.js"
@@ -12,7 +12,7 @@ import { ThankYouPage } from "../site/ThankYouPage.js"
 import TombstonePage from "../site/TombstonePage.js"
 import OwidGdocPage from "../site/gdocs/OwidGdocPage.js"
 import ReactDOMServer from "react-dom/server"
-import { formatCountryProfile, isCanonicalInternalUrl } from "./formatting.js"
+import { isCanonicalInternalUrl } from "./formatting.js"
 import * as cheerio from "cheerio"
 import {
     BAKED_BASE_URL,
@@ -27,11 +27,7 @@ import {
 } from "../settings/clientSettings.js"
 import { FeedbackPage } from "../site/FeedbackPage.js"
 import {
-    getCountryBySlug,
-    Country,
-    FormattedPost,
     FullPost,
-    JsonError,
     Url,
     OwidGdocType,
     OwidGdoc,
@@ -47,7 +43,6 @@ import {
     DbEnrichedImage,
     DbPlainChart,
     DbRawChartConfig,
-    FormattingOptions,
     GrapherInterface,
     ImageMetadata,
     LatestPageItem,
@@ -56,7 +51,6 @@ import {
     OwidGdocMinimalPostInterface,
     OwidGdocPublicationContext,
 } from "@ourworldindata/types"
-import { CountryProfileSpec } from "../site/countryProfileProjects.js"
 import { formatPost } from "./formatWordpressPost.js"
 import {
     knexRaw,
@@ -65,7 +59,6 @@ import {
     getPublishedExplorersBySlug,
     generateTopicTagGraph,
 } from "../db/db.js"
-import { getPageOverrides, isPageOverridesCitable } from "./pageOverrides.js"
 import { ProminentLink } from "../site/blocks/ProminentLink.js"
 import { formatUrls } from "../site/formatting.js"
 
@@ -85,7 +78,7 @@ import {
     getEnrichedChartById,
 } from "../db/model/Chart.js"
 import { ExplorerAdminServer } from "../explorerAdminServer/ExplorerAdminServer.js"
-import { resolveInternalRedirect } from "./redirects.js"
+import { DEPRECATED_resolveInternalRedirectForWordpressProminentLinks } from "./redirects.js"
 import {
     getBlockContentFromSnapshot,
     getFullPostBySlugFromSnapshot,
@@ -105,10 +98,11 @@ import {
     AttachmentsContext,
 } from "../site/gdocs/AttachmentsContext.js"
 import AtomArticleBlocks from "../site/gdocs/components/AtomArticleBlocks.js"
-import { getLatestExplorerArchivedVersionsIfEnabled } from "../db/model/archival/archivalDb.js"
+import { getLatestArchivedExplorerPageVersionsIfEnabled } from "../db/model/ArchivedExplorerVersion.js"
 import { GdocDataInsight } from "../db/model/Gdoc/GdocDataInsight.js"
 import { getImagesByFilenames } from "../db/model/Image.js"
 import { getCanonicalUrl } from "@ourworldindata/components"
+import { getLatestArchivedPostPageVersionsIfEnabled } from "../db/model/ArchivedPostVersion.js"
 
 export const renderToHtmlPage = (element: any) =>
     `<!doctype html>${ReactDOMServer.renderToString(element)}`
@@ -155,24 +149,36 @@ export function renderDynamicCollectionPage() {
 export const renderGdocsPageBySlug = async (
     knex: KnexReadonlyTransaction,
     slug: string,
+    types: OwidGdocType[],
     isPreviewing: boolean = false
 ): Promise<string | undefined> => {
-    const gdoc = await getAndLoadGdocBySlug(knex, slug)
+    const gdoc = await getAndLoadGdocBySlug(knex, slug, types)
     if (!gdoc) {
         throw new Error(`Failed to render an unknown GDocs post: ${slug}.`)
     }
 
     await gdoc.loadState(knex)
 
-    return renderGdoc(gdoc, isPreviewing)
+    const archivedVersions = await getLatestArchivedPostPageVersionsIfEnabled(
+        knex,
+        [gdoc.id]
+    )
+    const archiveContext = archivedVersions[gdoc.id]
+
+    return renderGdoc(gdoc, isPreviewing, archiveContext)
 }
 
-export const renderGdoc = (gdoc: OwidGdoc, isPreviewing: boolean = false) => {
+export const renderGdoc = (
+    gdoc: OwidGdoc,
+    isPreviewing: boolean = false,
+    archiveContext?: ArchiveContext
+) => {
     return renderToHtmlPage(
         <OwidGdocPage
             baseUrl={BAKED_BASE_URL}
             gdoc={gdoc}
             isPreviewing={isPreviewing}
+            archiveContext={archiveContext}
         />
     )
 }
@@ -206,15 +212,12 @@ export const renderPost = async (
 
     const formatted = await formatPost(post, formattingOptions, knex)
 
-    const pageOverrides = await getPageOverrides(knex, post, formattingOptions)
-    const citationStatus =
-        isPostSlugCitable(post.slug) || isPageOverridesCitable(pageOverrides)
+    const citationStatus = isPostSlugCitable(post.slug)
 
     return renderToHtmlPage(
         <LongFormPage
             withCitation={citationStatus}
             post={formatted}
-            overrides={pageOverrides}
             formattingOptions={formattingOptions}
             baseUrl={baseUrl}
         />
@@ -446,6 +449,7 @@ ${dataInsights
                         "linkedNarrativeCharts",
                         {}
                     ),
+                    linkedStaticViz: _.get(post, "linkedStaticViz", {}),
                     // lodash doesn't use fallback when value is null
                     tags: post.tags ?? [],
                 }}
@@ -475,85 +479,6 @@ ${dataInsights
 
 export const feedbackPage = () =>
     renderToHtmlPage(<FeedbackPage baseUrl={BAKED_BASE_URL} />)
-
-const getCountryProfilePost = _.memoize(
-    async (
-        profileSpec: CountryProfileSpec,
-        knex: KnexReadonlyTransaction
-    ): Promise<[FormattedPost, FormattingOptions]> => {
-        // Get formatted content from generic covid country profile page.
-        const genericCountryProfilePost = await getFullPostBySlugFromSnapshot(
-            knex,
-            profileSpec.genericProfileSlug
-        )
-
-        const profileFormattingOptions = extractFormattingOptions(
-            genericCountryProfilePost.content
-        )
-        const formattedPost = await formatPost(
-            genericCountryProfilePost,
-            profileFormattingOptions,
-            knex
-        )
-
-        return [formattedPost, profileFormattingOptions]
-    }
-)
-
-// todo: we used to flush cache of this thing.
-const getCountryProfileLandingPost = _.memoize(
-    async (profileSpec: CountryProfileSpec, knex: KnexReadonlyTransaction) => {
-        return getFullPostBySlugFromSnapshot(knex, profileSpec.landingPageSlug)
-    }
-)
-
-export const renderCountryProfile = async (
-    profileSpec: CountryProfileSpec,
-    country: Country,
-    knex: KnexReadonlyTransaction
-) => {
-    const [formatted, formattingOptions] = await getCountryProfilePost(
-        profileSpec,
-        knex
-    )
-
-    const formattedCountryProfile = formatCountryProfile(formatted, country)
-
-    const landing = await getCountryProfileLandingPost(profileSpec, knex)
-
-    const overrides: PageOverrides = {
-        pageTitle: `${country.name}: ${profileSpec.pageTitle} Country Profile`,
-        pageDesc: `${country.name}: ${formattedCountryProfile.pageDesc}`,
-        canonicalUrl: `${BAKED_BASE_URL}/${profileSpec.rootPath}/${country.slug}`,
-        citationTitle: landing.title,
-        citationSlug: landing.slug,
-        citationCanonicalUrl: `${BAKED_BASE_URL}/${landing.slug}`,
-        citationAuthors: landing.authors,
-        citationPublicationDate: landing.date,
-    }
-    return renderToHtmlPage(
-        <LongFormPage
-            withCitation={true}
-            post={formattedCountryProfile}
-            overrides={overrides}
-            formattingOptions={formattingOptions}
-            baseUrl={BAKED_BASE_URL}
-        />
-    )
-}
-
-export const countryProfileCountryPage = async (
-    profileSpec: CountryProfileSpec,
-    countrySlug: string,
-    knex: KnexReadonlyTransaction
-) => {
-    const country = getCountryBySlug(countrySlug)
-    if (!country) throw new JsonError(`No such country ${countrySlug}`, 404)
-
-    return renderCountryProfile(profileSpec, country, knex)
-}
-
-export const flushCache = () => getCountryProfilePost.cache.clear?.()
 
 const renderPostThumbnailBySlug = async (
     knex: KnexReadonlyTransaction,
@@ -586,10 +511,11 @@ export const renderProminentLinks = async (
             const formattedUrlString = $block.find("link-url").text() // never empty, see prominent-link.php
             const formattedUrl = Url.fromURL(formattedUrlString)
 
-            const resolvedUrl = await resolveInternalRedirect(
-                formattedUrl,
-                knex
-            )
+            const resolvedUrl =
+                await DEPRECATED_resolveInternalRedirectForWordpressProminentLinks(
+                    formattedUrl,
+                    knex
+                )
             const resolvedUrlString = resolvedUrl.fullUrl
 
             const style = $block.attr("style")
@@ -822,10 +748,10 @@ export const renderExplorerPage = async (
 
     let archiveContext = opts?.archiveContext
     if (!archiveContext && !opts?.skipArchiveContext) {
-        const latestBySlug = await getLatestExplorerArchivedVersionsIfEnabled(
-            knex,
-            [program.slug]
-        )
+        const latestBySlug =
+            await getLatestArchivedExplorerPageVersionsIfEnabled(knex, [
+                program.slug,
+            ])
         archiveContext = latestBySlug[program.slug]
     }
 

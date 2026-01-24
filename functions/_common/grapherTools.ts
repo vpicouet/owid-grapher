@@ -73,15 +73,15 @@ export function getDataApiUrl(env: Env) {
 export async function fetchFromR2(
     url: URL,
     etag: string | undefined,
-    fallbackUrl?: URL
+    fallbackUrl?: URL,
+    shouldCache: boolean = true
 ) {
     const headers = new Headers()
     if (etag) headers.set("If-None-Match", etag)
     const init = {
-        cf: {
-            cacheEverything: true,
-            cacheTtl: WORKER_CACHE_TIME_IN_SECONDS,
-        },
+        cf: shouldCache
+            ? { cacheEverything: true, cacheTtl: WORKER_CACHE_TIME_IN_SECONDS }
+            : { cacheEverything: false },
         headers,
     }
     const primaryResponse = await fetch(url.toString(), init)
@@ -96,7 +96,8 @@ export async function fetchFromR2(
 export async function fetchUnparsedGrapherConfig(
     identifier: GrapherIdentifier,
     env: Env,
-    etag?: string
+    etag?: string,
+    shouldCache: boolean = true
 ) {
     // The top level directory is either the bucket path (should be set in dev environments and production)
     // or the branch name on preview staging environments
@@ -135,7 +136,7 @@ export async function fetchUnparsedGrapherConfig(
     }
 
     // Fetch grapher config
-    return fetchFromR2(requestUrl, etag, fallbackUrl)
+    return fetchFromR2(requestUrl, etag, fallbackUrl, shouldCache)
 }
 
 async function fetchMultiDimGrapherConfig(
@@ -144,11 +145,14 @@ async function fetchMultiDimGrapherConfig(
     env: Env
 ) {
     const view = searchParamsToMultiDimView(multiDimConfig, searchParams)
+    const shouldCache = !searchParams.has("nocache")
     const response = await fetchUnparsedGrapherConfig(
         { type: "uuid", id: view.fullConfigId },
-        env
+        env,
+        undefined,
+        shouldCache
     )
-    return await response.json()
+    return (await response.json()) as GrapherInterface
 }
 
 export async function fetchGrapherConfig({
@@ -162,10 +166,12 @@ export async function fetchGrapherConfig({
     etag?: string
     searchParams?: URLSearchParams
 }): Promise<FetchGrapherConfigResult> {
+    const shouldCache = !searchParams?.has("nocache")
     const fetchResponse = await fetchUnparsedGrapherConfig(
         identifier,
         env,
-        etag
+        etag,
+        shouldCache
     )
 
     if (fetchResponse.status === 404) {
@@ -183,31 +189,31 @@ export async function fetchGrapherConfig({
         return {
             grapherConfig: null,
             status: fetchResponse.status,
-            etag: fetchResponse.headers.get("etag"),
+            etag: fetchResponse.headers.get("etag") ?? undefined,
         }
     }
 
-    const config = await fetchResponse.json()
+    const config: unknown = await fetchResponse.json()
     let grapherConfig: GrapherInterface
-    let multiDimAvailableDimensions: string[]
+    let multiDimAvailableDimensions: string[] | undefined
     if (identifier.type === "multi-dim-slug") {
         const multiDimConfig = config as MultiDimDataPageConfigEnriched
         grapherConfig = await fetchMultiDimGrapherConfig(
             multiDimConfig,
-            searchParams,
+            searchParams ?? new URLSearchParams(),
             env
         )
         multiDimAvailableDimensions = multiDimConfig.dimensions.map(
             (dim) => dim.slug
         )
     } else {
-        grapherConfig = config
+        grapherConfig = config as GrapherInterface
     }
     console.log("grapher title", grapherConfig.title)
     const result: FetchGrapherConfigResult = {
         grapherConfig,
         status: 200,
-        etag: fetchResponse.headers.get("etag"),
+        etag: fetchResponse.headers.get("etag") ?? undefined,
     }
     if (identifier.type === "multi-dim-slug") {
         result.multiDimAvailableDimensions = multiDimAvailableDimensions
@@ -223,7 +229,10 @@ export async function initGrapher(
 ): Promise<{
     grapher: Grapher
     multiDimAvailableDimensions?: string[]
+    identifierType: GrapherIdentifier["type"]
 }> {
+    let effectiveType = identifier.type
+
     let grapherConfigResponse: FetchGrapherConfigResult
     try {
         grapherConfigResponse = await fetchGrapherConfig({
@@ -249,6 +258,7 @@ export async function initGrapher(
                 env,
                 searchParams,
             })
+            effectiveType = "multi-dim-slug"
         } else {
             throw e
         }
@@ -269,6 +279,11 @@ export async function initGrapher(
         bounds,
         staticBounds: bounds,
         baseFontSize: options.fontSize,
+        manager: {
+            ...options.grapherProps?.manager,
+            // Set the baseUrl to ensure mdims have correct canonical URL in the metadata json
+            baseUrl: `${grapherBaseUrl}/${identifier.id}`,
+        },
         ...options.grapherProps,
     })
     grapherState.isExportingToSvgOrPng = true
@@ -277,6 +292,7 @@ export async function initGrapher(
 
     return {
         grapher,
+        identifierType: effectiveType,
         multiDimAvailableDimensions:
             grapherConfigResponse.multiDimAvailableDimensions,
     }
@@ -317,11 +333,13 @@ export function rewriteMetaTags(
             // Replace canonical URL, otherwise the preview image will not include the search parameters.
             element: (element) => {
                 const canonicalUrl = element.getAttribute("content")
-                element.setAttribute("content", canonicalUrl + url.search)
-                try {
-                    origin = new URL(canonicalUrl).origin
-                } catch (e) {
-                    console.error("Error parsing canonical URL", e)
+                if (canonicalUrl) {
+                    element.setAttribute("content", canonicalUrl + url.search)
+                    try {
+                        origin = new URL(canonicalUrl).origin
+                    } catch (e) {
+                        console.error("Error parsing canonical URL", e)
+                    }
                 }
             },
         })
@@ -383,12 +401,12 @@ export function getGrapherTableWithRelevantColumns(
         OwidTableSlugs.day,
         table.timeColumn.slug,
     ]
-    const valueSlugs = [
+    const valueSlugs = excludeUndefined([
         ...grapherState.yColumnSlugs,
         grapherState.xColumnSlug,
         grapherState.colorColumnSlug,
         grapherState.sizeColumnSlug,
-    ]
+    ])
     const extraSlugs = valueSlugs.flatMap((slug) => [
         makeAnnotationsSlug(slug),
         makeOriginalTimeSlugFromColumnSlug(slug),
@@ -399,7 +417,7 @@ export function getGrapherTableWithRelevantColumns(
         ...timeSlugs,
         ...valueSlugs,
         ...extraSlugs,
-    ].filter((slug) => slug && table.has(slug))
+    ].filter((slug) => slug && table.has(slug)) as string[]
 
     const uniqueSlugs = _.uniq(slugs)
 

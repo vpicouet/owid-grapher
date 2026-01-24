@@ -70,6 +70,17 @@ export interface NarrativeChartInfo {
     chartConfigId: string
     parentChartSlug: string
     queryParamsForParentChart: QueryParams
+    latestArchivedParent?: ArchivedPageVersion
+}
+
+// An object containing metadata needed for embedded static visualizations
+export interface LinkedStaticViz {
+    desktop: ImageMetadata
+    mobile?: ImageMetadata
+    name: string
+    grapherUrl?: string
+    sourceUrl?: string
+    description: string
 }
 
 /**
@@ -94,13 +105,19 @@ export enum OwidGdocType {
     AboutPage = "about-page",
     Author = "author",
     Announcement = "announcement",
+    Profile = "profile",
 }
+
+export const ALL_GDOC_TYPES: OwidGdocType[] = Object.values(
+    OwidGdocType
+) as OwidGdocType[]
 
 export interface OwidGdocBaseInterface {
     id: string
     slug: string
     // TODO: should we type this as a union of the possible content types instead?
     content: OwidGdocContent
+    contentMd5: string
     published: boolean
     createdAt: Date
     publishedAt: Date | null
@@ -112,6 +129,7 @@ export interface OwidGdocBaseInterface {
     linkedDocuments?: Record<string, OwidGdocMinimalPostInterface>
     linkedCharts?: Record<string, LinkedChart>
     linkedNarrativeCharts?: Record<string, NarrativeChartInfo>
+    linkedStaticViz?: Record<string, LinkedStaticViz>
     linkedIndicators?: Record<number, LinkedIndicator>
     imageMetadata?: Record<string, ImageMetadata>
     relatedCharts?: RelatedChart[]
@@ -235,6 +253,33 @@ export interface OwidGdocAnnouncementInterface extends OwidGdocBaseInterface {
     content: OwidGdocAnnouncementContent
 }
 
+export interface OwidGdocProfileContent {
+    type: OwidGdocType.Profile
+    title: string
+    authors: string[]
+    scope: string // e.g. "countries, continents"
+    subtitle?: string
+    excerpt?: string
+    "featured-image"?: string
+    "sidebar-toc"?: boolean
+    toc?: TocHeadingWithTitleSupertitle[]
+    body: OwidEnrichedGdocBlock[]
+    refs?: { definitions: RefDictionary; errors: OwidGdocErrorMessage[] }
+    instantiatedEntity?: OwidGdocProfileEntitySummary
+}
+
+export interface OwidGdocProfileEntitySummary {
+    name: string
+    code: string
+    slug?: string
+    regionType?: string
+    isCountry: boolean
+}
+
+export interface OwidGdocProfileInterface extends OwidGdocBaseInterface {
+    content: OwidGdocProfileContent
+}
+
 export interface OwidGdocHomepageContent {
     type: OwidGdocType.Homepage
     title?: string
@@ -300,6 +345,7 @@ export type OwidGdocContent =
     | OwidGdocAuthorContent
     | OwidGdocAboutContent
     | OwidGdocAnnouncementContent
+    | OwidGdocProfileContent
 
 export type OwidGdoc =
     | OwidGdocPostInterface
@@ -308,6 +354,7 @@ export type OwidGdoc =
     | OwidGdocAuthorInterface
     | OwidGdocAboutInterface
     | OwidGdocAnnouncementInterface
+    | OwidGdocProfileInterface
 
 export enum OwidGdocErrorMessageType {
     Error = "error",
@@ -325,6 +372,8 @@ export type OwidGdocProperty =
     | keyof OwidGdocAuthorContent
     | keyof OwidGdocAboutInterface
     | keyof OwidGdocAboutContent
+    | keyof OwidGdocProfileInterface
+    | keyof OwidGdocProfileContent
 
 export type OwidGdocErrorMessageProperty =
     | OwidGdocProperty
@@ -374,6 +423,7 @@ export interface OwidGdocPostContent {
     "atom-title"?: string
     "atom-excerpt"?: string
     "sidebar-toc"?: boolean
+    "heading-variant"?: "heavy" | "light"
     "hide-subscribe-banner"?: boolean
     "cover-color"?:
         | "sdg-color-1"

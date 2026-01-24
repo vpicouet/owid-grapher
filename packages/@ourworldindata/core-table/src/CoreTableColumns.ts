@@ -19,6 +19,7 @@ import {
     imemo,
     ToleranceStrategy,
     IndicatorTitleWithFragments,
+    stripOuterParentheses,
 } from "@ourworldindata/utils"
 import { CoreTable } from "./CoreTable.js"
 import {
@@ -34,6 +35,7 @@ import {
 } from "@ourworldindata/types"
 import { ErrorValueTypes, isNotErrorValue } from "./ErrorValues.js"
 import {
+    getOriginalStartTimeColumnSlug,
     getOriginalTimeColumnSlug,
     getOriginalValueColumnSlug,
 } from "./OwidTableUtil.js"
@@ -56,6 +58,10 @@ export abstract class AbstractCoreColumn<JS_TYPE extends PrimitiveType> {
 
     @imemo get isMissing(): boolean {
         return this instanceof MissingColumn
+    }
+
+    @imemo get isTimeColumn(): boolean {
+        return this instanceof TimeColumn
     }
 
     @imemo get hasNumberFormatting(): boolean {
@@ -164,6 +170,24 @@ export abstract class AbstractCoreColumn<JS_TYPE extends PrimitiveType> {
         if (checkIsVeryShortUnit(unit[0])) return unit[0]
 
         return undefined
+    }
+
+    /**
+     * Returns the full unit string for display, but only if it is different from the shortUnit.
+     * This avoids redundant display of units when the short and full units are the same.
+     * Also strips parentheses from the beginning and end of the unit.
+     */
+    @imemo get displayUnit(): string | undefined {
+        // The unit is considered trivial if it is the same as the short unit
+        const tooTrivial = this.unit === this.shortUnit
+        const displayUnit = !tooTrivial ? this.unit : undefined
+
+        // Remove parentheses from the beginning and end of the unit
+        const strippedUnit = displayUnit
+            ? stripOuterParentheses(displayUnit)
+            : undefined
+
+        return strippedUnit
     }
 
     // Returns a map where the key is a series slug such as "name" and the value is a set
@@ -311,14 +335,23 @@ export abstract class AbstractCoreColumn<JS_TYPE extends PrimitiveType> {
     }
 
     @imemo get validRowIndices(): number[] {
-        return this.valuesIncludingErrorValues
-            .map((value, index) => (isNotErrorValue(value) ? index : undefined))
-            .filter(isPresent)
+        const indices: number[] = []
+        for (let i = 0; i < this.valuesIncludingErrorValues.length; i++) {
+            const value = this.valuesIncludingErrorValues[i]
+            if (isNotErrorValue(value)) indices.push(i)
+        }
+        return indices
     }
 
     @imemo get values(): JS_TYPE[] {
-        const values = this.valuesIncludingErrorValues
-        return this.validRowIndices.map((index) => values[index]) as JS_TYPE[]
+        const values: JS_TYPE[] = []
+
+        // eslint-disable-next-line @typescript-eslint/prefer-for-of
+        for (let i = 0; i < this.valuesIncludingErrorValues.length; i++) {
+            const value = this.valuesIncludingErrorValues[i]
+            if (isNotErrorValue(value)) values.push(value as JS_TYPE)
+        }
+        return values
     }
 
     @imemo get originalTimeColumnSlug(): string {
@@ -327,6 +360,14 @@ export abstract class AbstractCoreColumn<JS_TYPE extends PrimitiveType> {
 
     @imemo get originalTimeColumn(): CoreColumn {
         return this.table.get(this.originalTimeColumnSlug)
+    }
+
+    @imemo get originalStartTimeColumnSlug(): string {
+        return getOriginalStartTimeColumnSlug(this.table, this.slug)
+    }
+
+    @imemo get originalStartTimeColumn(): CoreColumn {
+        return this.table.get(this.originalStartTimeColumnSlug)
     }
 
     @imemo get originalTimes(): number[] {
@@ -544,20 +585,6 @@ class StringColumn extends AbstractCoreColumn<string> {
 
 class SeriesAnnotationColumn extends StringColumn {}
 class CategoricalColumn extends StringColumn {}
-class RegionColumn extends CategoricalColumn {}
-class ContinentColumn extends RegionColumn {}
-class ColorColumn extends CategoricalColumn {}
-class BooleanColumn extends AbstractCoreColumn<boolean> {
-    jsType = JsTypes.boolean
-
-    formatValue(value: unknown): "true" | "false" {
-        return value ? "true" : "false"
-    }
-
-    override parse(val: unknown): boolean {
-        return !!val
-    }
-}
 
 class OrdinalColumn extends CategoricalColumn {
     @imemo get allowedValuesSorted(): string[] | undefined {
@@ -568,6 +595,22 @@ class OrdinalColumn extends CategoricalColumn {
         return this.allowedValuesSorted
             ? this.allowedValuesSorted
             : super.sortedUniqNonEmptyStringVals
+    }
+}
+
+class RegionColumn extends OrdinalColumn {}
+class ContinentColumn extends RegionColumn {}
+class ColorColumn extends CategoricalColumn {}
+
+class BooleanColumn extends AbstractCoreColumn<boolean> {
+    jsType = JsTypes.boolean
+
+    formatValue(value: unknown): "true" | "false" {
+        return value ? "true" : "false"
+    }
+
+    override parse(val: unknown): boolean {
+        return !!val
     }
 }
 

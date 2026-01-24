@@ -26,8 +26,9 @@ export const DATA_API_FOR_ADMIN_UI: string | undefined =
     serverSettings.DATA_API_FOR_ADMIN_UI
 export const BAKED_BASE_URL: string = clientSettings.BAKED_BASE_URL
 
-export const ARCHIVE_BASE_URL: string | null =
-    serverSettings.ARCHIVE_BASE_URL || null
+export const ARCHIVE_BASE_URL: string | null = clientSettings.ARCHIVE_BASE_URL
+
+export const CLOUDFLARE_IMAGES_URL = clientSettings.CLOUDFLARE_IMAGES_URL
 
 export const VITE_PREVIEW: boolean = serverSettings.VITE_PREVIEW === "true"
 
@@ -63,11 +64,6 @@ export const GRAPHER_TEST_DB_PORT: number =
 
 export const BAKED_SITE_DIR: string =
     serverSettings.BAKED_SITE_DIR ?? path.resolve(BASE_DIR, "bakedSite") // Where the static build output goes
-export const SECRET_KEY: string =
-    serverSettings.SECRET_KEY ??
-    "fejwiaof jewiafo jeioa fjieowajf isa fjidosajfgj"
-export const SESSION_COOKIE_AGE: number =
-    parseIntOrUndefined(serverSettings.SESSION_COOKIE_AGE) ?? 1209600
 export const ALGOLIA_SECRET_KEY: string =
     serverSettings.ALGOLIA_SECRET_KEY ?? ""
 export const ALGOLIA_INDEXING: boolean =

@@ -2,6 +2,7 @@
 // set up before any errors are thrown.
 import "../../serverUtils/instrument.js"
 
+import * as _ from "lodash-es"
 import * as Sentry from "@sentry/node"
 import yargs from "yargs"
 import { hideBin } from "yargs/helpers"
@@ -10,17 +11,19 @@ import {
     findChangedGrapherPages,
     findChangedMultiDimPages,
     findChangedExplorerPages,
+    findChangedPostPages,
     getGrapherChecksumsFromDb,
     getMultiDimChecksumsFromDb,
     getExplorerChecksumsFromDb,
-    insertChartVersions,
-    insertMultiDimVersions,
-    insertExplorerVersions,
+    getPostChecksumsFromDb,
+    getVideosByPostId,
+    ArchivalImage,
 } from "../../db/model/archival/archivalDb.js"
 import {
     GrapherChecksumsObjectWithHash,
     MultiDimChecksumsObjectWithHash,
     ExplorerChecksumsObjectWithHash,
+    PostChecksumsObjectWithHash,
 } from "@ourworldindata/types"
 import {
     getDateForArchival,
@@ -32,21 +35,31 @@ import {
     OwidChartDimensionInterface,
     AssetMap,
 } from "@ourworldindata/utils"
+import { insertArchivedChartVersions } from "../../db/model/ArchivedChartVersion.js"
+import { insertArchivedExplorerVersions } from "../../db/model/ArchivedExplorerVersion.js"
+import { insertArchivedMultiDimVersions } from "../../db/model/ArchivedMultiDimVersion.js"
+import { insertArchivedPostVersions } from "../../db/model/ArchivedPostVersion.js"
 import { getEnrichedChartsByIds } from "../../db/model/Chart.js"
 import {
     bakeArchivalGrapherPagesToFolder,
     bakeArchivalMultiDimPagesToFolder,
     bakeArchivalExplorerPagesToFolder,
+    bakeArchivalPostPagesToFolder,
     copyToLatestDir,
     generateChartVersionsFiles,
     generateMultiDimVersionsFiles,
     generateExplorerVersionsFiles,
+    generatePostVersionsFiles,
     createCommonArchivalContext,
     archiveVariableIds,
     archiveChartConfigs,
+    archiveImages,
+    archiveVideos,
+    archiveNarrativeCharts,
     CommonArchivalContext,
     MinimalMultiDimInfo,
     MinimalChartInfo,
+    MinimalPostInfo,
 } from "./ArchivalBaker.js"
 import { ExplorerAdminServer } from "../../explorerAdminServer/ExplorerAdminServer.js"
 import { ExplorerProgram } from "@ourworldindata/explorer"
@@ -58,16 +71,20 @@ interface Options {
     chartIds?: number[]
     multiDimIds?: number[]
     explorerSlugs?: string[]
-    type: "charts" | "multiDims" | "explorers" | "all"
+    postSlugs?: string[]
+    type: "charts" | "multiDims" | "explorers" | "posts" | "all"
+    force?: boolean
 }
 
 interface ArchivalData {
     graphersToArchive: GrapherChecksumsObjectWithHash[]
     multiDimsToArchive: MultiDimChecksumsObjectWithHash[]
     explorersToArchive: ExplorerChecksumsObjectWithHash[]
+    postsToArchive: PostChecksumsObjectWithHash[]
     grapherConfigs: MinimalChartInfo[]
     multiDimConfigs: MinimalMultiDimInfo[]
     explorerPrograms: ExplorerProgram[]
+    postInfos: MinimalPostInfo[]
 }
 
 /**
@@ -137,7 +154,94 @@ const getExplorersToArchive = async (
         return explorersToArchive
     }
 
+    if (opts.force) {
+        return await getExplorerChecksumsFromDb(trx)
+    }
+
     return await findChangedExplorerPages(trx)
+}
+
+function makeNarrativeChartsByPostId(
+    posts: PostChecksumsObjectWithHash[]
+): Record<string, Set<string>> {
+    const narrativeChartsByPostId: Record<string, Set<string>> = {}
+    for (const post of posts) {
+        const narrativeChartNames = new Set<string>()
+        for (const narrativeChartId in post.checksums.narrativeCharts) {
+            narrativeChartNames.add(
+                post.checksums.narrativeCharts[narrativeChartId].name
+            )
+        }
+        narrativeChartsByPostId[post.postId] = narrativeChartNames
+    }
+    return narrativeChartsByPostId
+}
+
+const getPostsToArchive = async (
+    trx: db.KnexReadWriteTransaction,
+    { type, postSlugs, force }: Options
+): Promise<{
+    postsToArchive: PostChecksumsObjectWithHash[]
+    imagesByPostId: Record<string, ArchivalImage[]>
+    videosByPostId: Record<string, string[]>
+    narrativeChartsByPostId: Record<string, Set<string>>
+}> => {
+    const shouldProcessPosts = type === "posts" || type === "all"
+
+    if (!shouldProcessPosts) {
+        return {
+            postsToArchive: [],
+            imagesByPostId: {},
+            videosByPostId: {},
+            narrativeChartsByPostId: {},
+        }
+    }
+
+    if ((postSlugs && postSlugs.length > 0) || force) {
+        const { postChecksums: allChecksums, imagesByPostId: allImages } =
+            await getPostChecksumsFromDb(trx)
+
+        let postsToArchive = allChecksums
+        if (postSlugs && postSlugs.length > 0) {
+            console.log(
+                "Archiving only the following post slugs:",
+                postSlugs.join(", ")
+            )
+            postsToArchive = allChecksums.filter((checksum) =>
+                postSlugs.includes(checksum.postSlug)
+            )
+
+            if (postSlugs.length !== postsToArchive.length) {
+                throw new Error(
+                    `Not all post slugs were found in the database. Found ${postsToArchive.length} out of ${postSlugs.length}.`
+                )
+            }
+        }
+
+        const postIds = _.uniq(postsToArchive.map((post) => post.postId))
+        const imagesByPostId = _.pick(allImages, postIds)
+        const videosByPostId = await getVideosByPostId(trx, postIds)
+        const narrativeChartsByPostId =
+            makeNarrativeChartsByPostId(postsToArchive)
+
+        return {
+            postsToArchive,
+            imagesByPostId,
+            videosByPostId,
+            narrativeChartsByPostId,
+        }
+    }
+
+    const { postChecksums, imagesByPostId, videosByPostId } =
+        await findChangedPostPages(trx)
+    const narrativeChartsByPostId = makeNarrativeChartsByPostId(postChecksums)
+
+    return {
+        postsToArchive: postChecksums,
+        imagesByPostId,
+        videosByPostId,
+        narrativeChartsByPostId,
+    }
 }
 
 /**
@@ -171,6 +275,10 @@ const getGraphersToArchive = async (
         }
 
         return graphersToArchive
+    }
+
+    if (opts.force) {
+        return await getGrapherChecksumsFromDb(trx)
     }
 
     return await findChangedGrapherPages(trx)
@@ -210,6 +318,10 @@ const getMultiDimsToArchive = async (
         return multiDimsToArchive
     }
 
+    if (opts.force) {
+        return await getMultiDimChecksumsFromDb(trx)
+    }
+
     return await findChangedMultiDimPages(trx)
 }
 
@@ -233,6 +345,14 @@ const getGrapherConfigs = async (
         config: config.config,
     }))
 }
+
+const getPostInfos = (
+    postsToArchive: PostChecksumsObjectWithHash[]
+): MinimalPostInfo[] =>
+    postsToArchive.map((post) => ({
+        postId: post.postId,
+        postSlug: post.postSlug,
+    }))
 
 /**
  * Collects all variable IDs from both grapher and multi-dimensional configurations
@@ -291,12 +411,17 @@ const collectAllChartConfigIds = (
  * Outputs what would be archived in dry run mode
  */
 const outputDryRunResults = (archivalData: ArchivalData): void => {
-    const { graphersToArchive, multiDimsToArchive, explorersToArchive } =
-        archivalData
+    const {
+        graphersToArchive,
+        multiDimsToArchive,
+        explorersToArchive,
+        postsToArchive,
+    } = archivalData
     const totalToArchive =
         graphersToArchive.length +
         multiDimsToArchive.length +
-        explorersToArchive.length
+        explorersToArchive.length +
+        postsToArchive.length
 
     console.log("Would archive", totalToArchive, "pages:")
 
@@ -318,6 +443,13 @@ const outputDryRunResults = (archivalData: ArchivalData): void => {
         console.log(
             "Explorer slugs:",
             explorersToArchive.map((exp) => exp.explorerSlug)
+        )
+    }
+
+    if (postsToArchive.length > 0) {
+        console.log(
+            "Post slugs:",
+            postsToArchive.map((post) => post.postSlug)
         )
     }
 }
@@ -344,7 +476,12 @@ const archiveGrapherPages = async (
         variableFiles
     )
 
-    await insertChartVersions(trx, graphersToArchive, archivalDate, manifests)
+    await insertArchivedChartVersions(
+        trx,
+        graphersToArchive,
+        archivalDate,
+        manifests
+    )
 
     await generateChartVersionsFiles(
         trx,
@@ -377,7 +514,7 @@ const archiveMultiDimPages = async (
         chartConfigFiles
     )
 
-    await insertMultiDimVersions(
+    await insertArchivedMultiDimVersions(
         trx,
         multiDimsToArchive,
         archivalDate,
@@ -413,7 +550,7 @@ const archiveExplorerPages = async (
         variableFiles
     )
 
-    await insertExplorerVersions(
+    await insertArchivedExplorerVersions(
         trx,
         explorersToArchive,
         archivalDate,
@@ -427,23 +564,70 @@ const archiveExplorerPages = async (
     )
 }
 
+const archivePostPages = async (
+    trx: db.KnexReadWriteTransaction,
+    postsToArchive: PostChecksumsObjectWithHash[],
+    postInfos: MinimalPostInfo[],
+    commonCtx: CommonArchivalContext,
+    imageFilesByPostId: Record<string, AssetMap>,
+    videoFilesByPostId: Record<string, AssetMap>,
+    narrativeChartFilesByPostId: Record<string, AssetMap>,
+    archivalDate: ArchivalTimestamp,
+    opts: Options
+): Promise<void> => {
+    if (postsToArchive.length === 0) return
+
+    const { manifests } = await bakeArchivalPostPagesToFolder(
+        trx,
+        postsToArchive,
+        postInfos,
+        commonCtx,
+        imageFilesByPostId,
+        videoFilesByPostId,
+        narrativeChartFilesByPostId
+    )
+
+    await insertArchivedPostVersions(
+        trx,
+        postsToArchive,
+        archivalDate,
+        manifests
+    )
+
+    await generatePostVersionsFiles(
+        trx,
+        opts.dir,
+        postsToArchive.map((post) => post.postId)
+    )
+}
+
 /**
  * Main function that orchestrates the archival process
  */
 const findChangedPagesAndArchive = async (opts: Options): Promise<void> => {
     await db.knexReadWriteTransaction(async (trx) => {
         // Determine what needs to be archived
-        const [graphersToArchive, multiDimsToArchive, explorersToArchive] =
-            await Promise.all([
-                getGraphersToArchive(trx, opts),
-                getMultiDimsToArchive(trx, opts),
-                getExplorersToArchive(trx, opts),
-            ])
-
+        const [
+            graphersToArchive,
+            multiDimsToArchive,
+            explorersToArchive,
+            {
+                postsToArchive,
+                imagesByPostId,
+                videosByPostId,
+                narrativeChartsByPostId,
+            },
+        ] = await Promise.all([
+            getGraphersToArchive(trx, opts),
+            getMultiDimsToArchive(trx, opts),
+            getExplorersToArchive(trx, opts),
+            getPostsToArchive(trx, opts),
+        ])
         const totalToArchive =
             graphersToArchive.length +
             multiDimsToArchive.length +
-            explorersToArchive.length
+            explorersToArchive.length +
+            postsToArchive.length
 
         // Handle dry run mode
         if (opts.dryRun) {
@@ -451,9 +635,11 @@ const findChangedPagesAndArchive = async (opts: Options): Promise<void> => {
                 graphersToArchive,
                 multiDimsToArchive,
                 explorersToArchive,
+                postsToArchive,
                 grapherConfigs: [],
                 multiDimConfigs: [],
                 explorerPrograms: [],
+                postInfos: [],
             })
             return
         }
@@ -473,6 +659,7 @@ const findChangedPagesAndArchive = async (opts: Options): Promise<void> => {
                 getExplorerPrograms(trx, explorersToArchive),
                 createCommonArchivalContext(trx, opts.dir, archivalDate),
             ])
+        const postInfos = getPostInfos(postsToArchive)
 
         // Collect all variable IDs and create variable files
         const allVariableIds = collectAllVariableIds(
@@ -493,7 +680,6 @@ const findChangedPagesAndArchive = async (opts: Options): Promise<void> => {
             commonCtx.baseArchiveDir
         )
 
-        // Archive both types of pages
         await Promise.all([
             archiveGrapherPages(
                 trx,
@@ -525,6 +711,36 @@ const findChangedPagesAndArchive = async (opts: Options): Promise<void> => {
             ),
         ])
 
+        const imageFilesByPostId = await archiveImages(
+            imagesByPostId,
+            commonCtx.baseArchiveDir
+        )
+
+        const videoFilesByPostId = await archiveVideos(
+            videosByPostId,
+            commonCtx.baseArchiveDir
+        )
+
+        const narrativeChartFilesByPostId = await archiveNarrativeCharts(
+            trx,
+            narrativeChartsByPostId,
+            commonCtx.baseArchiveDir
+        )
+
+        // Must run after the charts so we can fetch their latest archived
+        // versions.
+        await archivePostPages(
+            trx,
+            postsToArchive,
+            postInfos,
+            commonCtx,
+            imageFilesByPostId,
+            videoFilesByPostId,
+            narrativeChartFilesByPostId,
+            archivalDate,
+            opts
+        )
+
         if (opts.latestDir) {
             await copyToLatestDir(
                 commonCtx.baseArchiveDir,
@@ -555,6 +771,11 @@ void yargs(hideBin(process.argv))
                 .option("dryRun", {
                     type: "boolean",
                     description: "Don't actually archive the pages",
+                })
+                .option("force", {
+                    type: "boolean",
+                    description:
+                        "Archive all pages, even if they haven't changed",
                 })
                 .option("chartIds", {
                     type: "array",
@@ -600,9 +821,29 @@ void yargs(hideBin(process.argv))
                             : split(arg)
                     },
                 })
+                .option("postSlugs", {
+                    type: "array",
+                    description:
+                        "Only archive these post slugs, regardless of whether they've changed",
+                    coerce: (arg) => {
+                        const split = (s: string | number) =>
+                            typeof s === "string"
+                                ? s.split(/\s+|,/)
+                                : [String(s)]
+                        return Array.isArray(arg)
+                            ? arg.flatMap(split)
+                            : split(arg)
+                    },
+                })
                 .option("type", {
                     type: "string",
-                    choices: ["charts", "multiDims", "explorers", "all"],
+                    choices: [
+                        "charts",
+                        "multiDims",
+                        "explorers",
+                        "posts",
+                        "all",
+                    ],
                     default: "all",
                     description: "What type of pages to archive",
                 })

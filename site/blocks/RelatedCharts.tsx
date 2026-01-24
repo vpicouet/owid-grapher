@@ -1,5 +1,5 @@
 import * as _ from "lodash-es"
-import { useState, useRef, useContext } from "react"
+import { useState } from "react"
 import * as React from "react"
 import { RelatedChart } from "@ourworldindata/utils"
 import { GRAPHER_PREVIEW_CLASS } from "@ourworldindata/types"
@@ -7,7 +7,7 @@ import { GalleryArrow } from "./GalleryArrow.js"
 import { GalleryArrowDirection } from "../SiteConstants.js"
 import { AllChartsListItem } from "./AllChartsListItem.js"
 import { GrapherWithFallback } from "../GrapherWithFallback.js"
-import { DocumentContext } from "../gdocs/DocumentContext.js"
+import { useDocumentContext } from "../gdocs/DocumentContext.js"
 
 export const RELATED_CHARTS_CLASS_NAME = "related-charts"
 
@@ -18,9 +18,8 @@ export const RelatedCharts = ({
     charts: RelatedChart[]
     showKeyChartsOnly?: boolean
 }) => {
-    const refChartContainer = useRef<HTMLDivElement>(null)
     const [activeChartIdx, setActiveChartIdx] = useState(0)
-    const { isPreviewing } = useContext(DocumentContext)
+    const { isPreviewing } = useDocumentContext()
 
     const chartsToShow = showKeyChartsOnly
         ? charts.filter((chart) => !!chart.keyChartLevel)
@@ -53,7 +52,10 @@ export const RelatedCharts = ({
             enablePopulatingUrlParams={true}
             isEmbeddedInAnOwidPage={true}
             isEmbeddedInADataPage={false}
-            config={{ archiveContext: activeChart.archiveContext }}
+            config={{
+                archiveContext: activeChart.archiveContext,
+                enableKeyboardShortcuts: false,
+            }}
             isPreviewing={isPreviewing}
         />
     )
@@ -61,10 +63,7 @@ export const RelatedCharts = ({
     const singleChartView = (
         <div className={RELATED_CHARTS_CLASS_NAME}>
             <div className="grid grid-cols-12">
-                <div
-                    className="related-charts__chart span-cols-7 span-md-cols-12"
-                    ref={refChartContainer}
-                >
+                <div className="related-charts__chart span-cols-7 span-md-cols-12">
                     {figure}
                 </div>
             </div>
@@ -86,10 +85,7 @@ export const RelatedCharts = ({
                         ))}
                     </ul>
                 </div>
-                <div
-                    className="related-charts__chart span-cols-7 span-md-cols-12"
-                    ref={refChartContainer}
-                >
+                <div className="related-charts__chart span-cols-7 span-md-cols-12">
                     <div className="related-charts__figure">{figure}</div>
                     <div className="gallery-navigation">
                         <GalleryArrow

@@ -8,6 +8,7 @@ export { FetchingGrapher } from "./core/FetchingGrapher"
 export {
     fetchInputTableForConfig,
     getCachingInputTableFetcher,
+    type FetchInputTableForConfigFn,
 } from "./core/loadGrapherTableHelpers.js"
 export { loadVariableDataAndMetadata } from "./core/loadVariable.js"
 export {
@@ -20,6 +21,8 @@ export {
     DEFAULT_GRAPHER_HEIGHT,
     GRAPHER_THUMBNAIL_WIDTH,
     GRAPHER_THUMBNAIL_HEIGHT,
+    GRAPHER_IMAGE_WIDTH_1X,
+    GRAPHER_IMAGE_WIDTH_2X,
     GRAPHER_SQUARE_SIZE,
     STATIC_EXPORT_DETAIL_SPACING,
     DEFAULT_GRAPHER_ENTITY_TYPE,
@@ -33,7 +36,6 @@ export {
     latestGrapherConfigSchema,
     DEFAULT_GRAPHER_BOUNDS,
     DEFAULT_GRAPHER_BOUNDS_SQUARE,
-    CHART_TYPES_THAT_SWITCH_TO_DISCRETE_BAR_WHEN_SINGLE_TIME,
 } from "./core/GrapherConstants"
 export {
     getVariableDataRoute,
@@ -58,19 +60,12 @@ export {
     isProjectedDataBin,
 } from "./color/ColorScaleBin"
 export {
-    GLOBAL_ENTITY_SELECTOR_DATA_ATTR,
-    GLOBAL_ENTITY_SELECTOR_ELEMENT,
-    GLOBAL_ENTITY_SELECTOR_DEFAULT_COUNTRY,
-} from "./controls/globalEntitySelector/GlobalEntitySelectorConstants"
-export { GlobalEntitySelector } from "./controls/globalEntitySelector/GlobalEntitySelector"
-export {
     Grapher,
     type GrapherProgrammaticInterface,
     type GrapherManager,
 } from "./core/Grapher"
 export { GrapherState } from "./core/GrapherState"
-export { GrapherAnalytics } from "./core/GrapherAnalytics"
-export { hydrateGlobalEntitySelectorIfAny } from "./controls/globalEntitySelector/GlobalEntitySelector"
+export { GrapherAnalytics, splitPathForGA4 } from "./core/GrapherAnalytics"
 export { legacyToCurrentGrapherUrl } from "./core/GrapherUrlMigrations"
 export {
     legacyToOwidTableAndDimensions,
@@ -112,7 +107,9 @@ export {
     useGuidedChartLinkHandler,
     GuidedChartContext,
     type GuidedChartContextValue,
-} from "./chart/GuidedChartUtils"
+    type ArchiveGuidedChartRegistration,
+    buildArchiveGuidedChartSrc,
+} from "./chart/guidedChartUtils"
 export {
     isChartTypeName,
     isValidTabQueryParam,

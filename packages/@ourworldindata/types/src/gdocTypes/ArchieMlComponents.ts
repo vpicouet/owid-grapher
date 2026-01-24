@@ -2,7 +2,6 @@ import { HorizontalAlign } from "../domainTypes/Layout.js"
 import { Span, SpanSimpleText } from "./Spans.js"
 
 export type BlockPositionChoice = "right" | "left"
-export type ChartPositionChoice = "featured"
 
 type ArchieMLUnexpectedNonObjectValue = string
 
@@ -34,11 +33,11 @@ export type EnrichedBlockAside = {
 export type RawBlockChartValue = {
     url?: string
     height?: string
-    row?: string
-    column?: string
+    size?: BlockSize
     // TODO: position is used as a classname apparently? Should be renamed or split
     position?: string
     caption?: string
+    visibility?: string
 }
 
 export type RawBlockChart = {
@@ -50,19 +49,17 @@ export type EnrichedBlockChart = {
     type: "chart"
     url: string
     height?: string
-    row?: string
-    column?: string
-    position?: ChartPositionChoice
+    size: BlockSize
     caption?: Span[]
+    visibility?: BlockVisibility
 } & EnrichedBlockWithParseErrors
 
 export type RawBlockNarrativeChartValue = {
     name?: string
     height?: string
-    row?: string
-    column?: string
     // TODO: position is used as a classname apparently? Should be renamed or split
     position?: string
+    size?: BlockSize
     caption?: string
 }
 
@@ -75,9 +72,7 @@ export type EnrichedBlockNarrativeChart = {
     type: "narrative-chart"
     name: string
     height?: string
-    row?: string
-    column?: string
-    position?: ChartPositionChoice
+    size: BlockSize
     caption?: Span[]
 } & EnrichedBlockWithParseErrors
 
@@ -145,22 +140,6 @@ export type EnrichedBlockKeyIndicatorCollection = {
     blocks: EnrichedBlockKeyIndicator[]
 } & EnrichedBlockWithParseErrors
 
-export type RawBlockScroller = {
-    type: "scroller"
-    value: OwidRawGdocBlock[] | ArchieMLUnexpectedNonObjectValue
-}
-
-export type EnrichedScrollerItem = {
-    type: "enriched-scroller-item"
-    url: string
-    text: EnrichedBlockText
-}
-
-export type EnrichedBlockScroller = {
-    type: "scroller"
-    blocks: EnrichedScrollerItem[]
-} & EnrichedBlockWithParseErrors
-
 export type RawChartStoryValue = {
     narrative?: string
     chart?: string
@@ -201,16 +180,20 @@ export type EnrichedBlockExpander = {
     content: OwidEnrichedGdocBlock[]
 } & EnrichedBlockWithParseErrors
 
-export enum BlockImageSize {
+export enum BlockSize {
     Narrow = "narrow",
     Wide = "wide",
     Widest = "widest",
 }
 
-export function checkIsBlockImageSize(size: unknown): size is BlockImageSize {
+export function checkIsBlockSize(size: unknown): size is BlockSize {
     if (typeof size !== "string") return false
-    return Object.values(BlockImageSize).includes(size as any)
+    return Object.values(BlockSize).includes(size as any)
 }
+
+export const blockVisibilitys = ["desktop", "mobile"] as const
+
+export type BlockVisibility = (typeof blockVisibilitys)[number]
 
 export type RawBlockImage = {
     type: "image"
@@ -219,8 +202,9 @@ export type RawBlockImage = {
         smallFilename?: string
         alt?: string
         caption?: string
-        size?: BlockImageSize
+        size?: BlockSize
         hasOutline?: string
+        visibility?: string
     }
 }
 
@@ -231,8 +215,9 @@ export type EnrichedBlockImage = {
     alt?: string // optional as we can use the default alt from the file
     caption?: Span[]
     originalWidth?: number
-    size: BlockImageSize
+    size: BlockSize
     hasOutline: boolean
+    visibility?: BlockVisibility
     // Not a real ArchieML prop - we set this to true for Data Insights, as a way to migrate
     // first generation data insights to only use their small image
     // See https://github.com/owid/owid-grapher/issues/4416
@@ -247,6 +232,7 @@ export type RawBlockVideo = {
         shouldLoop?: string
         shouldAutoplay?: string
         filename?: string
+        visibility?: string
     }
 }
 
@@ -256,6 +242,25 @@ export type EnrichedBlockVideo = {
     shouldLoop: boolean
     shouldAutoplay: boolean
     filename: string
+    caption?: Span[]
+    visibility?: BlockVisibility
+} & EnrichedBlockWithParseErrors
+
+export type RawBlockStaticViz = {
+    type: "static-viz"
+    value: {
+        name?: string
+        size?: BlockSize
+        hasOutline?: string
+        caption?: string
+    }
+}
+
+export type EnrichedBlockStaticViz = {
+    type: "static-viz"
+    name: string
+    size: BlockSize
+    hasOutline: boolean
     caption?: Span[]
 } & EnrichedBlockWithParseErrors
 
@@ -385,6 +390,7 @@ export type EnrichedHybridLink = {
     url: string
     title?: string
     subtitle?: string
+    thumbnail?: string
     type: "hybrid-link"
 }
 
@@ -466,17 +472,6 @@ export type EnrichedBlockScript = {
     type: "script"
     lines: string[]
 } & EnrichedBlockWithParseErrors
-
-export type RawBlockUrl = {
-    type: "url"
-    value: string
-}
-// There is no EnrichedBlockUrl because Url blocks only exist inside Sliders;
-// they are subsumed into Slider blocks during enrichment
-export type RawBlockPosition = {
-    type: "position"
-    value: string
-}
 
 export type RawBlockHeadingValue = {
     text?: string
@@ -575,9 +570,46 @@ export type RawBlockGraySection = {
     value: OwidRawGdocBlock[]
 }
 
+export type RawBlockConditionalSection = {
+    type: "conditional-section"
+    value: {
+        include?: string
+        exclude?: string
+        content?: OwidRawGdocBlock[]
+    }
+}
+
+export type EnrichedBlockConditionalSection = {
+    type: "conditional-section"
+    include: string[]
+    exclude: string[]
+    content: OwidEnrichedGdocBlock[]
+} & EnrichedBlockWithParseErrors
+
 export type EnrichedBlockGraySection = {
     type: "gray-section"
     items: OwidEnrichedGdocBlock[]
+} & EnrichedBlockWithParseErrors
+
+export const exploreDataSectionAlignments = ["left", "center"] as const
+
+export type ExploreDataSectionAlignment =
+    (typeof exploreDataSectionAlignments)[number]
+
+export type RawBlockExploreDataSection = {
+    type: "explore-data-section"
+    value: {
+        title?: string
+        align?: string
+        content: OwidRawGdocBlock[]
+    }
+}
+
+export type EnrichedBlockExploreDataSection = {
+    type: "explore-data-section"
+    title?: string
+    align: ExploreDataSectionAlignment
+    content: OwidEnrichedGdocBlock[]
 } & EnrichedBlockWithParseErrors
 
 export type ProminentLinkValue = {
@@ -703,12 +735,17 @@ export type RawBlockLatestWork = {
     heading?: string
 }
 
+export const RESEARCH_AND_WRITING_VARIANTS = ["featured"] as const
+export type ResearchAndWritingVariant =
+    (typeof RESEARCH_AND_WRITING_VARIANTS)[number]
+
 export type RawBlockResearchAndWriting = {
     type: "research-and-writing"
     value: {
         heading?: string
         "hide-authors"?: string
         "hide-date"?: string
+        variant?: ResearchAndWritingVariant
         // We're migrating these to be arrays, but have to support the old use-case until it's done
         primary?:
             | RawBlockResearchAndWritingLink
@@ -748,6 +785,7 @@ export type EnrichedBlockResearchAndWriting = {
     heading?: string
     "hide-authors": boolean
     "hide-date": boolean
+    variant?: ResearchAndWritingVariant
     primary: EnrichedBlockResearchAndWritingLink[]
     secondary: EnrichedBlockResearchAndWritingLink[]
     more?: EnrichedBlockResearchAndWritingRow
@@ -763,6 +801,20 @@ export type RawBlockSDGToc = {
 export type EnrichedBlockSDGToc = {
     type: "sdg-toc"
     value?: Record<string, never>
+} & EnrichedBlockWithParseErrors
+
+export type RawBlockLTPToc = {
+    type: "ltp-toc"
+    value?:
+        | {
+              title?: string
+          }
+        | ArchieMLUnexpectedNonObjectValue
+}
+
+export type EnrichedBlockLTPToc = {
+    type: "ltp-toc"
+    title?: string
 } & EnrichedBlockWithParseErrors
 
 export type RawBlockMissingData = {
@@ -995,6 +1047,24 @@ export type EnrichedBlockHomepageIntro = {
     featuredWork: EnrichedBlockHomepageIntroPost[]
 } & EnrichedBlockWithParseErrors
 
+export type RawBlockFeaturedMetrics = {
+    type: "featured-metrics"
+    value: Record<string, never>
+}
+
+export type EnrichedBlockFeaturedMetrics = {
+    type: "featured-metrics"
+} & EnrichedBlockWithParseErrors
+
+export type RawBlockFeaturedDataInsights = {
+    type: "featured-data-insights"
+    value: Record<string, never>
+}
+
+export type EnrichedBlockFeaturedDataInsights = {
+    type: "featured-data-insights"
+} & EnrichedBlockWithParseErrors
+
 export type RawBlockLatestDataInsights = {
     type: "latest-data-insights"
     value: Record<string, never>
@@ -1083,7 +1153,6 @@ export type OwidRawGdocBlock =
     | RawBlockNarrativeChart
     | RawBlockCode
     | RawBlockDonorList
-    | RawBlockScroller
     | RawBlockChartStory
     | RawBlockExplorerTiles
     | RawBlockImage
@@ -1097,9 +1166,7 @@ export type OwidRawGdocBlock =
     | RawBlockRecirc
     | RawBlockResearchAndWriting
     | RawBlockText
-    | RawBlockUrl
     | RawBlockResourcePanel
-    | RawBlockPosition
     | RawBlockHeading
     | RawBlockHtml
     | RawBlockScript
@@ -1109,8 +1176,11 @@ export type OwidRawGdocBlock =
     | RawBlockStickyLeftContainer
     | RawBlockSideBySideContainer
     | RawBlockGraySection
+    | RawBlockExploreDataSection
+    | RawBlockConditionalSection
     | RawBlockProminentLink
     | RawBlockSDGToc
+    | RawBlockLTPToc
     | RawBlockMissingData
     | RawBlockAdditionalCharts
     | RawBlockNumberedList
@@ -1126,11 +1196,14 @@ export type OwidRawGdocBlock =
     | RawBlockPillRow
     | RawBlockHomepageSearch
     | RawBlockHomepageIntro
+    | RawBlockFeaturedMetrics
+    | RawBlockFeaturedDataInsights
     | RawBlockLatestDataInsights
     | RawBlockCookieNotice
     | RawBlockSubscribeBanner
     | RawBlockCta
     | RawBlockSocials
+    | RawBlockStaticViz
 
 export type OwidEnrichedGdocBlock =
     | EnrichedBlockAllCharts
@@ -1142,7 +1215,6 @@ export type OwidEnrichedGdocBlock =
     | EnrichedBlockNarrativeChart
     | EnrichedBlockCode
     | EnrichedBlockDonorList
-    | EnrichedBlockScroller
     | EnrichedBlockChartStory
     | EnrichedBlockExplorerTiles
     | EnrichedBlockImage
@@ -1164,8 +1236,11 @@ export type OwidEnrichedGdocBlock =
     | EnrichedBlockStickyLeftContainer
     | EnrichedBlockSideBySideContainer
     | EnrichedBlockGraySection
+    | EnrichedBlockExploreDataSection
+    | EnrichedBlockConditionalSection
     | EnrichedBlockProminentLink
     | EnrichedBlockSDGToc
+    | EnrichedBlockLTPToc
     | EnrichedBlockMissingData
     | EnrichedBlockAdditionalCharts
     | EnrichedBlockNumberedList
@@ -1184,11 +1259,14 @@ export type OwidEnrichedGdocBlock =
     | EnrichedBlockPillRow
     | EnrichedBlockHomepageSearch
     | EnrichedBlockHomepageIntro
+    | EnrichedBlockFeaturedMetrics
+    | EnrichedBlockFeaturedDataInsights
     | EnrichedBlockLatestDataInsights
     | EnrichedBlockCookieNotice
     | EnrichedBlockSubscribeBanner
     | EnrichedBlockCta
     | EnrichedBlockSocials
+    | EnrichedBlockStaticViz
 
 /**
  * A map of all possible block types, with the type as the key and the block type as the value

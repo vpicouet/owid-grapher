@@ -18,7 +18,7 @@ import {
 import { ComparisonLineConfig } from "@ourworldindata/types"
 import { AxisConfig, AxisManager } from "./AxisConfig"
 import { MarkdownTextWrap } from "@ourworldindata/components"
-import { ColumnTypeMap, CoreColumn } from "@ourworldindata/core-table"
+import { CoreColumn } from "@ourworldindata/core-table"
 import {
     DEFAULT_GRAPHER_BOUNDS,
     GRAPHER_FONT_SCALE_10_5,
@@ -321,22 +321,21 @@ abstract class AbstractAxis {
         if (this.config.ticks) {
             // If custom ticks are supplied, use them without any transformations or additions.
             const [minValue, maxValue] = d3_scale.domain()
-            return (
-                this.config.ticks
-                    // replace ±Infinity with minimum/maximum
-                    .map((tick) => {
-                        if (tick.value === -Infinity)
-                            return { ...tick, value: minValue }
-                        if (tick.value === Infinity)
-                            return { ...tick, value: maxValue }
-                        return tick
-                    })
-                    // filter out custom ticks outside the plottable area
-                    .filter(
-                        (tick) =>
-                            tick.value >= minValue && tick.value <= maxValue
-                    )
-            )
+            const processedTicks = this.config.ticks
+                // replace ±Infinity with minimum/maximum
+                .map((tick) => {
+                    if (tick.value === -Infinity)
+                        return { ...tick, value: minValue }
+                    if (tick.value === Infinity)
+                        return { ...tick, value: maxValue }
+                    return tick
+                })
+                // filter out custom ticks outside the plottable area
+                .filter(
+                    (tick) => tick.value >= minValue && tick.value <= maxValue
+                )
+
+            return _.uniqBy(processedTicks, (tick) => tick.value)
         } else if (this.isLogScale) {
             // Show a bit more ticks for log axes
             const maxLabelledTicks = Math.round(this.totalTicksTarget * 1.25)
@@ -422,7 +421,7 @@ abstract class AbstractAxis {
             ticks = ticks.filter((t) => t.value % 1 === 0)
 
         // mark value=0 ticks as solid for non-time columns
-        if (!(this.formatColumn instanceof ColumnTypeMap.Time)) {
+        if (!this.formatColumn?.isTimeColumn) {
             ticks = ticks.map((tick) =>
                 tick.value === 0 ? { ...tick, solid: true } : tick
             )
@@ -553,8 +552,7 @@ abstract class AbstractAxis {
 
         const axisLabel = makeAxisLabel({
             label: this.label,
-            unit: this.formatColumn?.unit,
-            shortUnit: this.formatColumn?.shortUnit,
+            displayUnit: this.formatColumn?.displayUnit,
         })
 
         const logScaleNotice = "plotted on a logarithmic axis"

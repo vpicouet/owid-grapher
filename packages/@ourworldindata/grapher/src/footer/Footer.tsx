@@ -1,11 +1,11 @@
 import * as React from "react"
 import { observable, computed, action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
-import parseUrl from "url-parse"
 import {
     Bounds,
     getRelativeMouse,
     makeIdForHumanConsumption,
+    Url,
 } from "@ourworldindata/utils"
 import {
     DATAPAGE_ABOUT_THIS_DATA_SECTION_ID,
@@ -136,8 +136,8 @@ abstract class AbstractFooter<
 
     @computed protected get finalUrl(): string {
         const originUrl = this.originUrlWithProtocol
-        const url = parseUrl(originUrl)
-        return `${url.origin}${url.pathname}`
+        const url = Url.fromURL(originUrl)
+        return url.originAndPath ?? ""
     }
 
     @computed protected get correctedUrlText(): string | undefined {
@@ -147,8 +147,9 @@ abstract class AbstractFooter<
         if (!originUrl || !originUrl.toLowerCase().match(/^https?:\/\/./))
             return undefined
 
-        const url = parseUrl(originUrl)
-        return `${url.host}${url.pathname}`
+        const url = Url.fromURL(originUrl)
+        return url.originAndPath
+            ?.replace(/^https?:\/\//, "")
             .replace("ourworldindata.org", "OurWorldinData.org")
             .replace(/\/$/, "") // remove trailing slash
     }
@@ -406,13 +407,26 @@ abstract class AbstractFooter<
             <div className="license" style={this.licenseAndOriginUrl.htmlStyle}>
                 {this.finalUrlText && (
                     <>
-                        <a href={this.finalUrl}>{this.finalUrlText}</a> |{" "}
+                        <a
+                            href={this.finalUrl}
+                            {...(this.manager.isInIFrame && {
+                                target: "_blank",
+                                rel: "noopener",
+                            })}
+                        >
+                            {this.finalUrlText}
+                        </a>{" "}
+                        |{" "}
                     </>
                 )}
                 <a
                     className={this.manager.hasOWIDLogo ? "cclogo" : undefined}
                     href={this.licenseUrl}
                     style={{ textDecoration: "none" }}
+                    {...(this.manager.isInIFrame && {
+                        target: "_blank",
+                        rel: "noopener",
+                    })}
                 >
                     {this.licenseText}
                 </a>
@@ -698,9 +712,12 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
         const { finalUrl, finalUrlText, licenseText, licenseUrl, textColor } =
             this
         const linkStyle = `fill: ${textColor};`
-        const licenseSvg = `<a style="${linkStyle}" href="${licenseUrl}">${licenseText}</a>`
+        const targetAttr = this.manager.isInIFrame
+            ? ' target="_blank" rel="noopener"'
+            : ""
+        const licenseSvg = `<a style="${linkStyle}" href="${licenseUrl}"${targetAttr}>${licenseText}</a>`
         if (!finalUrlText) return licenseSvg
-        const originUrlSvg = `<a style="${linkStyle}" href="${finalUrl}">${finalUrlText}</a>`
+        const originUrlSvg = `<a style="${linkStyle}" href="${finalUrl}"${targetAttr}>${finalUrlText}</a>`
         return [originUrlSvg, licenseSvg].join(" | ")
     }
 

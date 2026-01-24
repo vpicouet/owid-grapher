@@ -35,6 +35,7 @@ import {
     RichDataVariant,
 } from "./search/constructSearchResultJson.js"
 import { checkCache } from "./reusableHandlers.js"
+import { slugify } from "@ourworldindata/utils"
 
 export async function fetchMetadataForGrapher(
     identifier: GrapherIdentifier,
@@ -54,7 +55,7 @@ export async function fetchMetadataForGrapher(
         selectedEntityColors: grapher.grapherState.selectedEntityColors,
         dataApiUrl: getDataApiUrl(env),
     })
-    grapher.grapherState.inputTable = inputTable
+    if (inputTable) grapher.grapherState.inputTable = inputTable
 
     const fullMetadata = assembleMetadata(
         grapher.grapherState,
@@ -71,30 +72,41 @@ export async function fetchZipForGrapher(
     searchParams?: URLSearchParams
 ) {
     console.log("preparing to generate zip file")
-    const { grapher } = await initGrapher(
-        identifier,
-        TWITTER_OPTIONS,
-        searchParams ?? new URLSearchParams(""),
-        env
-    )
+    const { grapher, identifierType: effectiveIdentifierType } =
+        await initGrapher(
+            identifier,
+            TWITTER_OPTIONS,
+            searchParams ?? new URLSearchParams(""),
+            env
+        )
     const inputTable = await fetchInputTableForConfig({
         dimensions: grapher.grapherState.dimensions,
         selectedEntityColors: grapher.grapherState.selectedEntityColors,
         dataApiUrl: getDataApiUrl(env),
     })
-    grapher.grapherState.inputTable = inputTable
+    if (inputTable) grapher.grapherState.inputTable = inputTable
     ensureDownloadOfDataAllowed(grapher.grapherState)
-    const metadata = assembleMetadata(grapher.grapherState, searchParams)
-    const readme = assembleReadme(grapher.grapherState, searchParams)
-    const csv = assembleCsv(grapher.grapherState, searchParams)
+    const effectiveSearchParams = searchParams ?? new URLSearchParams("")
+    const metadata = assembleMetadata(
+        grapher.grapherState,
+        effectiveSearchParams
+    )
+    const readme = assembleReadme(grapher.grapherState, effectiveSearchParams)
+    const csv = assembleCsv(grapher.grapherState, effectiveSearchParams)
     console.log("Fetched the parts, creating zip file")
+
+    // Use the slugified display title as filename for multi-dims
+    let filename = identifier.id
+    if (effectiveIdentifierType === "multi-dim-slug") {
+        filename = slugify(grapher.grapherState.displayTitle)
+    }
 
     const zipContent: File[] = [
         {
-            path: `${identifier.id}.metadata.json`,
+            path: `${filename}.metadata.json`,
             data: JSON.stringify(metadata, undefined, 2),
         },
-        { path: `${identifier.id}.csv`, data: csv },
+        { path: `${filename}.csv`, data: csv },
         { path: "readme.md", data: readme },
     ]
     const content = await createZip(zipContent)
@@ -102,6 +114,7 @@ export async function fetchZipForGrapher(
     return new Response(content, {
         headers: {
             "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="${filename}.zip"`,
         },
     })
 }
@@ -137,7 +150,7 @@ export async function fetchCsvForGrapher(
         selectedEntityColors: grapher.grapherState.selectedEntityColors,
         dataApiUrl: getDataApiUrl(env),
     })
-    grapher.grapherState.inputTable = inputTable
+    if (inputTable) grapher.grapherState.inputTable = inputTable
     console.log("checking if download is allowed")
     ensureDownloadOfDataAllowed(grapher.grapherState)
     console.log("data download is allowed")
@@ -183,11 +196,11 @@ export async function fetchReadmeForGrapher(
         selectedEntityColors: grapher.grapherState.selectedEntityColors,
         dataApiUrl: getDataApiUrl(env),
     })
-    grapher.grapherState.inputTable = inputTable
+    if (inputTable) grapher.grapherState.inputTable = inputTable
 
     const readme = assembleReadme(
         grapher.grapherState,
-        searchParams,
+        searchParams ?? new URLSearchParams(""),
         multiDimAvailableDimensions
     )
     return new Response(readme, {
@@ -242,14 +255,14 @@ export async function fetchDataValuesForGrapher(
         selectedEntityColors: grapher.grapherState.selectedEntityColors,
         dataApiUrl: getDataApiUrl(env),
     })
-    grapher.grapherState.inputTable = inputTable
+    if (inputTable) grapher.grapherState.inputTable = inputTable
 
     // Make sure the country query param is respected since Grapher ignores
     // the country param if entity selection is disabled
     const entityNames = getEntityNamesParam(
         searchParams.get("country") ?? undefined
     )
-    if (entityNames?.length > 0)
+    if (entityNames && entityNames.length > 0)
         grapher.grapherState.selection.setSelectedEntities(entityNames)
 
     const dataValues = assembleDataValues(grapher.grapherState, entityName)
@@ -292,7 +305,7 @@ export async function fetchSearchResultDataForGrapher(
     const supportedVersions = [1]
     const version = parseVersionParam(
         searchParams.get("version"),
-        supportedVersions.at(-1)
+        supportedVersions.at(-1)!
     )
 
     // Validate version
@@ -333,7 +346,7 @@ export async function fetchSearchResultDataForGrapher(
         selectedEntityColors: grapher.grapherState.selectedEntityColors,
         dataApiUrl,
     })
-    grapher.grapherState.inputTable = inputTable
+    if (inputTable) grapher.grapherState.inputTable = inputTable
 
     const searchResult = await assembleSearchResultData(grapher.grapherState, {
         variant,

@@ -37,6 +37,8 @@ import {
     createOrUpdateGdoc,
     deleteGdoc,
     setGdocTags,
+    getPreviewGdocIndexRecords,
+    getPublishedGdocTopicSlugs,
 } from "./apiRoutes/gdocs.js"
 import {
     getImagesHandler,
@@ -49,8 +51,13 @@ import {
 import { getFiles, uploadFileToR2 } from "./apiRoutes/files.js"
 import {
     handlePutMultiDim,
+    handleGetMultiDim,
     handleGetMultiDims,
     handlePatchMultiDim,
+    handleGetMultiDimRedirects,
+    handlePostMultiDimRedirect,
+    handleDeleteMultiDimRedirect,
+    handleGetAllMultiDimRedirects,
 } from "./apiRoutes/mdims.js"
 import {
     fetchAllWork,
@@ -70,6 +77,7 @@ import {
     suggestGptTopics,
     suggestGptAltTextForCloudflareImage,
     suggestGptAltText,
+    extractTextFromImage,
 } from "./apiRoutes/suggest.js"
 import {
     handleGetFlatTagGraph,
@@ -154,6 +162,13 @@ import {
     getDodsUsage,
     getParsedDods,
 } from "./apiRoutes/dods.js"
+import {
+    getStaticVizListHandler,
+    getStaticVizByIdHandler,
+    createStaticViz,
+    updateStaticViz,
+    deleteStaticViz,
+} from "./apiRoutes/staticViz.js"
 
 const apiRouter = new FunctionalRouter()
 
@@ -281,6 +296,29 @@ getRouteWithROTransaction(apiRouter, "/dods-usage.json", getDodsUsage)
 patchRouteWithRWTransaction(apiRouter, "/dods/:id", updateDod)
 postRouteWithRWTransaction(apiRouter, "/dods", createDod)
 
+// Static viz routes
+getRouteWithROTransaction(
+    apiRouter,
+    "/static-viz.json",
+    getStaticVizListHandler
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/static-viz/:staticVizId.json",
+    getStaticVizByIdHandler
+)
+postRouteWithRWTransaction(apiRouter, "/static-viz", createStaticViz)
+putRouteWithRWTransaction(
+    apiRouter,
+    "/static-viz/:staticVizId",
+    updateStaticViz
+)
+deleteRouteWithRWTransaction(
+    apiRouter,
+    "/static-viz/:staticVizId",
+    deleteStaticViz
+)
+
 // explorer routes
 postRouteWithRWTransaction(apiRouter, "/explorer/:slug/tags", addExplorerTags)
 deleteRouteWithRWTransaction(
@@ -295,10 +333,20 @@ getRouteWithROTransaction(apiRouter, "/files.json", getFiles)
 
 // Gdoc routes
 getRouteWithROTransaction(apiRouter, "/gdocs", getAllGdocIndexItems)
+getRouteWithROTransaction(
+    apiRouter,
+    "/gdocs/publishedTopicSlugs",
+    getPublishedGdocTopicSlugs
+)
 getRouteNonIdempotentWithRWTransaction(
     apiRouter,
     "/gdocs/:id",
     getIndividualGdoc
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/gdocs/:id/records",
+    getPreviewGdocIndexRecords
 )
 putRouteWithRWTransaction(apiRouter, "/gdocs/:id", createOrUpdateGdoc)
 deleteRouteWithRWTransaction(apiRouter, "/gdocs/:id", deleteGdoc)
@@ -331,12 +379,33 @@ getRouteWithROTransaction(apiRouter, "/images/usage", getImageUsageHandler)
 
 // Mdim routes
 getRouteWithROTransaction(apiRouter, "/multi-dims.json", handleGetMultiDims)
+getRouteWithROTransaction(apiRouter, "/multi-dims/:id", handleGetMultiDim)
 putRouteWithRWTransaction(
     apiRouter,
     "/multi-dims/:catalogPath",
     handlePutMultiDim
 )
 patchRouteWithRWTransaction(apiRouter, "/multi-dims/:id", handlePatchMultiDim)
+getRouteWithROTransaction(
+    apiRouter,
+    "/multi-dim-redirects.json",
+    handleGetAllMultiDimRedirects
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/multi-dims/:id/redirects",
+    handleGetMultiDimRedirects
+)
+postRouteWithRWTransaction(
+    apiRouter,
+    "/multi-dims/:id/redirects",
+    handlePostMultiDimRedirect
+)
+deleteRouteWithRWTransaction(
+    apiRouter,
+    "/multi-dims/:id/redirects/:redirectId",
+    handleDeleteMultiDimRedirect
+)
 
 // Explorer routes
 getRouteWithROTransaction(apiRouter, "/explorers/:slug", handleGetExplorer)
@@ -418,6 +487,11 @@ getRouteWithROTransaction(
     suggestGptAltTextForCloudflareImage
 )
 getRouteWithROTransaction(apiRouter, `/gpt/suggest-alt-text`, suggestGptAltText)
+getRouteWithROTransaction(
+    apiRouter,
+    `/gpt/extract-text-from-image`,
+    extractTextFromImage
+)
 
 // Tag graph routes
 getRouteWithROTransaction(

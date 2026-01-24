@@ -60,6 +60,8 @@ export function spansToMarkdown(spans: Span[] | undefined): string {
 
 const CUSTOM_MARKDOWN_COMPONENTS = {
     AllCharts: "AllCharts",
+    FeaturedMetrics: "FeaturedMetrics",
+    FeaturedDataInsights: "FeaturedDataInsights",
     Callout: "Callout",
     Chart: "Chart",
     DonorList: "DonorList",
@@ -67,6 +69,13 @@ const CUSTOM_MARKDOWN_COMPONENTS = {
     KeyIndicator: "KeyIndicator",
     NarrativeChart: "NarrativeChart",
     Video: "Video",
+    StaticViz: "StaticViz",
+}
+
+// Assumes that the contents of these tags can be removed entirely
+const CUSTOM_MULTILINE_MARKDOWN_COMPONENTS = {
+    AdditionalCharts: "AdditionalCharts",
+    KeyIndicatorCollection: "KeyIndicatorCollection",
 }
 
 function markdownComponent(
@@ -83,7 +92,8 @@ function markdownComponent(
 }
 
 /**
- * Strips out <Image />, <Video />, etc. components.
+ * Strips out <Image />, <Video />, etc. components and multiline components like
+ * <AdditionalCharts>...</AdditionalCharts> from the given markdown content.
  * Helpful if trying to get a plaintext version of the content because mdast-util-from-markdown
  * doesn't support these components.
  */
@@ -91,6 +101,15 @@ export function stripCustomMarkdownComponents(content: string): string {
     let strippedContent = content
     for (const componentName of Object.values(CUSTOM_MARKDOWN_COMPONENTS)) {
         const regex = new RegExp(`<${componentName}[^\n]*?/>`, "g")
+        strippedContent = strippedContent.replace(regex, "")
+    }
+    for (const componentName of Object.values(
+        CUSTOM_MULTILINE_MARKDOWN_COMPONENTS
+    )) {
+        const regex = new RegExp(
+            `<${componentName}[\\s\\S]*?<\\/${componentName}>`,
+            "g"
+        )
         strippedContent = strippedContent.replace(regex, "")
     }
     return strippedContent
@@ -156,6 +175,7 @@ ${items}
                 {
                     url: b.url,
                     caption: b.caption ? spansToMarkdown(b.caption) : undefined,
+                    size: b.size,
                     // Note: truncated
                 },
                 exportComponents
@@ -166,6 +186,7 @@ ${items}
                 "NarrativeChart",
                 {
                     name: b.name,
+                    size: b.size,
                     caption: b.caption ? spansToMarkdown(b.caption) : undefined,
                     // Note: truncated
                 },
@@ -184,7 +205,6 @@ ${items}
         .with({ type: "donors" }, (_): string | undefined =>
             markdownComponent("DonorList", {}, exportComponents)
         )
-        .with({ type: "scroller" }, () => undefined) // Note: dropped
         .with(
             { type: "chart-story" },
             () => undefined // Note: dropped
@@ -195,6 +215,15 @@ ${items}
                 {
                     filename: b.filename,
                     alt: b.alt,
+                },
+                exportComponents
+            )
+        )
+        .with({ type: "static-viz" }, (b) =>
+            markdownComponent(
+                "StaticViz",
+                {
+                    name: b.name,
                 },
                 exportComponents
             )
@@ -306,6 +335,12 @@ ${items}
         .with({ type: "gray-section" }, (b): string | undefined =>
             enrichedBlocksToMarkdown(b.items, exportComponents)
         )
+        .with({ type: "explore-data-section" }, (b): string | undefined =>
+            enrichedBlocksToMarkdown(b.content, exportComponents)
+        )
+        .with({ type: "conditional-section" }, (b): string | undefined =>
+            enrichedBlocksToMarkdown(b.content, exportComponents)
+        )
         .with({ type: "prominent-link" }, (b): string | undefined => {
             if (b.url.match(gdocUrlRegex)) {
                 return undefined
@@ -323,6 +358,7 @@ ${items}
             return text
         })
         .with({ type: "sdg-toc" }, () => undefined)
+        .with({ type: "ltp-toc" }, () => undefined)
         .with({ type: "missing-data" }, () => undefined)
         .with({ type: "numbered-list" }, (b): string | undefined =>
             b.items
@@ -458,6 +494,12 @@ ${links}`
                 .filter((item) => item !== "")
                 .join("\n")
         })
+        .with({ type: "featured-metrics" }, (_): string | undefined =>
+            markdownComponent("FeaturedMetrics", {}, exportComponents)
+        )
+        .with({ type: "featured-data-insights" }, (_): string | undefined =>
+            markdownComponent("FeaturedDataInsights", {}, exportComponents)
+        )
         .with({ type: "socials" }, (b): string | undefined => {
             return b.links
                 .map((link) => `* [${link.text}](${link.url})`)

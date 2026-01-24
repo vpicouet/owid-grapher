@@ -10,8 +10,14 @@ import {
     PostsGdocsXImagesTableName,
     PostsGdocsTableName,
     PostsGdocsComponentsTableName,
+    PagesIndexRecordsResponse,
+    RedirectsTableName,
+    OwidGdocType,
 } from "@ourworldindata/types"
-import { checkIsGdocPostExcludingFragments } from "@ourworldindata/utils"
+import {
+    checkIsDataInsight,
+    checkIsGdocPostExcludingFragments,
+} from "@ourworldindata/utils"
 import { match } from "ts-pattern"
 import {
     checkHasChanges,
@@ -22,6 +28,7 @@ import {
 import {
     indexIndividualGdocPost,
     removeIndividualGdocPostFromIndex,
+    getIndividualGdocRecords,
 } from "../../baker/algolia/utils/pages.js"
 import { GdocAbout } from "../../db/model/Gdoc/GdocAbout.js"
 import { GdocAuthor } from "../../db/model/Gdoc/GdocAuthor.js"
@@ -48,6 +55,7 @@ import * as db from "../../db/db.js"
 import { Request } from "../authentication.js"
 import e from "express"
 import { GdocAnnouncement } from "../../db/model/Gdoc/GdocAnnouncement.js"
+import { GdocProfile } from "../../db/model/Gdoc/GdocProfile.js"
 
 export async function getAllGdocIndexItems(
     req: Request,
@@ -107,7 +115,8 @@ async function indexAndBakeGdocIfNeccesary(
         | GdocHomepage
         | GdocAbout
         | GdocAuthor
-        | GdocAnnouncement,
+        | GdocAnnouncement
+        | GdocProfile,
     nextGdoc:
         | GdocPost
         | GdocDataInsight
@@ -115,6 +124,7 @@ async function indexAndBakeGdocIfNeccesary(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ) {
     const prevJson = prevGdoc.toJSON()
     const nextJson = nextGdoc.toJSON()
@@ -168,6 +178,7 @@ async function validateSlugCollisionsIfPublishing(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ) {
     if (!gdoc.published) return
 
@@ -177,6 +188,56 @@ async function validateSlugCollisionsIfPublishing(
             `You are attempting to publish a Google Doc with a slug that already exists: "${gdoc.slug}"`
         )
     }
+}
+
+/**
+ * Creates a redirect from the old slug to the new slug when a published gdoc's slug changes.
+ * Also updates any existing redirects that point to the old slug to point to the new slug instead
+ * (to avoid redirect chains).
+ */
+async function createRedirectForSlugChangeIfNeeded(
+    trx: db.KnexReadWriteTransaction,
+    prevGdoc: {
+        slug: string
+        published: boolean
+        content: { type?: OwidGdocType }
+    },
+    nextGdoc: {
+        slug: string
+        published: boolean
+        content: { type?: OwidGdocType }
+    }
+): Promise<void> {
+    // Only create redirects when both prev and next are published and slug has changed
+    if (!prevGdoc.published || !nextGdoc.published) return
+    if (!prevGdoc.slug || prevGdoc.slug === nextGdoc.slug) return
+
+    const oldPath = getCanonicalUrl("", prevGdoc)
+    const newPath = getCanonicalUrl("", nextGdoc)
+
+    if (oldPath === newPath) return
+
+    // Update any existing redirects that point to the old path to point to the new path instead
+    // This prevents redirect chains (A -> B -> C becomes A -> C)
+    await trx(RedirectsTableName)
+        .where("target", oldPath)
+        .update({ target: newPath })
+
+    // Delete any self-referential redirects that may have been created by the above update
+    // (e.g., when reverting a slug change: a→b updated to a→a)
+    await trx(RedirectsTableName).whereRaw("source = target").delete()
+
+    // Delete any existing redirect from the old path (in case we're reverting a previous change)
+    await trx(RedirectsTableName).where("source", oldPath).delete()
+
+    // Create the new redirect from old path to new path
+    await trx(RedirectsTableName).insert({
+        source: oldPath,
+        target: newPath,
+        code: 301, // Permanent redirect
+    })
+
+    console.log(`Created redirect: ${oldPath} -> ${newPath}`)
 }
 
 /**
@@ -202,6 +263,9 @@ export async function createOrUpdateGdoc(
     await nextGdoc.loadState(trx)
 
     await validateSlugCollisionsIfPublishing(trx, nextGdoc)
+
+    // Create redirect if slug changed on a published gdoc
+    await createRedirectForSlugChangeIfNeeded(trx, prevGdoc, nextGdoc)
 
     await setImagesInContentGraph(trx, nextGdoc)
 
@@ -316,4 +380,97 @@ export async function setGdocTags(
     await setTagsForGdoc(trx, gdocId, tagIdsAsObjects)
 
     return { success: true }
+}
+
+/**
+ * Generate a preview of Algolia index records for a gdoc.
+ * Returns the records that would be created when indexing this gdoc.
+ */
+export async function getPreviewGdocIndexRecords(
+    _req: Request,
+    res: e.Response<PagesIndexRecordsResponse, Record<string, any>>,
+    trx: db.KnexReadonlyTransaction
+): Promise<PagesIndexRecordsResponse> {
+    const { id } = _req.params
+    const contentSource = _req.query.contentSource as
+        | GdocsContentSource
+        | undefined
+
+    try {
+        const gdoc = await getAndLoadGdocById(trx, id, contentSource, false)
+
+        if (!gdoc) {
+            throw new JsonError(`No Google Doc with id ${id} found`)
+        }
+
+        const gdocJson = gdoc.toJSON()
+
+        // Provide fallback dates to avoid issues in record generation, where
+        // dates are expected
+        const fallbackDate = gdocJson.publishedAt ?? new Date()
+        gdocJson.publishedAt = fallbackDate
+        gdocJson.updatedAt ??= fallbackDate
+
+        res.set("Cache-Control", "no-store")
+
+        // Only generate records for posts (excluding fragments)
+        if (
+            !checkIsGdocPostExcludingFragments(gdocJson) &&
+            !checkIsDataInsight(gdocJson)
+        ) {
+            const payload: PagesIndexRecordsResponse = {
+                records: [],
+                count: 0,
+                message: `Gdoc type "${gdocJson.content.type}" is not indexed in Algolia`,
+            }
+            return payload
+        }
+
+        if (
+            "deprecation-notice" in gdocJson.content &&
+            gdocJson.content["deprecation-notice"]
+        ) {
+            const payload: PagesIndexRecordsResponse = {
+                records: [],
+                count: 0,
+                message:
+                    "Gdoc is deprecated (has deprecation-notice) and will not be indexed in Algolia",
+            }
+            return payload
+        }
+
+        const records = await getIndividualGdocRecords(gdocJson, trx)
+
+        const payload: PagesIndexRecordsResponse = {
+            records,
+            count: records.length,
+        }
+
+        return payload
+    } catch (error) {
+        console.error("Error generating gdoc index records", error)
+        if (error instanceof Error) throw error
+        throw new Error(String(error))
+    }
+}
+
+/**
+ * Get slugs of all published topic pages (topic-page, linear-topic-page).
+ * Used by the tag editor to determine if a tag's slug matches a published gdoc.
+ */
+export async function getPublishedGdocTopicSlugs(
+    _req: Request,
+    _res: e.Response<any, Record<string, any>>,
+    trx: db.KnexReadonlyTransaction
+): Promise<{ slugs: string[] }> {
+    const rows = await db.knexRaw<{ slug: string }>(
+        trx,
+        `-- sql
+        SELECT slug FROM posts_gdocs
+        WHERE published = TRUE
+        AND type IN ('topic-page', 'linear-topic-page')
+        AND slug IS NOT NULL
+        `
+    )
+    return { slugs: rows.map((r) => r.slug) }
 }

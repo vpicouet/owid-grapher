@@ -18,6 +18,8 @@ interface ScatterPointProps {
     onMouseLeave?: () => void
 }
 
+export const INACTIVE_SCATTER_POINT_COLOR = "#e2e2e2"
+
 // When there's only a single point in a series (e.g. single year mode)
 @observer
 export class ScatterPoint extends React.Component<ScatterPointProps> {
@@ -32,7 +34,10 @@ export class ScatterPoint extends React.Component<ScatterPointProps> {
         const value = R.first(series.points)
         if (value === undefined) return null
 
-        const color = series.isFocus || !isLayerMode ? value.color : "#e2e2e2"
+        const color =
+            series.isFocus || !isLayerMode
+                ? value.color
+                : INACTIVE_SCATTER_POINT_COLOR
 
         const isLabelled = series.allLabels.some((label) => !label.isHidden)
         const size = value.size
@@ -135,12 +140,10 @@ export class ScatterLine extends React.Component<ScatterLineProps> {
                     style={{ transition: "stroke 250ms" }}
                 />
                 <Triangle
-                    transform={`rotate(${rotation}, ${lastValue.position.x.toFixed(
-                        2
-                    )}, ${lastValue.position.y.toFixed(2)})`}
                     cx={lastValue.position.x}
                     cy={lastValue.position.y}
                     r={1.5 + lastValue.size}
+                    rotation={rotation}
                     fill={isLayerMode ? "#e2e2e2" : lastValue.color}
                     opacity={opacity}
                 />

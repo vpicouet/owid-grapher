@@ -65,6 +65,7 @@ export {
     GRAPHER_TAB_CONFIG_OPTIONS,
     GRAPHER_TAB_QUERY_PARAMS,
     ALL_GRAPHER_CHART_TYPES,
+    ORIGIN_URL_REGEX_PATTERNS,
 } from "./grapherTypes/GrapherConstants.js"
 
 export {
@@ -133,6 +134,7 @@ export {
     type ProjectionColumnInfo,
     GrapherVariant,
     type ChartErrorInfo,
+    type ToleranceOptions,
 } from "./grapherTypes/GrapherTypes.js"
 
 export {
@@ -165,14 +167,12 @@ export {
     type PostRestApi,
     type BlockGraphQlApi,
     type FormattingOptions,
-    SubNavId,
 } from "./wordpressTypes/WordpressTypes.js"
 
 export {
     type Ref,
     type RefDictionary,
     type BlockPositionChoice,
-    type ChartPositionChoice,
     type OwidEnrichedGdocBlock,
     type OwidRawGdocBlock,
     pullquoteAlignments,
@@ -180,8 +180,10 @@ export {
     type EnrichedBlockAlign,
     type RawBlockAlign,
     type ParseError,
-    BlockImageSize,
-    checkIsBlockImageSize,
+    type BlockVisibility,
+    blockVisibilitys,
+    BlockSize,
+    checkIsBlockSize,
     type RawBlockAllCharts,
     type RawBlockAdditionalCharts,
     type RawBlockAside,
@@ -198,6 +200,8 @@ export {
     type RawBlockExpandableParagraph,
     type RawBlockExplorerTiles,
     type RawBlockGraySection,
+    type RawBlockExploreDataSection,
+    type RawBlockConditionalSection,
     type RawBlockHeading,
     type RawBlockHomepageIntroPost,
     type RawBlockHomepageIntro,
@@ -206,6 +210,7 @@ export {
     type RawBlockScript,
     type RawBlockImage,
     type RawBlockVideo,
+    type RawBlockStaticViz,
     type RawBlockKeyInsights,
     type RawBlockLatestDataInsights,
     type RawBlockList,
@@ -214,7 +219,6 @@ export {
     type RawBlockPeople,
     type RawBlockPeopleRows,
     type RawBlockPerson,
-    type RawBlockPosition,
     type RawBlockProminentLink,
     type RawBlockPullQuote,
     type RawBlockGuidedChart,
@@ -222,15 +226,14 @@ export {
     type RawBlockResearchAndWriting,
     type RawBlockResearchAndWritingLink,
     type RawBlockLatestWork,
-    type RawBlockScroller,
     type RawBlockSDGGrid,
     type RawBlockSDGToc,
+    type RawBlockLTPToc,
     type RawBlockSideBySideContainer,
     type RawBlockStickyLeftContainer,
     type RawBlockStickyRightContainer,
     type RawBlockText,
     type RawBlockTopicPageIntro,
-    type RawBlockUrl,
     type RawBlockResourcePanel,
     type RawBlockKeyIndicator,
     type RawBlockKeyIndicatorCollection,
@@ -263,6 +266,10 @@ export {
     type EnrichedBlockExpandableParagraph,
     type EnrichedBlockExplorerTiles,
     type EnrichedBlockGraySection,
+    exploreDataSectionAlignments,
+    type ExploreDataSectionAlignment,
+    type EnrichedBlockExploreDataSection,
+    type EnrichedBlockConditionalSection,
     type EnrichedBlockHeading,
     type EnrichedBlockHomepageIntroPost,
     type EnrichedBlockHomepageIntro,
@@ -271,6 +278,7 @@ export {
     type EnrichedBlockScript,
     type EnrichedBlockImage,
     type EnrichedBlockVideo,
+    type EnrichedBlockStaticViz,
     type EnrichedBlockKeyInsights,
     type EnrichedBlockKeyInsightsSlide,
     type EnrichedBlockLatestDataInsights,
@@ -288,9 +296,11 @@ export {
     type EnrichedBlockResearchAndWritingLink,
     type EnrichedBlockLatestWork,
     type EnrichedBlockResearchAndWritingRow,
-    type EnrichedBlockScroller,
+    type ResearchAndWritingVariant,
+    RESEARCH_AND_WRITING_VARIANTS,
     type EnrichedBlockSDGGrid,
     type EnrichedBlockSDGToc,
+    type EnrichedBlockLTPToc,
     type EnrichedBlockSideBySideContainer,
     type EnrichedBlockSimpleText,
     type EnrichedBlockStickyLeftContainer,
@@ -306,7 +316,6 @@ export {
     type ResourcePanelIcon,
     blockAlignments,
     type BlockAlignment,
-    type EnrichedScrollerItem,
     type EnrichedSDGGridItem,
     type EnrichedBlockEntrySummary,
     type EnrichedBlockEntrySummaryItem,
@@ -321,6 +330,10 @@ export {
     type EnrichedBlockPillRow,
     type RawBlockHomepageSearch,
     type EnrichedBlockHomepageSearch,
+    type RawBlockFeaturedMetrics,
+    type EnrichedBlockFeaturedMetrics,
+    type RawBlockFeaturedDataInsights,
+    type EnrichedBlockFeaturedDataInsights,
     type RawBlockSocials,
     type EnrichedBlockSocials,
     SocialLinkType,
@@ -352,10 +365,14 @@ export {
     type OwidGdocHomepageContent,
     type OwidGdocHomepageInterface,
     type OwidGdocHomepageMetadata,
+    type OwidGdocProfileContent,
+    type OwidGdocProfileInterface,
+    type OwidGdocProfileEntitySummary,
     DATA_INSIGHTS_INDEX_PAGE_SIZE,
     LATEST_INDEX_PAGE_SIZE,
     type OwidGdoc,
     OwidGdocType,
+    ALL_GDOC_TYPES,
     type OwidGdocStickyNavItem,
     type OwidGdocJSON,
     type FaqDictionary,
@@ -368,6 +385,7 @@ export {
     type LinkedAuthor,
     type LinkedChart,
     type LinkedIndicator,
+    type LinkedStaticViz,
     DYNAMIC_COLLECTION_PAGE_CONTAINER_ID,
     type OwidGdocContent,
     type OwidGdocIndexItem,
@@ -413,7 +431,11 @@ export {
     ENDNOTES_ID,
     KEY_INSIGHTS_ID,
     RESEARCH_AND_WRITING_ID,
+    FEATURED_METRICS_ID,
+    FEATURED_DATA_INSIGHTS_ID,
+    EXPLORE_DATA_SECTION_ID,
     RESEARCH_AND_WRITING_DEFAULT_HEADING,
+    EXPLORE_DATA_SECTION_DEFAULT_TITLE,
     gdocUrlRegex,
     GDOCS_URL_PLACEHOLDER,
     GDOCS_BASE_URL,
@@ -512,6 +534,12 @@ export {
     ArchivedExplorerVersionsTableName,
 } from "./dbTypes/ArchivedExplorerVersion.js"
 export {
+    type DbInsertArchivedPostVersion,
+    type DbPlainArchivedPostVersion,
+    type DbEnrichedArchivedPostVersion,
+    ArchivedPostVersionsTableName,
+} from "./dbTypes/ArchivedPostVersion.js"
+export {
     type DbInsertChartConfig,
     type DbRawChartConfig,
     type DbEnrichedChartConfig,
@@ -543,6 +571,11 @@ export {
     type DbInsertChartSlugRedirect,
     ChartSlugRedirectsTableName,
 } from "./dbTypes/ChartSlugRedirects.js"
+export {
+    type DbPlainMultiDimRedirect,
+    type DbInsertMultiDimRedirect,
+    MultiDimRedirectsTableName,
+} from "./dbTypes/MultiDimRedirects.js"
 export {
     type DbPlainChartTag,
     type DbInsertChartTag,
@@ -737,10 +770,9 @@ export {
     PostTagsTableName,
 } from "./dbTypes/PostTags.js"
 export {
-    type DbPlainSession,
-    type DbInsertSession,
-    SessionsTableName,
-} from "./dbTypes/Sessions.js"
+    AdminApiKeysTableName,
+    type DbAdminApiKey,
+} from "./dbTypes/AdminApiKeys.js"
 
 export {
     type DbInsertSource,
@@ -792,7 +824,11 @@ export {
     type License,
 } from "./dbTypes/Variables.js"
 
-export { RedirectCode, type DbPlainRedirect } from "./dbTypes/Redirects.js"
+export {
+    RedirectsTableName,
+    RedirectCode,
+    type DbPlainRedirect,
+} from "./dbTypes/Redirects.js"
 
 export {
     ExplorerViewsTableName,
@@ -810,6 +846,15 @@ export {
     type DbEnrichedLatestWork,
     parseLatestWork,
 } from "./domainTypes/Author.js"
+
+export {
+    StaticVizTableName,
+    type DbRawStaticViz,
+    type DbEnrichedStaticViz,
+    type StaticVizUpdate,
+    StaticVizUpdateSchema,
+    StaticVizInsertSchema,
+} from "./domainTypes/StaticViz.js"
 
 export type {
     IndicatorConfig,
@@ -848,12 +893,17 @@ export {
     type ArchivedPageVersion,
     type ArchiveVersions,
     type ArchiveContext,
+    type IndicatorChecksums,
     type GrapherChecksums,
     type GrapherChecksumsObjectWithHash,
     type MultiDimChecksums,
     type MultiDimChecksumsObjectWithHash,
     type ExplorerChecksums,
     type ExplorerChecksumsObjectWithHash,
+    type NarrativeChartChecksums,
+    type NarrativeChartChecksumsResult,
+    type PostChecksums,
+    type PostChecksumsObjectWithHash,
 } from "./domainTypes/Archive.js"
 export {
     type AdditionalGrapherDataFetchFn,
@@ -891,3 +941,4 @@ export {
 } from "./endpointTypes/GrapherSearchResultJson.js"
 
 export * from "./analyticsTypes/analyticsTypes.js"
+export * from "./domainTypes/Search.js"

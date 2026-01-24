@@ -2,7 +2,7 @@ import * as React from "react"
 import {
     Box,
     excludeUndefined,
-    getCountryByName,
+    getRegionByName,
     Url,
 } from "@ourworldindata/utils"
 import {
@@ -28,6 +28,8 @@ import {
     SVG_STYLE_PROPS,
     BASE_FONT_SIZE,
     Patterns,
+    GRAPHER_IMAGE_WIDTH_1X,
+    GRAPHER_IMAGE_WIDTH_2X,
 } from "../core/GrapherConstants"
 import { ChartSeries } from "./ChartInterface"
 import {
@@ -142,8 +144,8 @@ export function isElementInteractive(element: HTMLElement): boolean {
 }
 
 export function getShortNameForEntity(entityName: string): string | undefined {
-    const country = getCountryByName(entityName)
-    return country?.shortName
+    const region = getRegionByName(entityName)
+    return region?.shortName
 }
 
 export function isTargetOutsideElement(
@@ -198,36 +200,31 @@ export function byHoverThenFocusState(series: {
 
 export function makeAxisLabel({
     label,
-    unit,
-    shortUnit,
+    displayUnit,
 }: {
     label: string
-    unit?: string
-    shortUnit?: string
+    displayUnit?: string
 }): {
     mainLabel: string // shown in bold
     unit?: string // shown in normal weight, usually in parens
 } {
-    const displayUnit = unit && unit !== shortUnit ? unit : undefined
+    // No unit to display
+    if (!displayUnit) return { mainLabel: label }
 
-    if (displayUnit) {
-        // extract text in parens at the end of the label,
-        // e.g. "Population (millions)" is split into "Population " and "(millions)"
-        const [
-            _fullMatch,
-            untrimmedMainLabelText = undefined,
-            labelTextInParens = undefined,
-        ] = label.trim().match(/^(.*?)(\([^()]*\))?$/s) ?? []
-        const mainLabelText = untrimmedMainLabelText?.trim() ?? ""
+    // Extract text in parens at the end of the label,
+    // e.g. "Population (millions)" is split into "Population " and "(millions)"
+    const [
+        _fullMatch,
+        untrimmedMainLabelText = undefined,
+        labelTextInParens = undefined,
+    ] = label.trim().match(/^(.*?)(\([^()]*\))?$/s) ?? []
+    const mainLabelText = untrimmedMainLabelText?.trim() ?? ""
 
-        // don't show unit twice if it's contained in the label
-        const displayLabel =
-            labelTextInParens === `(${displayUnit})` ? mainLabelText : label
+    // Don't show unit twice if it's contained in the label
+    const displayLabel =
+        labelTextInParens === `(${displayUnit})` ? mainLabelText : label
 
-        return { mainLabel: displayLabel, unit: displayUnit }
-    }
-
-    return { mainLabel: label }
+    return { mainLabel: displayLabel, unit: displayUnit }
 }
 
 /**
@@ -238,7 +235,10 @@ export function makeAxisLabel({
 export function generateGrapherImageSrcSet(defaultSrc: string): string {
     const url = Url.fromURL(defaultSrc)
     const existingQueryParams = url.queryParams
-    const imWidths = ["850", "1700"]
+    const imWidths = [
+        GRAPHER_IMAGE_WIDTH_1X.toString(),
+        GRAPHER_IMAGE_WIDTH_2X.toString(),
+    ]
     const srcSet = imWidths
         .map((imWidth) => {
             return `${url.setQueryParams({ ...existingQueryParams, imWidth }).fullUrl} ${imWidth}w`

@@ -12,13 +12,18 @@ import {
     OwidGdocType,
     formatAuthorsForBibtex,
     EnrichedBlockText,
+    getPhraseForArchivalDate,
 } from "@ourworldindata/utils"
 import { CodeSnippet } from "@ourworldindata/components"
-import { BAKED_BASE_URL } from "../../../settings/clientSettings.js"
+import { BAKED_BASE_URL, IS_ARCHIVE } from "../../../settings/clientSettings.js"
 import { OwidGdocHeader } from "../components/OwidGdocHeader.js"
 import StickyNav from "../../blocks/StickyNav.js"
 import { getShortPageCitation } from "../utils.js"
 import { TableOfContents } from "../../TableOfContents.js"
+import { useDocumentContext } from "../DocumentContext.js"
+import { PROD_URL } from "../../SiteConstants.js"
+
+const BASE_URL = IS_ARCHIVE ? PROD_URL : ""
 
 const citationDescriptionsByArticleType: Record<
     | OwidGdocType.Article
@@ -44,7 +49,7 @@ const citationDescriptionsByArticleType: Record<
 
 type GdocPostProps = Omit<
     OwidGdocPostInterface,
-    "markdown" | "publicationContext" | "revisionId"
+    "contentMd5" | "markdown" | "publicationContext" | "revisionId"
 > & {
     isPreviewing?: boolean
 }
@@ -56,6 +61,7 @@ export function GdocPost({
     breadcrumbs,
     manualBreadcrumbs,
 }: GdocPostProps) {
+    const { archiveContext } = useDocumentContext()
     const postType = content.type ?? OwidGdocType.Article
     const citationDescription = citationDescriptionsByArticleType[postType]
     const shortPageCitation = getShortPageCitation(
@@ -63,20 +69,25 @@ export function GdocPost({
         content.title ?? "",
         publishedAt
     )
-    const citationText = `${shortPageCitation} Published online at OurWorldinData.org. Retrieved from: '${`${BAKED_BASE_URL}/${slug}`}' [Online Resource]`
+    const citationUrl =
+        archiveContext?.archiveUrl ?? `${BAKED_BASE_URL}/${slug}`
+    const archivalPhrase = getPhraseForArchivalDate(
+        archiveContext?.archivalDate
+    )
+    const citationText = `${shortPageCitation} Published online at OurWorldinData.org. Retrieved from: '${citationUrl}' [Online Resource]${archivalPhrase ? ` ${archivalPhrase}` : ""}`
     const hasSidebarToc = content["sidebar-toc"]
+    const headingVariant = content["heading-variant"] ?? "light"
     const shouldHideSubscribeBanner =
         content["hide-subscribe-banner"] || postType === OwidGdocType.TopicPage
     const isDeprecated =
         postType === OwidGdocType.Article &&
         Boolean(content["deprecation-notice"])
-
     const bibtex = `@article{owid-${slug.replace(/\//g, "-")},
     author = {${formatAuthorsForBibtex(content.authors)}},
     title = {${content.title}},
     journal = {Our World in Data},
     year = {${publishedAt?.getFullYear()}},
-    note = {${BAKED_BASE_URL}/${slug}}
+    note = {${citationUrl}}
 }`
 
     const stickyNavLinks = content["sticky-nav"]
@@ -85,6 +96,7 @@ export function GdocPost({
         <article
             className={cx(
                 "centered-article-container grid grid-cols-12-full-width",
+                `centered-article-container--heading-variant-${headingVariant}`,
                 // Only add this modifier class when content.type is defined
                 {
                     [`centered-article-container--${content.type}`]:
@@ -141,7 +153,7 @@ export function GdocPost({
             {!content["hide-citation"] && (
                 <section
                     id={CITATION_ID}
-                    className="grid grid-cols-12-full-width col-start-1 col-end-limit"
+                    className="grid grid-cols-12-full-width col-start-1 col-end-limit no-dividers"
                 >
                     <div className="col-start-4 span-cols-8 col-md-start-3 span-md-cols-10 col-sm-start-2 span-sm-cols-12">
                         <h3
@@ -211,7 +223,9 @@ export function GdocPost({
                     {!isDeprecated && (
                         <p>
                             All of{" "}
-                            <a href="/faqs#how-can-i-embed-one-of-your-interactive-charts-in-my-website">
+                            <a
+                                href={`${BASE_URL}/faqs#how-can-i-embed-one-of-your-interactive-charts-in-my-website`}
+                            >
                                 our charts can be embedded
                             </a>{" "}
                             in any site.

@@ -201,7 +201,9 @@ export const legacyToOwidTableAndDimensions = (
                     valueColumnDef.display?.tolerance
                 )
                 // Interpolate with 0 to add originalTimes column
-                .interpolateColumnWithTolerance(valueColumnDef.slug, 0)
+                .interpolateColumnWithTolerance(valueColumnDef.slug, {
+                    toleranceOverride: 0,
+                })
                 .dropColumns([timeColumnDef.slug])
             // We keep variables that have a targetTime set in a special bucket and will join them
             // on entity only (disregarding the year since we already filtered all other years out for
@@ -600,7 +602,7 @@ const getSortFromDimensions = (
 
     const sort = values
         .map((value) => value.name)
-        .filter((name): name is string => name !== undefined)
+        .filter((name) => name !== undefined)
 
     if (sort.length === 0) return
 
@@ -637,15 +639,18 @@ const columnDefFromOwidVariable = (
     const name = variable.name
 
     // The column's type
-    const type = isContinent
-        ? ColumnTypeNames.Continent
-        : variable.type
-          ? variableTypeToColumnType(variable.type)
-          : ColumnTypeNames.NumberOrString
+    const parsedType = variable.type
+        ? variableTypeToColumnType(variable.type)
+        : ColumnTypeNames.NumberOrString
 
-    // Sorted values for ordinal columns
+    // Override the column type for the special Continents variable
+    const type = isContinent ? ColumnTypeNames.Continent : parsedType
+
+    // Extract the sort order for ordinal variables from their dimension metadata.
+    // This preserves the author-specified ordering of categorical values
+    // (e.g., "Low", "Medium", "High").
     const sort =
-        type === ColumnTypeNames.Ordinal
+        parsedType === ColumnTypeNames.Ordinal
             ? getSortFromDimensions(variable.dimensions)
             : undefined
 

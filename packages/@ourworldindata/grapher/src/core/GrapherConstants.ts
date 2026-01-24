@@ -17,9 +17,9 @@ export const GRAPHER_ROUTE_FOLDER = "grapher"
 
 export const GRAPHER_PAGE_BODY_CLASS = "StandaloneGrapherOrExplorerPage"
 export const GRAPHER_IS_IN_IFRAME_CLASS = "IsInIframe"
-export const GRAPHER_TIMELINE_CLASS = "timeline-component"
+export const GRAPHER_TIMELINE_CLASS = "GrapherTimeline"
 export const GRAPHER_SIDE_PANEL_CLASS = "side-panel"
-export const GRAPHER_SETTINGS_CLASS = "settings-menu-contents"
+export const GRAPHER_SETTINGS_CLASS = "GrapherSettingsPopover"
 
 // The Figma plugin uses these class names to identify sections of the chart
 export const GRAPHER_CHART_AREA_CLASS = "chart-area"
@@ -37,6 +37,10 @@ export const DEFAULT_GRAPHER_HEIGHT = 600
 // Keep in sync with $grapher-thumbnail-width and $grapher-thumbnail-height in Grapher.scss
 export const GRAPHER_THUMBNAIL_WIDTH = 300
 export const GRAPHER_THUMBNAIL_HEIGHT = 160
+
+// Image widths used for generating srcSet (1x and 2x for high-DPI displays)
+export const GRAPHER_IMAGE_WIDTH_1X = 850
+export const GRAPHER_IMAGE_WIDTH_2X = 1700
 
 export const GRAPHER_SQUARE_SIZE = 540
 
@@ -162,9 +166,6 @@ export enum GrapherModal {
     Download = "download",
     Embed = "embed",
 }
-
-export const CHART_TYPES_THAT_SWITCH_TO_DISCRETE_BAR_WHEN_SINGLE_TIME: GrapherChartType[] =
-    [GRAPHER_CHART_TYPES.LineChart, GRAPHER_CHART_TYPES.SlopeChart]
 
 export const CHART_TYPES_THAT_SHOW_ALL_ENTITIES: GrapherChartType[] = [
     GRAPHER_CHART_TYPES.ScatterPlot,

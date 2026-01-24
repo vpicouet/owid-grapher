@@ -13,10 +13,10 @@ import {
     LinkedIndicator,
     OwidGdocDataInsightContent,
     ContentGraphLinkType,
-    SubNavId,
     OwidGdocDataInsightInterface,
     OwidGdocPostInterface,
     OwidEnrichedGdocBlockTypeMap,
+    LinkedStaticViz,
 } from "@ourworldindata/types"
 import {
     formatAuthors,
@@ -24,8 +24,8 @@ import {
     Url,
 } from "@ourworldindata/utils"
 import { AttachmentsContext } from "./AttachmentsContext.js"
-import { SubnavItem, subnavs } from "../SiteConstants.js"
-import { BAKED_BASE_URL } from "../../settings/clientSettings.js"
+import { PROD_URL } from "../SiteConstants.js"
+import { BAKED_BASE_URL, IS_ARCHIVE } from "../../settings/clientSettings.js"
 
 const getOrigin = (url: string, base?: string): string | undefined => {
     try {
@@ -87,6 +87,22 @@ export const useLinkedAuthor = (
 
 type LinkedDocument = OwidGdocMinimalPostInterface & { url: string }
 
+export const getLinkedDocumentUrl = (
+    linkedDocument: Pick<OwidGdocMinimalPostInterface, "slug" | "type">,
+    originalUrl: string,
+    baseUrl: string = BAKED_BASE_URL
+): string => {
+    if (IS_ARCHIVE) {
+        baseUrl = PROD_URL
+    }
+    const canonicalUrl = getCanonicalUrl(baseUrl, {
+        slug: linkedDocument.slug,
+        content: { type: linkedDocument.type },
+    })
+    const hash = Url.fromURL(originalUrl).hash
+    return `${canonicalUrl}${hash}`
+}
+
 export const useLinkedDocument = (
     url: string
 ): { linkedDocument?: LinkedDocument; errorMessage?: string } => {
@@ -113,10 +129,7 @@ export const useLinkedDocument = (
     return {
         linkedDocument: {
             ...linkedDocument,
-            url: getCanonicalUrl(BAKED_BASE_URL, {
-                slug: linkedDocument.slug,
-                content: { type: linkedDocument.type },
-            }),
+            url: getLinkedDocumentUrl(linkedDocument, url),
         },
         errorMessage,
     }
@@ -129,7 +142,7 @@ export const useLinkedChart = (
     const linkType = getLinkType(url)
     if (linkType !== "grapher" && linkType !== "explorer") return {}
 
-    const queryString = Url.fromURL(url).queryStr
+    const parsedOriginalUrl = Url.fromURL(url)
     const urlTarget = getUrlTarget(url)
     const linkedChart = linkedCharts?.[urlTarget]
     if (!linkedChart) {
@@ -138,14 +151,13 @@ export const useLinkedChart = (
         }
     }
 
-    return {
-        linkedChart: {
-            ...linkedChart,
-            // linkedCharts doesn't store any querystring information, because it's indexed by slug
-            // Instead we get the querystring from the original URL and append it to resolvedUrl
-            resolvedUrl: `${linkedChart.resolvedUrl}${queryString}`,
-        },
-    }
+    const parsedResolvedUrl = Url.fromURL(linkedChart.resolvedUrl)
+    const resolvedUrl = parsedResolvedUrl.setQueryParams({
+        ...parsedResolvedUrl.queryParams,
+        ...parsedOriginalUrl.queryParams,
+    }).fullUrl
+
+    return { linkedChart: { ...linkedChart, resolvedUrl } }
 }
 
 export const useLinkedIndicator = (
@@ -183,28 +195,19 @@ export const useLinkedNarrativeChart = (name: string) => {
     return linkedNarrativeCharts?.[name]
 }
 
+export const useLinkedStaticViz = (
+    name: string
+): LinkedStaticViz | undefined => {
+    const { linkedStaticViz } = useContext(AttachmentsContext)
+    return linkedStaticViz?.[name]
+}
+
 export function getShortPageCitation(
     authors: string[],
     title: string,
     publishedAt: Date | null
 ) {
     return `${formatAuthors(authors)} (${publishedAt?.getFullYear()}) - “${title}”`
-}
-
-export const getSubnavItem = (
-    id: string | undefined,
-    subnavItems: SubnavItem[]
-) => {
-    // We want to avoid matching elements with potentially undefined id.
-    // Static typing prevents id from being undefined but this might not be
-    // the case in a future API powered version.
-    return id ? subnavItems.find((item) => item.id === id) : undefined
-}
-
-export const getTopSubnavigationParentItem = (
-    subnavId: SubNavId
-): SubnavItem | undefined => {
-    return subnavs[subnavId]?.[0]
 }
 
 /**

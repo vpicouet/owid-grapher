@@ -32,7 +32,6 @@ import {
 } from "react-router-dom"
 import { LoadingBlocker, Modal } from "./Forms.js"
 import { AdminAppContext } from "./AdminAppContext.js"
-import { Base64 } from "js-base64"
 import { ExplorerCreatePage } from "./ExplorerCreatePage.js"
 import { ExplorersIndexPage } from "./ExplorersListPage.js"
 import { EXPLORERS_ROUTE_FOLDER } from "@ourworldindata/explorer"
@@ -49,8 +48,12 @@ import { ImageIndexPage } from "./ImagesIndexPage.js"
 import { FilesIndexPage } from "./FilesIndexPage.js"
 import { DataInsightIndexPage } from "./DataInsightIndexPage.js"
 import { MultiDimIndexPage } from "./MultiDimIndexPage.js"
+import { MultiDimDetailPage } from "./MultiDimDetailPage.js"
+import MultiDimRedirectsIndexPage from "./MultiDimRedirectsIndexPage.js"
 import { FeaturedMetricsPage } from "./FeaturedMetricsPage.js"
 import { DodsIndexPage } from "./DodsIndexPage.js"
+import { StaticVizIndexPage } from "./StaticVizIndexPage.js"
+import { StaticVizEditPage } from "./StaticVizEditPage.js"
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -135,46 +138,35 @@ export class AdminApp extends React.Component<{
                             <Switch>
                                 <Route
                                     exact
-                                    path="/charts/create/:config"
-                                    render={({ match }) => (
-                                        <ChartEditorPage
-                                            grapherConfig={JSON.parse(
-                                                Base64.decode(
-                                                    match.params.config
-                                                )
-                                            )}
-                                        />
-                                    )}
-                                />
-                                <Route
-                                    exact
                                     path="/charts/create"
-                                    component={ChartEditorPage}
+                                    render={({ location }) => {
+                                        const params = new URLSearchParams(
+                                            location.search
+                                        )
+                                        const configParam = params.get("config")
+                                        const grapherConfig = configParam
+                                            ? JSON.parse(configParam)
+                                            : undefined
+                                        return (
+                                            <ChartEditorPage
+                                                grapherConfig={grapherConfig}
+                                            />
+                                        )
+                                    }}
                                 />
                                 <Route
                                     exact
                                     path="/charts/:chartId/edit"
-                                    render={({ match }) => (
-                                        <ChartEditorPage
-                                            key={match.params.chartId}
-                                            grapherId={parseInt(
-                                                match.params.chartId
-                                            )}
-                                        />
-                                    )}
-                                />
-                                <Route
-                                    exact
-                                    path="/charts/:chartId/edit/:config"
-                                    render={({ match }) => (
-                                        <ChartEditorPage
-                                            grapherConfig={JSON.parse(
-                                                Base64.decode(
-                                                    match.params.config
-                                                )
-                                            )}
-                                        />
-                                    )}
+                                    render={({ match }) => {
+                                        return (
+                                            <ChartEditorPage
+                                                key={match.params.chartId}
+                                                grapherId={parseInt(
+                                                    match.params.chartId
+                                                )}
+                                            />
+                                        )
+                                    }}
                                 />
                                 <Route
                                     exact
@@ -213,6 +205,20 @@ export class AdminApp extends React.Component<{
                                     path="/multi-dims"
                                     component={MultiDimIndexPage}
                                 />
+                                <Route
+                                    exact
+                                    path="/multi-dims/:id"
+                                    render={({ match }) => (
+                                        <MultiDimDetailPage
+                                            id={parseInt(match.params.id)}
+                                        />
+                                    )}
+                                />
+                                <Route
+                                    exact
+                                    path="/multi-dim-redirects"
+                                    component={MultiDimRedirectsIndexPage}
+                                />
                                 <Route path="/dods" component={DodsIndexPage} />
 
                                 <Route
@@ -222,6 +228,16 @@ export class AdminApp extends React.Component<{
                                 <Route
                                     path="/files"
                                     component={FilesIndexPage}
+                                />
+                                <Route
+                                    exact
+                                    path="/static-viz"
+                                    component={StaticVizIndexPage}
+                                />
+                                <Route
+                                    exact
+                                    path="/static-viz/:staticVizId"
+                                    component={StaticVizEditPage}
                                 />
                                 <Route
                                     exact

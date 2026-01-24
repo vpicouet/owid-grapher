@@ -3,9 +3,12 @@ import { useCallback, useMemo, useState } from "react"
 import * as React from "react"
 import { observable, computed, action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
+import cx from "classnames"
 import {
     Bounds,
     canWriteToClipboard,
+    fetchWithTimeout,
+    formatValue,
     getOriginAttributionFragments,
     getPhraseForProcessingLevel,
     triggerDownloadFromBlob,
@@ -24,6 +27,7 @@ import {
     faCopy,
     faDownload,
     faInfoCircle,
+    faSpinner,
 } from "@fortawesome/free-solid-svg-icons"
 import {
     OwidColumnDef,
@@ -72,7 +76,6 @@ export interface DownloadModalManager {
     isOnArchivalPage?: boolean
     hasArchivedPage?: boolean
     showAdminControls?: boolean
-    isSocialMediaExport?: boolean
     isWikimediaExport?: boolean
     isPublished?: boolean
     activeColumnSlugs?: string[]
@@ -103,14 +106,14 @@ export class DownloadModal extends React.Component<DownloadModalProps> {
                 key: DownloadModalTabName.Vis,
                 element: <>Visualization</>,
                 buttonProps: {
-                    "data-track-note": "chart_download_modal_tab_visualization",
+                    dataTrackNote: "chart_download_modal_tab_visualization",
                 },
             },
             {
                 key: DownloadModalTabName.Data,
                 element: <>Data</>,
                 buttonProps: {
-                    "data-track-note": "chart_download_modal_tab_data",
+                    dataTrackNote: "chart_download_modal_tab_data",
                 },
             },
         ]
@@ -248,10 +251,6 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
         )
     }
 
-    @computed private get isSocialMediaExport(): boolean {
-        return this.manager.isSocialMediaExport ?? false
-    }
-
     @computed private get isWikimediaExport(): boolean {
         return this.manager.isWikimediaExport ?? false
     }
@@ -339,10 +338,6 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
         this.manager.staticBounds = this.isExportingSquare
             ? DEFAULT_GRAPHER_BOUNDS
             : DEFAULT_GRAPHER_BOUNDS_SQUARE
-    }
-
-    @action.bound private toggleExportForUseInSocialMedia(): void {
-        this.manager.isSocialMediaExport = !this.isSocialMediaExport
     }
 
     @action.bound private toggleExportForUseOnWikimedia(): void {
@@ -513,30 +508,6 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
                                         onChange={action((): void => {
                                             this.reset()
                                             this.toggleExportFormat()
-
-                                            if (!this.isExportingSquare) {
-                                                this.manager.isSocialMediaExport = false
-                                            }
-
-                                            this.export()
-                                        })}
-                                    />
-                                )}
-                                {this.manager.showAdminControls && (
-                                    <Checkbox
-                                        checked={this.isSocialMediaExport}
-                                        label="For use in social media (internal)"
-                                        onChange={action((): void => {
-                                            this.reset()
-                                            this.toggleExportForUseInSocialMedia()
-
-                                            // set reasonable defaults for social media exports
-                                            if (this.isSocialMediaExport) {
-                                                this.manager.staticBounds =
-                                                    DEFAULT_GRAPHER_BOUNDS_SQUARE
-                                                this.shouldIncludeDetails = false
-                                            }
-
                                             this.export()
                                         })}
                                     />
@@ -848,6 +819,20 @@ const ApiAndCodeExamplesSection = (props: {
                     </p>
                 </div>
 
+                <section className="download-modal__api-urls">
+                    <div>
+                        <h4 className="grapher_body-2-medium">
+                            Data URL (CSV format)
+                        </h4>
+                        <CodeSnippet code={csvUrl} />
+                    </div>
+                    <div>
+                        <h4 className="grapher_body-2-medium">
+                            Metadata URL (JSON format)
+                        </h4>
+                        <CodeSnippet code={metadataUrl} />
+                    </div>
+                </section>
                 <section className="download-modal__config-list">
                     <RadioButton
                         label="Download full data, including all entities and time points"
@@ -891,20 +876,6 @@ const ApiAndCodeExamplesSection = (props: {
                         </div>
                     </section>
                 )}
-                <section className="download-modal__api-urls">
-                    <div>
-                        <h4 className="grapher_body-2-medium">
-                            Data URL (CSV format)
-                        </h4>
-                        <CodeSnippet code={csvUrl} />
-                    </div>
-                    <div>
-                        <h4 className="grapher_body-2-medium">
-                            Metadata URL (JSON format)
-                        </h4>
-                        <CodeSnippet code={metadataUrl} />
-                    </div>
-                </section>
             </div>
 
             <CodeExamplesBlock csvUrl={csvUrl} metadataUrl={metadataUrl} />
@@ -962,7 +933,7 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
     ])
 
     const onDownloadClick = useCallback(
-        (csvDownloadType: CsvDownloadType) => {
+        async (csvDownloadType: CsvDownloadType) => {
             const ctx = {
                 ...downloadCtx,
                 csvDownloadType,
@@ -975,13 +946,39 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
                 shortColNames: false,
             }
             if (serverSideDownloadAvailable) {
-                const fullOrFiltered =
-                    csvDownloadType === CsvDownloadType.Full ? "" : ".filtered"
-                triggerDownloadFromUrl(
-                    ctx.slug + fullOrFiltered + ".zip",
-                    getDownloadUrl("zip", ctx)
-                )
+                try {
+                    const url = getDownloadUrl("zip", ctx)
+                    const response = await fetchWithTimeout(url, 5000, {
+                        method: "GET",
+                        headers: { Accept: "application/zip" },
+                    })
+
+                    if (!response.ok) {
+                        throw new Error(
+                            `Server download failed: ${response.status}`
+                        )
+                    }
+
+                    const blob = await response.blob()
+                    const fullOrFiltered =
+                        csvDownloadType === CsvDownloadType.Full
+                            ? ""
+                            : ".filtered"
+                    triggerDownloadFromBlob(
+                        ctx.slug + fullOrFiltered + ".zip",
+                        blob
+                    )
+                } catch (error) {
+                    // Fallback to client-side CSV download
+                    console.warn(
+                        "Server-side download failed, falling back to client-side",
+                        error
+                    )
+                    const blob = await createCsvBlobLocally(ctx)
+                    triggerDownloadFromBlob(ctx.slug + ".csv", blob)
+                }
             } else {
+                // Direct client-side download
                 void createCsvBlobLocally(ctx).then((blob) => {
                     triggerDownloadFromBlob(ctx.slug + ".csv", blob)
                 })
@@ -1037,6 +1034,16 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
 
     const firstYColDef = yColumns?.[0]?.def as OwidColumnDef | undefined
 
+    const fullDataDescription = `Includes all entities and time points`
+    const filteredDataDescription = `Includes only the entities and time points currently visible in the chart`
+
+    const fullTableRowCountSnippet = makeNumberOfRowsSnippet(
+        downloadCtx.fullTable.numRows
+    )
+    const filteredTableRowCountSnippet = makeNumberOfRowsSnippet(
+        downloadCtx.filteredTable.numRows
+    )
+
     return (
         <>
             <SourceAndCitationSection table={props.manager.inputTable} />
@@ -1048,7 +1055,9 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
                 <div>
                     <DownloadButton
                         title="Download full data"
-                        description="Includes all entities and time points."
+                        description={
+                            fullDataDescription + fullTableRowCountSnippet
+                        }
                         icon={<DownloadIconFullDataset />}
                         onClick={() => onDownloadClick(CsvDownloadType.Full)}
                         tracking={
@@ -1058,7 +1067,10 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
                     />
                     <DownloadButton
                         title="Download displayed data"
-                        description="Includes only the entities and time points currently visible in the chart."
+                        description={
+                            filteredDataDescription +
+                            filteredTableRowCountSnippet
+                        }
                         icon={<DownloadIconSelected />}
                         onClick={() =>
                             onDownloadClick(CsvDownloadType.CurrentSelection)
@@ -1091,11 +1103,34 @@ interface DownloadButtonProps {
 }
 
 function DownloadButton(props: DownloadButtonProps): React.ReactElement {
+    const { onClick } = props
+
+    const [isDownloading, setIsDownloading] = useState(false)
+    const [showLoadingUI, setShowLoadingUI] = useState(false)
+
+    const handleClick = useCallback(async () => {
+        setIsDownloading(true)
+
+        // Delay showing the loading UI to prevent flashing for quick downloads
+        const loadingTimeout = setTimeout(() => setShowLoadingUI(true), 300)
+
+        try {
+            await onClick()
+        } finally {
+            clearTimeout(loadingTimeout)
+            setIsDownloading(false)
+            setShowLoadingUI(false)
+        }
+    }, [onClick])
+
     return (
         <button
-            className="download-modal__download-button"
-            onClick={props.onClick}
+            className={cx("download-modal__download-button", {
+                "download-modal__download-button--loading": showLoadingUI,
+            })}
+            onClick={handleClick}
             data-track-note={props.tracking}
+            disabled={isDownloading}
         >
             {props.icon && (
                 <div className="download-modal__option-icon">{props.icon}</div>
@@ -1107,12 +1142,23 @@ function DownloadButton(props: DownloadButtonProps): React.ReactElement {
             )}
             <div className="download-modal__download-button-content">
                 <h4 className="grapher_body-2-semibold">{props.title}</h4>
-                <p className="grapher_label-1-regular download-modal__download-button-description">
-                    {props.description}
-                </p>
+                <div className="download-modal__download-button-description-wrapper">
+                    <p className="grapher_label-1-regular download-modal__download-button-description">
+                        {props.description}
+                    </p>
+                    {showLoadingUI && (
+                        <p className="grapher_label-1-regular download-modal__download-button-loading-label">
+                            Downloading…
+                        </p>
+                    )}
+                </div>
             </div>
             <div className="download-modal__download-icon">
-                <FontAwesomeIcon icon={faDownload} />
+                {showLoadingUI ? (
+                    <FontAwesomeIcon icon={faSpinner} spin />
+                ) : (
+                    <FontAwesomeIcon icon={faDownload} />
+                )}
             </div>
         </button>
     )
@@ -1138,4 +1184,10 @@ function Callout(props: CalloutProps): React.ReactElement {
             </p>
         </div>
     )
+}
+
+function makeNumberOfRowsSnippet(numRows: number): string {
+    if (numRows <= 0) return " (empty)"
+    if (numRows === 1) return " (1 row)"
+    return ` (${formatValue(numRows, { numDecimalPlaces: 0 })} rows)`
 }

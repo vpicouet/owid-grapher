@@ -1,15 +1,14 @@
 import { useMediaQuery } from "usehooks-ts"
 import * as _ from "lodash-es"
 
-import { OwidGdocType } from "@ourworldindata/types"
-import { SMALL_BREAKPOINT_MEDIA_QUERY } from "../SiteConstants.js"
 import {
+    OwidGdocType,
     FlatArticleHit,
     SearchFlatArticleResponse,
     SearchTopicPageResponse,
     TopicPageHit,
-    SearchTopicType,
-} from "./searchTypes.js"
+} from "@ourworldindata/types"
+import { SMALL_BREAKPOINT_MEDIA_QUERY } from "../SiteConstants.js"
 import { searchQueryKeys, queryArticles, queryTopicPages } from "./queries.js"
 import { SearchResultHeader } from "./SearchResultHeader.js"
 import { useInfiniteSearchOffset } from "./searchHooks.js"
@@ -110,69 +109,37 @@ function MultiColumnResults({
             )}
             {interleavedTopics.length > 0 && (
                 <div className="search-writing-results__topics">
-                    {hasLargeTopic ? (
+                    {interleavedTopics.map((hit, index) => (
                         <SearchTopicPageHit
-                            hit={interleavedTopics[0]}
-                            variant="large"
+                            key={hit.objectID}
+                            hit={hit}
+                            variant={hasLargeTopic ? "large" : undefined}
                             onClick={() => {
-                                analytics.logSiteSearchResultClick(
-                                    interleavedTopics[0],
-                                    {
-                                        position: 1,
-                                        source: "search",
-                                    }
-                                )
+                                analytics.logSiteSearchResultClick(hit, {
+                                    position: index + 1,
+                                    source: "search",
+                                })
                             }}
                         />
-                    ) : (
-                        interleavedTopics.map((hit, index) => (
-                            <SearchTopicPageHit
-                                key={hit.objectID}
-                                hit={hit}
-                                onClick={() => {
-                                    analytics.logSiteSearchResultClick(hit, {
-                                        position: index + 1,
-                                        source: "search",
-                                    })
-                                }}
-                            />
-                        ))
-                    )}
+                    ))}
                 </div>
             )}
             {remainingTopics.length > 0 && (
                 <div className="search-writing-results__overflow">
-                    {hasLargeTopic ? (
+                    {remainingTopics.map((hit, index) => (
                         <SearchTopicPageHit
-                            hit={remainingTopics[0]}
-                            variant="large"
+                            key={hit.objectID}
+                            hit={hit}
+                            variant={hasLargeTopic ? "large" : undefined}
                             onClick={() => {
-                                analytics.logSiteSearchResultClick(
-                                    remainingTopics[0],
-                                    {
-                                        position: interleavedTopics.length + 1,
-                                        source: "search",
-                                    }
-                                )
+                                analytics.logSiteSearchResultClick(hit, {
+                                    position:
+                                        interleavedTopics.length + index + 1,
+                                    source: "search",
+                                })
                             }}
                         />
-                    ) : (
-                        remainingTopics.map((hit, index) => (
-                            <SearchTopicPageHit
-                                key={hit.objectID}
-                                hit={hit}
-                                onClick={() => {
-                                    analytics.logSiteSearchResultClick(hit, {
-                                        position:
-                                            interleavedTopics.length +
-                                            index +
-                                            1,
-                                        source: "search",
-                                    })
-                                }}
-                            />
-                        ))
-                    )}
+                    ))}
                 </div>
             )}
         </div>
@@ -181,13 +148,10 @@ function MultiColumnResults({
 
 export const SearchWritingResults = ({
     hasTopicPages = true,
-    topicType,
 }: {
     hasTopicPages?: boolean
-    topicType?: SearchTopicType
 }) => {
     const isSmallScreen = useMediaQuery(SMALL_BREAKPOINT_MEDIA_QUERY)
-    const hasLargeTopic = topicType === SearchTopicType.Topic
     const articlesQuery = useInfiniteSearchOffset<
         SearchFlatArticleResponse,
         FlatArticleHit
@@ -215,6 +179,7 @@ export const SearchWritingResults = ({
         enabled: hasTopicPages && !articlesQuery.isLoading,
     })
 
+    const hasLargeTopic = topicsQuery.totalResults === 1
     const totalCount = articlesQuery.totalResults + topicsQuery.totalResults
     const hasNextPage = articlesQuery.hasNextPage || topicsQuery.hasNextPage
     const isFetchingNextPage =

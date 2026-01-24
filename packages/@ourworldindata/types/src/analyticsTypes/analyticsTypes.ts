@@ -27,7 +27,6 @@ import { JsonString } from "../domainTypes/Various.js"
 
 export enum EventCategory {
     Filter = "owid.filter",
-    GlobalEntitySelectorUsage = "owid.global_entity_selector_usage",
     GrapherView = "owid.grapher_view",
     GrapherClick = "owid.grapher_click",
     GrapherHover = "owid.grapher_hover",
@@ -75,7 +74,6 @@ export type EventParamsMap = {
     [EventCategory.SiteInstantSearchClick]: SiteInstantSearchClickParams
     [EventCategory.SiteError]: SiteErrorParams
     [EventCategory.Filter]: FilterParams
-    [EventCategory.GlobalEntitySelectorUsage]: GlobalEntitySelectorUsageParams
     [EventCategory.TranslatePage]: TranslatePageParams
 }
 
@@ -167,6 +165,8 @@ export interface SiteGuidedChartLinkClickParams {
     eventAction: "click"
     /** Target URL or chart path */
     eventTarget: string
+    /** Continuation of eventTarget for URLs > 100 chars (characters 101-200) */
+    eventTargetNext?: string
     /** Grapher path of the linked chart (optional - may use eventTarget instead) */
     grapherPath?: string
 }
@@ -176,6 +176,8 @@ export interface SiteChartPreviewMouseoverParams {
     eventAction: "mouseover"
     /** Target chart URL */
     eventTarget: string
+    /** Continuation of eventTarget for URLs > 100 chars (characters 101-200) */
+    eventTargetNext?: string
     /** Explorer path if in explorer */
     explorerPath?: string
     /** Grapher path being previewed */
@@ -186,7 +188,9 @@ export interface SiteChartPreviewMouseoverParams {
 
 export interface GrapherViewParams {
     /** Grapher chart path (e.g., '/grapher/life-expectancy') */
-    grapherPath: string
+    grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID for multi-dimensional data pages */
     viewConfigId?: string
     /** Name of the narrative chart if embedded */
@@ -198,6 +202,8 @@ export interface GrapherClickParams {
     eventAction: GrapherImageDownloadEvent | string
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -213,6 +219,8 @@ export interface GrapherHoverParams {
     eventAction: GrapherInteractionEvent
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -228,6 +236,8 @@ export interface GrapherErrorParams {
     eventContext: string
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -239,6 +249,8 @@ export interface GrapherEntitySelectorParams {
     eventAction: EntitySelectorEvent
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -307,13 +319,6 @@ export interface FilterParams {
     eventContext: string
 }
 
-export interface GlobalEntitySelectorUsageParams {
-    /** Entity control action */
-    eventAction: EntityControlEvent
-    /** Additional note or context */
-    eventContext?: string
-}
-
 export interface TranslatePageParams {
     /** Information about the translation event, in the form { from: string | null, to: string | null } */
     eventTarget: JsonString
@@ -324,8 +329,6 @@ export interface TranslatePageParams {
 // =============================================================================
 // EVENT ACTION TYPES & HELPERS
 // =============================================================================
-
-export type EntityControlEvent = "open" | "change" | "close"
 
 export type EntitySelectorEvent =
     | "enter"

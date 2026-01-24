@@ -1,15 +1,13 @@
 import * as _ from "lodash-es"
 import React from "react"
-import * as R from "remeda"
 import { EntitySelectionMode, SeriesName, Color } from "@ourworldindata/types"
 import { observable, computed, action, makeObservable } from "mobx"
 import { ScaleLinear, scaleSqrt } from "d3-scale"
 import { Quadtree, quadtree } from "d3-quadtree"
+import { pairs } from "d3-array"
 import { quantize, interpolate } from "d3-interpolate"
 import {
     intersection,
-    excludeNullish,
-    pairs,
     excludeUndefined,
     getRelativeMouse,
     exposeInstanceOnWindow,
@@ -28,7 +26,6 @@ import {
     OwidTable,
     isNotErrorValue,
     CoreColumn,
-    ColumnTypeMap,
 } from "@ourworldindata/core-table"
 import {
     ConnectedScatterLegend,
@@ -37,19 +34,21 @@ import {
 import {
     VerticalColorLegend,
     VerticalColorLegendManager,
-} from "../verticalColorLegend/VerticalColorLegend"
+} from "../legend/VerticalColorLegend"
 import { DualAxisComponent } from "../axis/AxisViews"
 import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
 
 import { ColorScale, NO_DATA_LABEL } from "../color/ColorScale"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig"
 import { ChartInterface } from "../chart/ChartInterface"
+import { getShortNameForEntity } from "../chart/ChartUtils"
 import {
     ScatterPlotManager,
     ScatterSeries,
     SCATTER_LABEL_DEFAULT_FONT_SIZE_FACTOR,
     SCATTER_LABEL_MAX_FONT_SIZE_FACTOR,
     SCATTER_LABEL_MIN_FONT_SIZE_FACTOR,
+    SCATTER_POINT_OPACITY,
     SeriesPoint,
     ScatterPointQuadtreeNode,
     SCATTER_QUADTREE_SAMPLING_DISTANCE,
@@ -57,21 +56,21 @@ import {
 import { ScatterPointsWithLabels } from "./ScatterPointsWithLabels"
 import { ColorScaleBin } from "../color/ColorScaleBin"
 import {
+    LegendInteractionState,
+    LegendStyleConfig,
+} from "../legend/LegendInteractionState"
+import {
     ScatterSizeLegend,
     ScatterSizeLegendManager,
 } from "./ScatterSizeLegend"
-import { TooltipFooterIcon } from "../tooltip/TooltipProps.js"
-import {
-    Tooltip,
-    TooltipState,
-    TooltipValueRange,
-    makeTooltipToleranceNotice,
-    makeTooltipRoundingNotice,
-} from "../tooltip/Tooltip"
+import { TooltipState } from "../tooltip/Tooltip"
 import { NoDataSection } from "./NoDataSection"
 import { ScatterPlotChartState } from "./ScatterPlotChartState"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
 import { toSizeRange } from "./ScatterUtils.js"
+import { ScatterPlotTooltip } from "./ScatterPlotTooltip"
+import { GRAY_100, GRAY_60 } from "../color/ColorConstants"
+import { INACTIVE_SCATTER_POINT_COLOR } from "./ScatterPoints"
 
 export type ScatterPlotChartProps = ChartComponentProps<ScatterPlotChartState>
 
@@ -88,18 +87,26 @@ export class ScatterPlotChart
     constructor(props: ScatterPlotChartProps) {
         super(props)
 
-        makeObservable<ScatterPlotChart, "hoverColor">(this, {
-            hoverColor: observable,
+        makeObservable<ScatterPlotChart, "hoveredLegendColor">(this, {
+            hoveredLegendColor: observable,
             tooltipState: observable,
         })
     }
 
     // currently hovered legend color
-    private hoverColor: Color | undefined = undefined
+    private hoveredLegendColor: Color | undefined = undefined
     // current hovered individual series + tooltip position
     tooltipState = new TooltipState<{
         series: ScatterSeries
     }>()
+
+    legendStyleConfig: LegendStyleConfig = {
+        marker: {
+            default: { opacity: SCATTER_POINT_OPACITY },
+            muted: { fill: INACTIVE_SCATTER_POINT_COLOR },
+        },
+        text: { muted: { color: GRAY_60 }, focused: { color: GRAY_100 } },
+    }
 
     @computed get chartState(): ScatterPlotChartState {
         return this.props.chartState
@@ -158,12 +165,14 @@ export class ScatterPlotChart
             this.manager.tableAfterAuthorTimelineAndActiveChartTransform?.get(
                 this.colorColumnSlug
             )?.valuesIncludingErrorValues ?? []
+
         // Need to convert InvalidCell to undefined for color scale to assign correct color
         const colorValues = _.uniq(
             allValues.map((value: any) =>
                 isNotErrorValue(value) ? value : undefined
             )
         ) as (string | number)[]
+
         return excludeUndefined(
             colorValues.map((colorValue) =>
                 this.colorScale.getColor(colorValue)
@@ -179,61 +188,58 @@ export class ScatterPlotChart
         return this.manager.fontSize ?? BASE_FONT_SIZE
     }
 
-    @action.bound onLegendMouseOver(color: string): void {
+    @action.bound onLegendMouseOver(bin: ColorScaleBin): void {
         if (isTouchDevice()) return
-        this.hoverColor = color
+        this.hoveredLegendColor = bin.color
     }
 
     @action.bound onLegendMouseLeave(): void {
         if (isTouchDevice()) return
-        this.hoverColor = undefined
+        this.hoveredLegendColor = undefined
     }
 
+    legendCursor = "pointer"
+
     // When the color legend is clicked, toggle selection fo all associated keys
-    @action.bound onLegendClick(color: string): void {
+    @action.bound onLegendClick(bin: ColorScaleBin): void {
         const { selectionArray } = this.chartState
         if (!this.canAddCountry) return
 
-        const keysToToggle = this.series
+        const color = bin.color
+
+        // Find all entities that match the clicked color
+        const colorMatchingSeriesNames = this.series
             .filter((g) => g.color === color)
             .map((g) => g.seriesName)
-        const allKeysActive =
-            intersection(keysToToggle, this.selectedEntityNames).length ===
-            keysToToggle.length
-        if (allKeysActive)
+
+        // Check if all these entities are already selected
+        const allColorMatchingSeriesAreSelected =
+            intersection(colorMatchingSeriesNames, this.selectedEntityNames)
+                .length === colorMatchingSeriesNames.length
+
+        // If all matching entities are selected, deselect them;
+        // Otherwise select them
+        if (allColorMatchingSeriesAreSelected)
             selectionArray.setSelectedEntities(
-                _.without(this.selectedEntityNames, ...keysToToggle)
+                _.without(this.selectedEntityNames, ...colorMatchingSeriesNames)
             )
         else
             selectionArray.setSelectedEntities(
-                _.uniq(this.selectedEntityNames.concat(keysToToggle))
+                _.uniq(
+                    this.selectedEntityNames.concat(colorMatchingSeriesNames)
+                )
             )
     }
 
-    // Colors on the legend for which every matching series is focused
-    @computed get focusColors(): string[] {
-        const { colorsInUse } = this
-        return colorsInUse.filter((color) => {
-            const matchingKeys = this.series
-                .filter((g) => g.color === color)
-                .map((g) => g.seriesName)
-            return (
-                intersection(matchingKeys, this.selectedEntityNames).length ===
-                matchingKeys.length
-            )
-        })
-    }
-
-    // All currently hovered series keys, combining the legend and the main UI
     @computed private get hoveredSeriesNames(): string[] {
-        const { hoverColor, tooltipState } = this
+        const { hoveredLegendColor, tooltipState } = this
 
         const hoveredSeriesNames =
-            hoverColor === undefined
+            hoveredLegendColor === undefined
                 ? []
                 : _.uniq(
                       this.series
-                          .filter((g) => g.color === hoverColor)
+                          .filter((g) => g.color === hoveredLegendColor)
                           .map((g) => g.seriesName)
                   )
 
@@ -244,8 +250,13 @@ export class ScatterPlotChart
         return hoveredSeriesNames
     }
 
-    @computed private get focusedEntityNames(): string[] {
-        return this.selectedEntityNames
+    @computed private get isHoverModeActive(): boolean {
+        const { hoveredLegendColor, tooltipState } = this
+        return !!(
+            hoveredLegendColor !== undefined ||
+            this.hoveredSeriesNames.length > 0 ||
+            tooltipState.target
+        )
     }
 
     @computed private get selectedEntityNames(): string[] {
@@ -267,8 +278,8 @@ export class ScatterPlotChart
     @computed private get arrowLegend(): ConnectedScatterLegend | undefined {
         if (
             this.displayStartTime === this.displayEndTime ||
-            this.xColumn instanceof ColumnTypeMap.Time ||
-            this.yColumn instanceof ColumnTypeMap.Time ||
+            this.xColumn.isTimeColumn ||
+            this.yColumn.isTimeColumn ||
             this.manager.isRelativeMode ||
             this.manager.isDisplayedAlongsideComplementaryTable
         )
@@ -307,7 +318,7 @@ export class ScatterPlotChart
         | VerticalColorLegend
         | undefined {
         if (
-            this.legendItems.length === 0 ||
+            this.categoricalLegendData.length === 0 ||
             this.manager.isDisplayedAlongsideComplementaryTable
         )
             return undefined
@@ -366,22 +377,43 @@ export class ScatterPlotChart
             !this.compareEndPointsOnly || undefined
     }
 
-    // Colors currently on the chart and not greyed out
+    /** Legend colors that are currently highlighted (either hovered or have at least one selected series) */
     @computed get activeColors(): string[] {
-        const { hoveredSeriesNames, focusedEntityNames } = this
-        const activeKeys = hoveredSeriesNames.concat(focusedEntityNames)
+        const { hoveredSeriesNames, selectedEntityNames, hoveredLegendColor } =
+            this
 
-        let series = this.series
+        const activeColorsSet = new Set<string>()
 
-        if (activeKeys.length)
-            series = series.filter((g) => activeKeys.includes(g.seriesName))
+        if (hoveredLegendColor !== undefined)
+            activeColorsSet.add(hoveredLegendColor)
 
-        const colorValues = _.uniq(
-            series.flatMap((s) => s.points.map((p) => p.color))
-        )
-        return excludeUndefined(
-            colorValues.map((color) => this.colorScale.getColor(color))
-        )
+        // Add colors from selected/hovered series
+        const activeSeriesNames = hoveredSeriesNames.concat(selectedEntityNames)
+        if (activeSeriesNames.length > 0) {
+            const activeSeries = this.series.filter((g) =>
+                activeSeriesNames.includes(g.seriesName)
+            )
+
+            const colorValues = _.uniq(
+                activeSeries.flatMap((s) => s.points.map((p) => p.color))
+            )
+
+            excludeUndefined(
+                colorValues.map((color) => this.colorScale.getColor(color))
+            ).forEach((color) => activeColorsSet.add(color))
+        }
+
+        // If nothing is active (no hover, no selection), show all colors
+        if (activeColorsSet.size === 0) return this.colorsInUse
+
+        return Array.from(activeColorsSet)
+    }
+
+    getLegendBinState(bin: ColorScaleBin): LegendInteractionState {
+        const isActive = this.activeColors.includes(bin.color)
+        return isActive
+            ? LegendInteractionState.Focused
+            : LegendInteractionState.Muted
     }
 
     @computed private get hideConnectedScatterLines(): boolean {
@@ -466,8 +498,9 @@ export class ScatterPlotChart
                 sizeScale={this.sizeScale}
                 fontScale={this.fontScale}
                 baseFontSize={this.fontSize}
-                focusedSeriesNames={this.focusedEntityNames}
+                focusedSeriesNames={this.selectedEntityNames}
                 hoveredSeriesNames={this.hoveredSeriesNames}
+                isHoverModeActive={this.isHoverModeActive}
                 tooltipSeriesName={this.tooltipSeries?.seriesName}
                 disableIntroAnimation={this.manager.disableIntroAnimation}
                 hideScatterLabels={this.hideScatterLabels}
@@ -488,7 +521,7 @@ export class ScatterPlotChart
         return this.chartState.colorColumn
     }
 
-    @computed get legendItems(): ColorScaleBin[] {
+    @computed get categoricalLegendData(): ColorScaleBin[] {
         return this.colorScale.legendBins.filter(
             (bin) =>
                 this.colorsInUse.includes(bin.color) &&
@@ -535,10 +568,17 @@ export class ScatterPlotChart
 
     @computed
     private get selectedEntitiesWithoutData(): string[] {
-        return _.difference(
-            this.selectedEntityNames,
-            this.series.map((s) => s.seriesName)
+        const entitiesWithoutData = _.uniq(
+            _.difference(
+                this.selectedEntityNames,
+                this.series.map((s) => s.seriesName)
+            )
         )
+
+        return entitiesWithoutData.map((entityName) => {
+            const shortName = getShortNameForEntity(entityName)
+            return shortName ?? entityName
+        })
     }
 
     @computed private get hasNoDataSection(): boolean {
@@ -619,6 +659,9 @@ export class ScatterPlotChart
                 {this.hasNoDataSection && (
                     <>
                         {!this.manager.isStatic &&
+                            (verticalColorLegend ||
+                                sizeLegend ||
+                                arrowLegend) &&
                             separatorLine(noDataSectionBounds.top)}
                         <NoDataSection
                             seriesNames={this.selectedEntitiesWithoutData}
@@ -677,128 +720,11 @@ export class ScatterPlotChart
     }
 
     @computed private get tooltip(): React.ReactElement | null {
-        if (!this.tooltipState.target) return null
-
-        const {
-            xColumn,
-            yColumn,
-            sizeColumn,
-            tooltipState: { target, position, fading },
-        } = this
-        const points = target.series.points ?? []
-        const values = excludeNullish(_.uniq([R.first(points), R.last(points)]))
-
-        let { startTime, endTime } = this.manager
-        const { x: xStart, y: yStart } = R.first(values)?.time ?? {},
-            { x: xEnd, y: yEnd } = R.last(values)?.time ?? {}
-
-        let xValues = xStart === xEnd ? [values[0].x] : values.map((v) => v.x),
-            xNoticeNeeded =
-                (xStart !== undefined && xStart !== startTime && xStart) ||
-                (xEnd !== undefined && xEnd !== endTime && xEnd),
-            xNotice = xNoticeNeeded ? [xStart, xEnd] : []
-
-        let yValues = yStart === yEnd ? [values[0].y] : values.map((v) => v.y),
-            yNoticeNeeded =
-                (yStart !== undefined && yStart !== startTime && yStart) ||
-                (yEnd !== undefined && yEnd !== endTime && yEnd),
-            yNotice = yNoticeNeeded ? [yStart, yEnd] : []
-
-        // handle the special case where the same variable is used for both axes
-        // with a different year's value on each
-        if (
-            xColumn.def.datasetId === yColumn.def.datasetId &&
-            points.length === 1
-        ) {
-            const { x, y, time } = points[0]
-            if (time.x !== time.y && _.isNumber(time.x) && _.isNumber(time.y)) {
-                startTime = _.min([time.x, time.y])
-                endTime = _.max([time.x, time.y])
-                xValues = time.x < time.y ? [x, y] : [y, x]
-                xNotice = yNotice = yValues = []
-                xNoticeNeeded = yNoticeNeeded = false
-            }
-        }
-
-        const { isRelativeMode } = this.manager,
-            timeRange = _.uniq(excludeNullish([startTime, endTime]))
-                .map((t) => this.yColumn.formatTime(t))
-                .join(" to "),
-            targetNotice =
-                xNoticeNeeded || yNoticeNeeded ? timeRange : undefined,
-            timeLabel =
-                timeRange + (isRelativeMode ? " (avg. annual change)" : "")
-
-        const columns = [xColumn, yColumn, sizeColumn].filter(
-            (column) => !column.isMissing
-        )
-        const allRoundedToSigFigs = columns.every(
-            (column) => column.roundsToSignificantFigures
-        )
-        const anyRoundedToSigFigs = columns.some(
-            (column) => column.roundsToSignificantFigures
-        )
-        const sigFigs = excludeUndefined(
-            columns.map((column) =>
-                column.roundsToSignificantFigures
-                    ? column.numSignificantFigures
-                    : undefined
-            )
-        )
-
-        const toleranceNotice = targetNotice
-            ? {
-                  icon: TooltipFooterIcon.Notice,
-                  text: makeTooltipToleranceNotice(targetNotice),
-              }
-            : undefined
-        const roundingNotice = anyRoundedToSigFigs
-            ? {
-                  icon: allRoundedToSigFigs
-                      ? TooltipFooterIcon.None
-                      : TooltipFooterIcon.Significance,
-                  text: makeTooltipRoundingNotice(sigFigs, {
-                      plural: sigFigs.length > 1,
-                  }),
-              }
-            : undefined
-        const footer = excludeUndefined([toleranceNotice, roundingNotice])
-        const superscript =
-            !!roundingNotice && roundingNotice.icon !== TooltipFooterIcon.None
-
         return (
-            <Tooltip
-                id="scatterTooltip"
-                tooltipManager={this.manager}
-                x={position.x}
-                y={position.y}
-                offsetX={20}
-                offsetY={-16}
-                style={{ maxWidth: "250px" }}
-                title={target.series.label}
-                subtitle={timeLabel}
-                dissolve={fading}
-                footer={footer}
-                dismiss={() => (this.tooltipState.target = null)}
-            >
-                <TooltipValueRange
-                    column={xColumn}
-                    values={xValues}
-                    notice={xNotice}
-                    showSignificanceSuperscript={superscript}
-                />
-                <TooltipValueRange
-                    column={yColumn}
-                    values={yValues}
-                    notice={yNotice}
-                    showSignificanceSuperscript={superscript}
-                />
-                <TooltipValueRange
-                    column={sizeColumn}
-                    values={excludeNullish(values.map((v) => v.size))}
-                    showSignificanceSuperscript={superscript}
-                />
-            </Tooltip>
+            <ScatterPlotTooltip
+                chartState={this.chartState}
+                tooltipState={this.tooltipState}
+            />
         )
     }
 

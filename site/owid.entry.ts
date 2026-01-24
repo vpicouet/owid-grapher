@@ -9,10 +9,12 @@ import "./owid.scss"
 // from a very large icon down to a properly sized one a moment later."
 import "@fortawesome/fontawesome-svg-core/styles.css"
 
+import React from "react"
+import { createRoot } from "react-dom/client"
 import { runNotFoundPage } from "./NotFoundPageMain.js"
 import { runFeedbackPage } from "./Feedback.js"
 import { runDonateForm } from "./runDonateForm.js"
-import { runCountryProfilePage } from "./runCountryProfilePage.js"
+import { runCountryIndexPage } from "./runCountryIndexPage.js"
 import { runTableOfContents } from "./runTableOfContents.js"
 import { Explorer } from "@ourworldindata/explorer"
 import { ENV, ADMIN_BASE_URL } from "../settings/clientSettings.js"
@@ -20,21 +22,26 @@ import {
     Grapher,
     CookieKey,
     renderSingleGrapherOnGrapherPage,
+    GrapherState,
 } from "@ourworldindata/grapher"
 import { MultiEmbedderSingleton } from "../site/multiembedder/MultiEmbedder.js"
-import { CoreTable } from "@ourworldindata/core-table"
+import { CoreTable, OwidTable } from "@ourworldindata/core-table"
 import { SiteAnalytics } from "./SiteAnalytics.js"
 import { runMonkeyPatchForGoogleTranslate } from "./hacks.js"
 import { runSiteFooterScripts } from "./runSiteFooterScripts.js"
 
 declare let window: any
 window.Grapher = Grapher
+window.GrapherState = GrapherState
 window.Explorer = Explorer
 window.CoreTable = CoreTable
+window.OwidTable = OwidTable
+window.React = React
+window.createRoot = createRoot
 window.runNotFoundPage = runNotFoundPage
 window.runFeedbackPage = runFeedbackPage
 window.runDonateForm = runDonateForm
-window.runCountryProfilePage = runCountryProfilePage
+window.runCountryIndexPage = runCountryIndexPage
 window.runTableOfContents = runTableOfContents
 window.renderSingleGrapherOnGrapherPage = renderSingleGrapherOnGrapherPage
 window.MultiEmbedderSingleton = MultiEmbedderSingleton

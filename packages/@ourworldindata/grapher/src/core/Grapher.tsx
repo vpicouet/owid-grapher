@@ -71,13 +71,12 @@ declare global {
     }
 }
 
-export const DEFAULT_MS_PER_TICK = 100
-
 // Exactly the same as GrapherInterface, but contains options that developers want but authors won't be touching.
 export interface GrapherProgrammaticInterface extends GrapherInterface {
     queryStr?: string
     bounds?: Bounds
     table?: OwidTable
+    baseUrl?: string
     bakedGrapherURL?: string
     adminBaseUrl?: string
     env?: string
@@ -98,7 +97,6 @@ export interface GrapherProgrammaticInterface extends GrapherInterface {
     hideShareButton?: boolean
     hideExploreTheDataButton?: boolean
     hideRelatedQuestion?: boolean
-    isSocialMediaExport?: boolean
     enableMapSelection?: boolean
 
     enableKeyboardShortcuts?: boolean
@@ -106,6 +104,7 @@ export interface GrapherProgrammaticInterface extends GrapherInterface {
     isEmbeddedInAnOwidPage?: boolean
     isEmbeddedInADataPage?: boolean
     isConfigReady?: boolean
+    isDataReady?: boolean
     canHideExternalControlsInEmbed?: boolean
 
     narrativeChartInfo?: MinimalNarrativeChartInfo
@@ -126,7 +125,8 @@ interface AnalyticsContext {
 }
 
 export interface GrapherManager {
-    canonicalUrl?: string
+    baseUrl?: string
+    queryStr?: string
     selection?: SelectionArray
     focusArray?: FocusArray
     adminEditPath?: string
@@ -282,7 +282,9 @@ export class Grapher extends React.Component<GrapherProps> {
             {
                 combo: "p",
                 fn: (): void => this.togglePlayingCommand(),
-                title: this.grapherState.isPlaying ? `Pause` : `Play`,
+                title: this.grapherState.isTimelineAnimationPlaying
+                    ? `Pause`
+                    : `Play`,
                 category: "Timeline",
             },
             {

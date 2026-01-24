@@ -23,10 +23,6 @@ $dark-text: $gray-80;
 $light-text: $gray-70;
 $active-text: $blue-90;
 
-// tooltip for button label
-$tooltip-fill: $gray-90;
-$tooltip-text: #fff;
-
 // These should be between 0–100 in order to avoid conflicting with
 // site dropdowns, search overlays, etc.
 $zindex-chart: 1;
@@ -55,7 +51,6 @@ $zindex-controls-drawer: 150;
 .GrapherComponent {
     @import "../controls/CommandPalette.scss";
     @import "../controls/Controls.scss";
-    @import "../popover/Popover.scss";
     @import "../controls/SettingsMenu.scss";
     @import "../controls/MapRegionDropdown.scss";
     @import "../captionedChart/CaptionedChart.scss";
@@ -76,7 +71,7 @@ $zindex-controls-drawer: 150;
     @import "../modal/SourcesKeyDataTable.scss";
     @import "../modal/SourcesDescriptions.scss";
     @import "../tabs/Tabs.scss";
-    @import "../tabs/ExpandableTabs.scss";
+    @import "../tabs/TabsWithDropdown.scss";
     @import "../slideInDrawer/SlideInDrawer.scss";
     @import "../sidePanel/SidePanel.scss";
     @import "../scatterCharts/NoDataSection.scss";
@@ -88,7 +83,6 @@ $zindex-controls-drawer: 150;
 // These rules are currently used elsewhere in the site. e.g. Explorers
 // so we can't scope them to be grapher-only
 @import "../controls/entityPicker/EntityPicker.scss";
-@import "../controls/globalEntitySelector/GlobalEntitySelector.scss";
 @import "../fullScreen/FullScreen.scss";
 @import "../../../components/src/Checkbox.scss";
 @import "../../../components/src/RadioButton.scss";
@@ -212,6 +206,23 @@ $zindex-controls-drawer: 150;
 .tippy-box[data-theme="grapher-explanation"] {
     .tippy-content {
         padding: 15px;
+    }
+}
+
+.tippy-box[data-theme="grapher-dark"] {
+    background-color: $gray-90;
+    color: white;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 16px;
+    padding: 8px;
+
+    .tippy-content {
+        padding: 0;
+    }
+
+    .tippy-arrow {
+        color: $gray-90;
     }
 }
 

@@ -11,6 +11,8 @@ import {
     DbRawChartConfig,
     ChartConfigsTableName,
     DbChartTagJoin,
+    ContentGraphLinkType,
+    StaticVizTableName,
 } from "@ourworldindata/types"
 import {
     diffGrapherConfigs,
@@ -20,9 +22,12 @@ import {
 } from "@ourworldindata/utils"
 import Papa from "papaparse"
 import { uuidv7 } from "uuidv7"
-import { References } from "../../adminSiteClient/AbstractChartEditor.js"
+import {
+    References,
+    StaticVizReference,
+} from "../../adminSiteClient/AbstractChartEditor.js"
 import { NarrativeChartMinimalInformation } from "../../adminSiteClient/ChartEditor.js"
-import { denormalizeLatestCountryData } from "../../baker/countryProfiles.js"
+import { denormalizeLatestCountryData } from "../../baker/countryIndexes.js"
 import {
     getChartConfigById,
     getPatchConfigByChartId,
@@ -59,7 +64,6 @@ import {
 import { triggerStaticBuild } from "../../baker/GrapherBakingUtils.js"
 import * as db from "../../db/db.js"
 import { getLogsByChartId } from "../getLogsByChartId.js"
-import { getPublishedLinksTo } from "../../db/model/Link.js"
 
 import { Request } from "../authentication.js"
 import e from "express"
@@ -94,6 +98,40 @@ export const getReferencesByChartId = async (
         WHERE nc.parentChartId = ?`,
         [chartId]
     )
+    const chartSlugsPromise = db.knexRaw<{ targetSlug: string }>(
+        knex,
+        `-- sql
+        SELECT cc.slug AS targetSlug
+        FROM charts c
+        JOIN chart_configs cc ON c.configId = cc.id
+        WHERE c.id = ?
+
+        UNION ALL
+
+        SELECT cr.slug AS targetSlug
+        FROM chart_slug_redirects cr
+        WHERE cr.chart_id = ?`,
+        [chartId, chartId]
+    )
+    const staticVizPromise = chartSlugsPromise.then((slugRows) => {
+        const uniqueSlugs = Array.from(
+            new Set(slugRows.map((row) => row.targetSlug).filter(Boolean))
+        )
+        if (!uniqueSlugs.length) return [] as StaticVizReference[]
+        const placeholders = uniqueSlugs.map(() => "?").join(", ")
+        return db.knexRaw<StaticVizReference>(
+            knex,
+            `-- sql
+            SELECT
+                sv.id,
+                sv.name,
+                sv.grapherSlug,
+                '${ContentGraphLinkType.StaticViz}' AS type
+            FROM ${StaticVizTableName} sv
+            WHERE sv.grapherSlug IN (${placeholders})`,
+            uniqueSlugs
+        )
+    })
     const dataInsightsPromise = db.knexRaw<DataInsightMinimalInformation>(
         knex,
         `-- sql
@@ -101,18 +139,20 @@ export const getReferencesByChartId = async (
             SELECT cc.slug as main_slug, c.id as chart_id
             FROM charts c
             JOIN chart_configs cc ON c.configId = cc.id
-            WHERE c.id = ?
+            WHERE c.id = ? AND cc.slug != '' AND cc.slug IS NOT NULL
 
             UNION ALL
 
             SELECT cr.slug as main_slug, c.id as chart_id
             FROM charts c
             JOIN chart_slug_redirects cr ON cr.chart_id = c.id
-            WHERE c.id = ?
+            WHERE c.id = ? AND cr.slug != '' AND cr.slug IS NOT NULL
         ),
         gdoc_grapher_slugs AS (
             SELECT
                 pg.id,
+                pg.slug,
+                pg.type,
                 pg.content ->> '$.title' AS title,
                 pg.published,
                 pg.content ->> '$."narrative-chart"' AS narrativeChart,
@@ -125,6 +165,8 @@ export const getReferencesByChartId = async (
         )
         SELECT
             ggs.id AS gdocId,
+            ggs.slug,
+            ggs.type,
             ggs.title,
             ggs.published,
             ggs.narrativeChart,
@@ -146,12 +188,14 @@ export const getReferencesByChartId = async (
         explorerSlugs,
         narrativeCharts,
         dataInsights,
+        staticVizReferences,
     ] = await Promise.all([
         postsWordpressPromise,
         postGdocsPromise,
         explorerSlugsPromise,
         narrativeChartsPromise,
         dataInsightsPromise,
+        staticVizPromise,
     ])
 
     return {
@@ -162,6 +206,7 @@ export const getReferencesByChartId = async (
         ),
         narrativeCharts,
         dataInsights,
+        staticViz: staticVizReferences,
     }
 }
 
@@ -342,7 +387,9 @@ export const saveGrapher = async (
     // Try to migrate the new config to the latest version
     newConfig = migrateGrapherConfigToLatestVersionAndFailOnError(newConfig)
 
-    // When a chart is published, check for conflicts
+    // Validate slug if:
+    // 1. Publishing - slug is required
+    // 2. Draft with non-empty slug - prevent duplicates (empty slugs are allowed for drafts)
     if (newConfig.isPublished) {
         await validateNewGrapherSlug(knex, newConfig.slug, existingConfig?.id)
         if (
@@ -367,6 +414,9 @@ export const saveGrapher = async (
                 `${existingConfig.slug}.json`
             )
         }
+    } else if (newConfig.slug && newConfig.slug.length > 0) {
+        // Only validate non-empty slugs for drafts (empty slugs are allowed for drafts)
+        await validateNewGrapherSlug(knex, newConfig.slug, existingConfig?.id)
     }
 
     if (existingConfig)
@@ -806,12 +856,14 @@ export async function deleteChart(
     trx: db.KnexReadWriteTransaction
 ) {
     const chart = await expectChartById(trx, req.params.chartId)
-    if (chart.slug) {
-        const links = await getPublishedLinksTo(trx, [chart.slug])
-        if (links.length) {
-            const sources = links.map((link) => link.slug).join(", ")
-            throw new Error(
-                `Cannot delete chart in-use in the following published documents: ${sources}`
+    if (chart.id) {
+        const references = await getReferencesByChartId(chart.id, trx).then(
+            (references) => Object.values(references).flat()
+        )
+        if (references.length) {
+            throw new JsonError(
+                `Cannot delete chart in-use in the following places:` +
+                    references.join(", ")
             )
         }
     }

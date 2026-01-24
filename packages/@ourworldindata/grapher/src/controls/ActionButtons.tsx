@@ -1,4 +1,3 @@
-import { useState } from "react"
 import * as React from "react"
 import { computed, action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
@@ -18,12 +17,13 @@ import {
     shareUsingShareApi,
     shouldShareUsingShareApi,
 } from "./ShareMenu.js"
-import { Bounds } from "@ourworldindata/utils"
+import { Bounds, Tippy } from "@ourworldindata/utils"
 import classNames from "classnames"
 import {
     DEFAULT_GRAPHER_BOUNDS,
     GrapherModal,
 } from "../core/GrapherConstants.js"
+import { DownloadModalTabName } from "../modal/DownloadModal.js"
 
 export interface ActionButtonsManager extends ShareMenuManager {
     isAdmin?: boolean
@@ -34,6 +34,8 @@ export interface ActionButtonsManager extends ShareMenuManager {
     canonicalUrl?: string
     isInFullScreenMode?: boolean
     activeModal?: GrapherModal
+    activeDownloadModalTab?: DownloadModalTabName
+    isOnTableTab?: boolean
     hideFullScreenButton?: boolean
 }
 
@@ -232,6 +234,17 @@ export class ActionButtons extends React.Component<ActionButtonsProps> {
         this.manager.isInFullScreenMode = !this.manager.isInFullScreenMode
     }
 
+    @action.bound openDownloadModal(): void {
+        this.manager.activeModal = GrapherModal.Download
+
+        // Open the Data tab when opening from the table view, otherwise open the Vis tab
+        if (this.manager.isOnTableTab) {
+            this.manager.activeDownloadModalTab = DownloadModalTabName.Data
+        } else {
+            this.manager.activeDownloadModalTab = DownloadModalTabName.Vis
+        }
+    }
+
     @computed private get hasDownloadButton(): boolean {
         return true
     }
@@ -300,8 +313,7 @@ export class ActionButtons extends React.Component<ActionButtonsProps> {
                                 showLabel={this.showButtonLabels}
                                 icon={faDownload}
                                 onClick={action((e): void => {
-                                    this.manager.activeModal =
-                                        GrapherModal.Download
+                                    this.openDownloadModal()
                                     e.stopPropagation()
                                 })}
                             />
@@ -383,8 +395,6 @@ export function ActionButton(props: {
     style?: React.CSSProperties
     className?: string
 }): React.ReactElement {
-    const [showTooltip, setShowTooltip] = useState(false)
-
     const buttonClassnames = classNames({
         active: props.isActive,
         "icon-only": !props.showLabel,
@@ -401,40 +411,43 @@ export function ActionButton(props: {
     )
 
     return (
-        <div
-            className={classNames("ActionButton", props.className)}
-            style={props.style}
-            data-track-note={props.dataTrackNote}
-            onClick={(e: React.MouseEvent<HTMLDivElement>): void => {
-                if (props.onClick) props.onClick(e)
-                setShowTooltip(false)
-            }}
-            onMouseDown={props.onMouseDown}
-            onMouseEnter={(): void => {
-                if (!props.showLabel) setShowTooltip(true)
-            }}
-            onMouseLeave={(): void => {
-                setShowTooltip(false)
-            }}
+        <Tippy
+            content={props.label}
+            theme="grapher-dark"
+            placement="top"
+            arrow={false}
+            offset={[0, 4]}
+            trigger="mouseenter"
+            touch={false}
+            disabled={props.showLabel}
         >
-            {props.href ? (
-                <a
-                    href={props.href}
-                    className={buttonClassnames}
-                    aria-label={props.label}
-                >
-                    {buttonContents}
-                </a>
-            ) : (
-                <button
-                    className={buttonClassnames}
-                    aria-label={props.label}
-                    type="button"
-                >
-                    {buttonContents}
-                </button>
-            )}
-            {showTooltip && <div className="hover-label">{props.label}</div>}
-        </div>
+            <div
+                className={classNames("ActionButton", props.className)}
+                style={props.style}
+                data-track-note={props.dataTrackNote}
+                onClick={props.onClick}
+                onMouseDown={props.onMouseDown}
+            >
+                {props.href ? (
+                    <a
+                        href={props.href}
+                        className={buttonClassnames}
+                        aria-label={props.label}
+                        target="_blank"
+                        rel="noopener"
+                    >
+                        {buttonContents}
+                    </a>
+                ) : (
+                    <button
+                        className={buttonClassnames}
+                        aria-label={props.label}
+                        type="button"
+                    >
+                        {buttonContents}
+                    </button>
+                )}
+            </div>
+        </Tippy>
     )
 }

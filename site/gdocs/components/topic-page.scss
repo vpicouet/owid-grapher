@@ -8,8 +8,14 @@
 .topic-page-header {
     background-color: $blue-10;
     color: $blue-90;
-    margin-bottom: 40px;
+    margin-bottom: 32px;
     z-index: $zindex-extended-header;
+
+    @include md-down {
+        &:has(+ .toc-wrapper) {
+            margin-bottom: 64px;
+        }
+    }
 
     h1 {
         margin-bottom: 8px;
@@ -158,7 +164,7 @@
             }
         }
 
-        ul {
+        .article-block__list {
             margin-bottom: 32px;
             li {
                 @include body-2-regular;
@@ -225,7 +231,15 @@
 }
 
 // Linear topic page customizations
+// See also grid-margin-overrides.scss for linear topic pages margin overrides
 .centered-article-container--linear-topic-page {
+    .article-block__text,
+    .article-block__list,
+    .article-block__html,
+    .article-block__numbered-list {
+        @include body-2-regular;
+    }
+
     .article-block__horizontal-rule
         + h1.article-block__heading.h1-semibold
         + .article-block__horizontal-rule {
@@ -235,35 +249,65 @@
         margin-top: 24px;
     }
 
-    /* Add a light gray line above the heading when it's in the main article body (i.e. not an all-charts block, or in a two-column section) */
-    > h1.article-block__heading {
-        text-wrap: unset;
-        position: relative;
-        margin-top: 64px;
-        @include sm-only {
-            font-size: 1.5rem;
-            line-height: 2rem;
+    // Light variant: gray line above the heading
+    &.centered-article-container--heading-variant-light {
+        > h1.article-block__heading {
+            @include h1-hr;
         }
-        &::before {
-            content: "";
-            position: absolute;
-            top: -32px;
-            border-top: 1px solid $blue-10;
-            /* At lg, heading takes up 6 columns, so 200% is 12 columns then we add a missing gutter */
-            /* Using percentages instead of absolute values because different browsers calculate the grid size differently */
-            @include md-up {
-                width: calc(200% + var(--grid-gap));
-                left: calc(-50% - var(--grid-gap) / 2);
+
+        // the LTP TOC is responsible for adding the spacing and divider line
+        > .article-block__ltp-toc + h1.article-block__heading {
+            margin-top: 0;
+            &::before {
+                display: none;
+            }
+        }
+    }
+
+    // Heavy variant: blue background behind the heading:
+    // - on large screens, we use a pseudo-element to extend the blue background
+    //   beyond the heading placement on the grid.
+    // - on small screens, we use regular padding instead of a pseudo-element
+    &.centered-article-container--heading-variant-heavy {
+        --pseudo-element-padding: 24px;
+        @include sm-only {
+            --pseudo-element-padding: 0;
+        }
+        > h1.article-block__heading {
+            margin-top: calc(80px + var(--pseudo-element-padding));
+            margin-bottom: calc(40px + var(--pseudo-element-padding));
+            @include heading-variant-base;
+
+            &::before {
+                content: "";
+                position: absolute;
+                top: calc(-1 * var(--pseudo-element-padding));
+                bottom: -24px;
+                background-color: $blue-5;
+                z-index: -1;
+                @include heading-variant-pseudo-widths;
             }
 
-            @include md-only {
-                width: 120%;
-                left: -10%;
-            }
-
+            // Use regular padding instead of pseudo-element on small screens
             @include sm-only {
-                width: 100%;
-                left: 0;
+                margin-top: 40px;
+                margin-bottom: 24px;
+                background-color: $blue-5;
+                padding: 16px;
+
+                &::before {
+                    display: none;
+                }
+            }
+        }
+
+        // If preceeded by .article-block__ltp-toc, remove the margin on heavy
+        // heading variant (the toc has its own bottom margin)
+        > .article-block__ltp-toc + h1.article-block__heading {
+            // honor the visual background added through the pseudo-element
+            margin-top: var(--pseudo-element-padding);
+            @include sm-only {
+                margin-top: 0;
             }
         }
     }
