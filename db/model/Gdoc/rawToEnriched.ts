@@ -3,6 +3,7 @@ import {
     BlockPositionChoice,
     EnrichedBlockAside,
     EnrichedBlockCallout,
+    EnrichedBlockDataCallout,
     EnrichedBlockChart,
     EnrichedBlockChartStory,
     EnrichedBlockDonorList,
@@ -46,6 +47,7 @@ import {
     RawBlockAdditionalCharts,
     RawBlockAside,
     RawBlockCallout,
+    RawBlockDataCallout,
     RawBlockChart,
     RawBlockChartStory,
     RawBlockDonorList,
@@ -150,6 +152,8 @@ import {
     RawBlockCookieNotice,
     PullQuoteAlignment,
     pullquoteAlignments,
+    RawBlockCountryProfileSelector,
+    EnrichedBlockCountryProfileSelector,
     RawBlockExpander,
     EnrichedBlockExpander,
     blockAlignments,
@@ -164,6 +168,7 @@ import {
     EnrichedBlockScript,
     RawBlockScript,
     blockVisibilitys,
+    VALID_PEER_COUNTRY_STRATEGY_QUERY_PARAMS,
 } from "@ourworldindata/types"
 import {
     traverseEnrichedSpan,
@@ -175,11 +180,13 @@ import {
     validateConditionalSectionLists,
 } from "@ourworldindata/utils"
 import { checkIsInternalLink, getLinkType } from "@ourworldindata/components"
+import { isValidPeerCountryStrategyQueryParam } from "@ourworldindata/grapher"
 import {
     extractUrl,
     getTitleSupertitleFromHeadingText,
     parseAuthors,
     spansToSimpleString,
+    transformCalloutTokensInBlock,
 } from "./gdocUtils.js"
 import {
     htmlToEnrichedTextBlock,
@@ -198,6 +205,7 @@ export function parseRawBlocksToEnrichedBlocks(
         .with({ type: "aside" }, parseAside)
         .with({ type: "blockquote" }, parseBlockquote)
         .with({ type: "callout" }, parseCallout)
+        .with({ type: "data-callout" }, parseDataCallout)
         .with({ type: "chart" }, parseChart)
         .with({ type: "narrative-chart" }, parseNarrativeChart)
         .with({ type: "code" }, parseCode)
@@ -280,6 +288,7 @@ export function parseRawBlocksToEnrichedBlocks(
         .with({ type: "featured-data-insights" }, parseFeaturedDataInsights)
         .with({ type: "homepage-intro" }, parseHomepageIntro)
         .with({ type: "socials" }, parseSocials)
+        .with({ type: "country-profile-selector" }, parseCountryProfileSelector)
         .exhaustive()
 }
 
@@ -522,6 +531,19 @@ const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
 
         const caption = val.caption ? htmlToSpans(val.caption) : []
 
+        const peerCountries = val.peerCountries
+        if (
+            peerCountries !== undefined &&
+            !isValidPeerCountryStrategyQueryParam(peerCountries)
+        ) {
+            return createError(
+                {
+                    message: `Invalid peerCountries property: ${peerCountries}. Valid values are: ${VALID_PEER_COUNTRY_STRATEGY_QUERY_PARAMS.join(", ")}`,
+                },
+                url
+            )
+        }
+
         return omitUndefinedValues({
             type: "chart",
             url,
@@ -529,6 +551,7 @@ const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
             size,
             caption: caption.length > 0 ? caption : undefined,
             visibility,
+            peerCountries,
             parseErrors: [],
         }) as EnrichedBlockChart
     }
@@ -1834,6 +1857,66 @@ function parseCallout(raw: RawBlockCallout): EnrichedBlockCallout {
     }
 }
 
+function parseDataCallout(raw: RawBlockDataCallout): EnrichedBlockDataCallout {
+    const createError = (error: ParseError): EnrichedBlockDataCallout => ({
+        type: "data-callout",
+        parseErrors: [error],
+        url: "",
+        content: [],
+    })
+
+    if (!raw.value.url) {
+        return createError({
+            message: "Missing url for data-callout block",
+        })
+    }
+
+    // Validate that the URL is a grapher or explorer link
+    const url = Url.fromURL(extractUrl(raw.value.url))
+
+    if (!url.isGrapher && !url.isExplorer) {
+        return createError({
+            message: "data-callout url must be a grapher or explorer link",
+        })
+    }
+    const countryQueryParams = url.queryParams["country"]
+    const countryValues = countryQueryParams?.split("~").filter(Boolean) || []
+    if (countryValues.length !== 1) {
+        return createError({
+            message:
+                "data-callout url must specify exactly one country using the 'country' query parameter",
+        })
+    }
+
+    if (!raw.value.content) {
+        return createError({
+            message: "Missing content for data-callout block",
+        })
+    }
+
+    if (!_.isArray(raw.value.content)) {
+        return createError({
+            message:
+                "Content must be provided as an array e.g. inside a [.+content] block",
+        })
+    }
+
+    const enrichedContent = raw.value.content.map(
+        parseRawBlocksToEnrichedBlocks
+    )
+
+    const transformedContent = excludeNullish(enrichedContent).map(
+        transformCalloutTokensInBlock
+    )
+
+    return {
+        type: "data-callout",
+        url: url.fullUrl,
+        content: transformedContent,
+        parseErrors: [],
+    }
+}
+
 function parseTopicPageIntro(
     raw: RawBlockTopicPageIntro
 ): EnrichedBlockTopicPageIntro {
@@ -3018,5 +3101,34 @@ export const parseScript = (raw: RawBlockScript): EnrichedBlockScript => {
         type: "script",
         lines: goodText.map((text) => spansToSimpleString(text.value)),
         parseErrors: [],
+    }
+}
+
+function parseCountryProfileSelector(
+    raw: RawBlockCountryProfileSelector
+): EnrichedBlockCountryProfileSelector {
+    const parseErrors: ParseError[] = []
+    const val = raw.value
+
+    if (!val.url) {
+        parseErrors.push({
+            message: "country-profile-selector block is missing a url field",
+        })
+    }
+
+    const defaultCountries = val.defaultCountries
+        ? val.defaultCountries
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0)
+        : []
+
+    return {
+        type: "country-profile-selector",
+        url: extractUrl(val.url ?? ""),
+        title: val.title,
+        description: val.description,
+        defaultCountries,
+        parseErrors,
     }
 }

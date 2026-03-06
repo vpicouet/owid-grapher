@@ -33,9 +33,12 @@ export {
     Patterns,
     CONTINENTS_INDICATOR_ID,
     POPULATION_INDICATOR_ID_USED_IN_ADMIN,
+    GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ADMIN,
     latestGrapherConfigSchema,
     DEFAULT_GRAPHER_BOUNDS,
     DEFAULT_GRAPHER_BOUNDS_SQUARE,
+    ADDITIONAL_REGION_DATA_PROVIDERS,
+    type AdditionalRegionDataProvider,
 } from "./core/GrapherConstants"
 export {
     getVariableDataRoute,
@@ -53,6 +56,7 @@ export { DimensionSlot } from "./chart/DimensionSlot"
 export { EntityPicker } from "./controls/entityPicker/EntityPicker"
 export type { EntityPickerManager } from "./controls/entityPicker/EntityPickerConstants"
 export { getColorSchemeForChartType } from "./color/ColorSchemes"
+export { OwidMapColors } from "./color/CustomSchemes"
 export {
     isCategoricalBin,
     isNumericBin,
@@ -117,6 +121,7 @@ export {
     mapGrapherTabNameToQueryParam,
     mapGrapherTabNameToConfigOption,
     makeLabelForGrapherTab,
+    VALID_CHART_TYPE_COMBINATIONS,
 } from "./chart/ChartTabs"
 export {
     renderGrapherIntoContainer,
@@ -126,6 +131,7 @@ export { GeoFeatures } from "./mapCharts/GeoFeatures"
 export { isValidVerticalComparisonLineConfig } from "./comparisonLine/ComparisonLineHelpers"
 export { hasValidConfigForBinningStrategy } from "./color/BinningStrategies"
 export { Dropdown } from "./controls/Dropdown"
+export { EXTERNAL_SORT_INDICATOR_DEFINITIONS } from "./entitySelector/EntitySelector.js"
 
 export { makeChartState } from "./chart/ChartTypeMap"
 export type { ChartState } from "./chart/ChartInterface"
@@ -139,3 +145,19 @@ export type { StackedBarChartState } from "./stackedCharts/StackedBarChartState.
 export type { StackedDiscreteBarChartState } from "./stackedCharts/StackedDiscreteBarChartState"
 export type { ScatterPlotChartState } from "./scatterCharts/ScatterPlotChartState"
 export type { MarimekkoChartState } from "./stackedCharts/MarimekkoChartState"
+
+export {
+    selectPeerCountriesForGrapher,
+    selectPeerCountries,
+    isValidPeerCountryStrategyQueryParam,
+    prepareEntitiesForPeerSelection,
+} from "./core/PeerCountrySelection.js"
+
+export { loadCatalogData, getCatalogAssetKey } from "./core/loadCatalogData.js"
+
+export {
+    constructGrapherValuesJson,
+    prepareCalloutTable,
+    constructGrapherValuesJsonFromTable,
+    type PreparedCalloutTable,
+} from "./core/GrapherValuesJson"

@@ -3,14 +3,12 @@ import React from "react"
 import * as R from "remeda"
 import {
     guid,
-    excludeNullish,
     getRelativeMouse,
     exposeInstanceOnWindow,
     excludeUndefined,
     isMobile,
     Bounds,
     HorizontalAlign,
-    isTouchDevice,
 } from "@ourworldindata/utils"
 import { computed, action, observable, makeObservable } from "mobx"
 import { observer } from "mobx-react"
@@ -18,22 +16,16 @@ import { select, type Selection, type BaseType } from "d3-selection"
 import { easeLinear } from "d3-ease"
 import { DualAxisComponent } from "../axis/AxisViews"
 import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
-import { LineLegend } from "../lineLegend/LineLegend"
-import { TooltipFooterIcon } from "../tooltip/TooltipProps.js"
-import {
-    Tooltip,
-    TooltipState,
-    TooltipTable,
-    makeTooltipRoundingNotice,
-    toTooltipTableColumns,
-} from "../tooltip/Tooltip"
+import { VerticalLabels } from "../verticalLabels/VerticalLabels"
+import { VerticalLabelsState } from "../verticalLabels/VerticalLabelsState"
+import { TooltipState } from "../tooltip/Tooltip"
+import { LineChartTooltip } from "./LineChartTooltip"
 import { NoDataModal } from "../noDataModal/NoDataModal"
-import { extent } from "d3-array"
 import { SeriesName, VerticalAlign, Time } from "@ourworldindata/types"
 import {
     BASE_FONT_SIZE,
     DEFAULT_GRAPHER_BOUNDS,
-    GRAPHER_OPACITY_MUTE,
+    GRAPHER_OPACITY_MUTED,
 } from "../core/GrapherConstants"
 import { ChartInterface } from "../chart/ChartInterface"
 import {
@@ -72,20 +64,19 @@ import {
     HorizontalNumericColorLegend,
 } from "../legend/HorizontalColorLegends"
 import {
-    AnnotationsMap,
     getAnnotationsForSeries,
-    getAnnotationsMap,
     getYAxisConfigDefaults,
     toPlacedLineChartSeries,
     toRenderLineChartSeries,
 } from "./LineChartHelpers"
-import { LineLabelSeries } from "../lineLegend/LineLegendTypes"
+import { LabelSeries } from "../verticalLabels/VerticalLabelsTypes"
 import { Lines } from "./Lines"
 import { LineChartState } from "./LineChartState.js"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
 import { InteractionState } from "../interaction/InteractionState"
-import { LegendStyleConfig } from "../legend/LegendInteractionState"
+import { resolveEmphasis, Emphasis } from "../interaction/Emphasis"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
 
 export type LineChartProps = ChartComponentProps<LineChartState>
 
@@ -96,17 +87,20 @@ export class LineChart
 {
     private base = React.createRef<SVGGElement>()
 
+    private tooltipState = new TooltipState<{ time: Time }>({
+        fade: "immediate",
+    })
+
+    private hoveredLabelSeriesName: SeriesName | undefined = undefined
+    private hoverTimer: number | undefined = undefined
+
     constructor(props: LineChartProps) {
         super(props)
 
-        makeObservable<
-            LineChart,
-            "tooltipState" | "lineLegendHoveredSeriesName" | "hoverTimer"
-        >(this, {
-            tooltipState: observable,
-            lineLegendHoveredSeriesName: observable,
-            hoverTimer: observable,
-        })
+        makeObservable<LineChart, "tooltipState" | "hoveredLabelSeriesName">(
+            this,
+            { tooltipState: observable, hoveredLabelSeriesName: observable }
+        )
     }
 
     @computed get chartState(): LineChartState {
@@ -121,13 +115,6 @@ export class LineChart
         return this.manager.detailsOrderedByReference ?? []
     }
 
-    @computed get annotationsMap(): AnnotationsMap | undefined {
-        return getAnnotationsMap(
-            this.chartState.inputTable,
-            this.yColumnSlugs[0]
-        )
-    }
-
     @action.bound private dismissTooltip(): void {
         this.tooltipState.target = null
     }
@@ -136,16 +123,12 @@ export class LineChart
         if (!this.manager.shouldPinTooltipToBottom) {
             this.dismissTooltip()
         }
-        this.clearHighlightedSeries()
+        this.debouncedClearVerticalLabelHover()
     }
 
     @computed private get allValues(): LinePoint[] {
         return this.placedSeries.flatMap((series) => series.points)
     }
-
-    private tooltipState = new TooltipState<{ time: Time }>({
-        fade: "immediate",
-    })
 
     @action.bound private onCursorMove(
         ev: React.MouseEvent | React.TouchEvent
@@ -181,7 +164,7 @@ export class LineChart
 
         // be sure all lines are un-dimmed if the cursor is above the graph itself
         if (this.dualAxis.innerBounds.contains(mouse)) {
-            this.clearLineLegendHover()
+            this.clearVerticalLabelHover()
         }
 
         this.tooltipState.target =
@@ -202,7 +185,7 @@ export class LineChart
         )
     }
 
-    @computed private get maxLineLegendWidth(): number {
+    @computed private get maxVerticalLabelsWidth(): number {
         return this.bounds.width / 3
     }
 
@@ -269,11 +252,10 @@ export class LineChart
                                       )
                                   )
                                 : series.color
-                            const isBackground =
-                                series.focus.background && !series.hover.active
-                            const opacity = isBackground
-                                ? GRAPHER_OPACITY_MUTE
-                                : 1
+                            const opacity =
+                                series.emphasis === Emphasis.Muted
+                                    ? GRAPHER_OPACITY_MUTED
+                                    : 1
 
                             return (
                                 <circle
@@ -305,181 +287,36 @@ export class LineChart
         return this.manager.tooltip?.get()?.id === this.tooltipId
     }
 
-    @computed private get tooltip(): React.ReactElement | undefined {
-        const { formatColumn, colorColumn, hasColorScale } = this
-        const { target, position, fading } = this.tooltipState
-
-        if (!target) return undefined
-
-        // Duplicate seriesNames will be present if there is a projected-values line
-        const seriesSegments = _.mapValues(
-            _.groupBy(this.series, "seriesName"),
-            (segments) =>
-                segments.find((series) =>
-                    // Ideally pick series with a defined value at the target time
-                    series.points.find((point) => point.x === target.time)
-                ) ??
-                segments.find((series): boolean | void => {
-                    // Otherwise pick the series whose start & end contains the target time
-                    // and display a "No data" notice.
-                    const [startX, endX] = extent(series.points, ({ x }) => x)
-                    return (
-                        _.isNumber(startX) &&
-                        _.isNumber(endX) &&
-                        startX < target.time &&
-                        target.time < endX
-                    )
-                }) ??
-                null // If neither series matches, exclude the entity from the tooltip altogether
-        )
-
-        const sortedData = _.sortBy(
-            excludeNullish(R.values(seriesSegments)),
-            (series) => {
-                const value = series.points.find(
-                    (point) => point.x === target.time
-                )
-                return value !== undefined ? -value.y : Infinity
-            }
-        )
-
-        const formattedTime = formatColumn.formatTime(target.time),
-            { displayUnit: unitLabel } = formatColumn,
-            { isRelativeMode, startTime } = this.manager
-
-        const title = formattedTime
-        const titleAnnotation = this.xAxis.label ? `(${this.xAxis.label})` : ""
-
-        const columns = [formatColumn]
-        if (hasColorScale && colorColumn.slug !== formatColumn.slug)
-            columns.push(colorColumn)
-
-        const subtitle =
-            isRelativeMode && startTime
-                ? `% change since ${formatColumn.formatTime(startTime)}`
-                : unitLabel
-        const subtitleFormat = subtitle === unitLabel ? "unit" : undefined
-
-        const projectionNotice = sortedData.some(
-            (series) => series.isProjection
-        )
-            ? { icon: TooltipFooterIcon.Stripes, text: "Projected data" }
-            : undefined
-        const roundingNotice = formatColumn.roundsToSignificantFigures
-            ? {
-                  icon: TooltipFooterIcon.None,
-                  text: makeTooltipRoundingNotice([
-                      formatColumn.numSignificantFigures,
-                  ]),
-              }
-            : undefined
-        const footer = excludeUndefined([projectionNotice, roundingNotice])
-
-        return (
-            <Tooltip
-                id={this.tooltipId}
-                tooltipManager={this.manager}
-                x={position.x}
-                y={position.y}
-                style={{ maxWidth: "400px" }}
-                offsetXDirection="left"
-                offsetX={20}
-                offsetY={-16}
-                title={title}
-                titleAnnotation={titleAnnotation}
-                subtitle={subtitle}
-                subtitleFormat={subtitleFormat}
-                footer={footer}
-                dissolve={fading}
-                dismiss={this.dismissTooltip}
-            >
-                <TooltipTable
-                    columns={toTooltipTableColumns(columns)}
-                    rows={sortedData.map((series) => {
-                        const {
-                            seriesName,
-                            displayName,
-                            isProjection: striped,
-                        } = series
-                        const annotation = getAnnotationsForSeries(
-                            this.annotationsMap,
-                            seriesName
-                        )
-
-                        const point = series.points.find(
-                            (point) => point.x === target.time
-                        )
-
-                        const blurred =
-                            this.hoverStateForSeries(series).background ||
-                            series.focus.background ||
-                            point === undefined
-
-                        const color = this.hasColorScale
-                            ? darkenColorForLine(
-                                  this.chartState.getColorScaleColor(
-                                      point?.colorValue
-                                  )
-                              )
-                            : series.color
-                        const opacity = blurred ? GRAPHER_OPACITY_MUTE : 1
-                        const swatch = { color, opacity }
-
-                        const values = excludeUndefined([
-                            point?.y,
-                            point?.colorValue as undefined | number,
-                        ])
-
-                        return {
-                            name: displayName,
-                            annotation,
-                            swatch,
-                            blurred,
-                            striped,
-                            values,
-                        }
-                    })}
-                />
-            </Tooltip>
-        )
-    }
-
-    private defaultRightPadding = 1
-
-    private lineLegendHoveredSeriesName: SeriesName | undefined = undefined
-    private hoverTimer: number | undefined = undefined
-
-    @action.bound private onLineLegendMouseOver(seriesName: SeriesName): void {
+    @action.bound private onVerticalLabelMouseEnter(
+        seriesName: SeriesName
+    ): void {
+        this.chartState.focusArray.clear()
         clearTimeout(this.hoverTimer)
-        this.lineLegendHoveredSeriesName = seriesName
+        this.hoveredLabelSeriesName = seriesName
     }
 
-    @action.bound private clearLineLegendHover(): void {
-        this.lineLegendHoveredSeriesName = undefined
+    @action.bound private clearVerticalLabelHover(): void {
+        this.hoveredLabelSeriesName = undefined
     }
 
-    @action.bound private clearHighlightedSeries(): void {
+    @action.bound private debouncedClearVerticalLabelHover(): void {
         clearTimeout(this.hoverTimer)
 
         // Wait before clearing selection in case the mouse is moving
         // quickly over neighboring labels
         this.hoverTimer = window.setTimeout(() => {
-            this.clearLineLegendHover()
+            this.clearVerticalLabelHover()
         }, 200)
     }
 
-    @action.bound private onLineLegendMouseLeave(): void {
-        this.clearHighlightedSeries()
-    }
-
-    @action.bound private onLineLegendClick(seriesName: SeriesName): void {
-        this.chartState.focusArray.toggle(seriesName)
+    @action.bound private onVerticalLabelMouseLeave(): void {
+        this.debouncedClearVerticalLabelHover()
     }
 
     @computed private get hoveredSeriesNames(): string[] {
         const { externalLegendHoverBin } = this.manager
         const hoveredSeriesNames = excludeUndefined([
-            this.lineLegendHoveredSeriesName,
+            this.hoveredLabelSeriesName,
         ])
         if (externalLegendHoverBin) {
             hoveredSeriesNames.push(
@@ -499,10 +336,6 @@ export class LineChart
             // the currently hovered series
             (!!this.manager.externalLegendHoverBin && !this.hasColorScale)
         )
-    }
-
-    @computed private get canToggleFocusMode(): boolean {
-        return !isTouchDevice() && this.series.length > 1
     }
 
     @computed private get hasTimeHighlights(): boolean {
@@ -565,11 +398,11 @@ export class LineChart
         return !!this.manager.hidePoints
     }
 
-    @computed private get lineLegendX(): number {
-        return this.bounds.right - this.lineLegendWidth
+    @computed private get verticalLabelsX(): number {
+        return this.bounds.right - this.verticalLabelsWidth
     }
 
-    @computed private get lineLegendY(): [number, number] {
+    @computed private get verticalLabelsYRange(): [number, number] {
         return [
             this.boundsWithoutColorLegend.top,
             this.boundsWithoutColorLegend.bottom,
@@ -602,18 +435,21 @@ export class LineChart
             .on("end", () => this.forceUpdate()) // Important in case bounds changes during transition
     }
 
-    @computed private get lineLegendWidth(): number {
-        if (!this.manager.showLegend) return 0
-
-        // only pass props that are required to calculate
-        // the width to avoid circular dependencies
-        return LineLegend.stableWidth({
-            series: this.lineLegendSeries,
-            maxWidth: this.maxLineLegendWidth,
+    @computed private get verticalLabelsState(): VerticalLabelsState {
+        return new VerticalLabelsState(this.verticalLabelsSeries, {
+            yAxis: () => this.yAxis,
+            yRange: () => this.verticalLabelsYRange,
+            maxWidth: this.maxVerticalLabelsWidth,
             fontSize: this.fontSize,
             fontWeight: this.fontWeight,
             verticalAlign: VerticalAlign.top,
+            showRegionTooltip: !this.isStatic,
         })
+    }
+
+    @computed private get verticalLabelsWidth(): number {
+        if (!this.manager.showSeriesLabels) return 0
+        return this.verticalLabelsState.stableWidth
     }
 
     private renderDualAxis(): React.ReactElement {
@@ -641,24 +477,13 @@ export class LineChart
         const { manager } = this
         return (
             <>
-                {manager.showLegend && (
-                    <LineLegend
-                        series={this.lineLegendSeries}
-                        yAxis={this.yAxis}
-                        x={this.lineLegendX}
-                        yRange={this.lineLegendY}
-                        maxWidth={this.maxLineLegendWidth}
-                        verticalAlign={VerticalAlign.top}
-                        fontSize={this.fontSize}
-                        fontWeight={this.fontWeight}
-                        isStatic={this.isStatic}
-                        onMouseOver={this.onLineLegendMouseOver}
-                        onMouseLeave={this.onLineLegendMouseLeave}
-                        onClick={
-                            this.canToggleFocusMode
-                                ? this.onLineLegendClick
-                                : undefined
-                        }
+                {manager.showSeriesLabels && (
+                    <VerticalLabels
+                        state={this.verticalLabelsState}
+                        x={this.verticalLabelsX}
+                        onMouseEnter={this.onVerticalLabelMouseEnter}
+                        onMouseLeave={this.onVerticalLabelMouseLeave}
+                        interactive={!this.isStatic}
                     />
                 )}
                 <Lines
@@ -714,7 +539,14 @@ export class LineChart
 
                 {(this.isTooltipActive || this.hasTimeHighlights) &&
                     this.activeXVerticalLines}
-                {this.tooltip}
+                <LineChartTooltip
+                    id={this.tooltipId}
+                    chartState={this.chartState}
+                    tooltipState={this.tooltipState}
+                    series={this.renderSeries}
+                    xAxisLabel={this.xAxis.label}
+                    dismissTooltip={this.dismissTooltip}
+                />
             </g>
         )
     }
@@ -754,11 +586,7 @@ export class LineChart
     }
 
     @computed private get hasColorLegend(): boolean {
-        return (
-            this.hasColorScale &&
-            !!this.manager.showLegend &&
-            !this.manager.isDisplayedAlongsideComplementaryTable
-        )
+        return this.hasColorScale && !!this.manager.showLegend
     }
 
     @computed get legendX(): number {
@@ -851,7 +679,7 @@ export class LineChart
 
     // Order of the legend items on a line chart should visually correspond
     // to the order of the lines as the approach the legend
-    @computed private get lineLegendSeries(): LineLabelSeries[] {
+    @computed private get verticalLabelsSeries(): LabelSeries[] {
         // If there are any projections, ignore non-projection legends (bit of a hack)
         let series = this.series
         if (series.some((series) => !!series.isProjection))
@@ -867,21 +695,20 @@ export class LineChart
         }
 
         return deduplicatedSeries.map((series) => {
-            const { seriesName, displayName, color } = series
+            const { seriesName, displayName, color, focus } = series
             const lastValue = R.last(series.points)!.y
+            const hover = this.hoverStateForSeries(series)
             return {
                 color,
                 seriesName,
-                // E.g. https://ourworldindata.org/grapher/size-poverty-gap-world
-                label: !this.manager.showLegend ? "" : displayName,
+                label: !this.manager.showSeriesLabels ? "" : displayName,
                 annotation: getAnnotationsForSeries(
-                    this.annotationsMap,
+                    this.chartState.annotationsMap,
                     seriesName
                 ),
                 yValue: lastValue,
-                focus: series.focus,
-                hover: this.hoverStateForSeries(series),
-            } satisfies LineLabelSeries
+                emphasis: resolveEmphasis({ focus, hover }),
+            } satisfies LabelSeries
         })
     }
 
@@ -892,9 +719,14 @@ export class LineChart
     }
 
     @computed private get xAxisConfig(): AxisConfig {
-        const { xAxisConfig } = this.manager
-        const custom = { hideGridlines: true }
-        return new AxisConfig({ ...custom, ...xAxisConfig }, this)
+        const { xAxisConfig, hasScatter } = this.manager
+        const customConfig = { hideGridlines: true }
+
+        // If a secondary scatter tab is present, then the xAxisConfig
+        // applies to the scatter's x-axis, not the line chart's time axis
+        const userConfig = hasScatter ? undefined : xAxisConfig
+
+        return new AxisConfig({ ...customConfig, ...userConfig }, this)
     }
 
     @computed private get horizontalAxisPart(): HorizontalAxis {
@@ -909,9 +741,7 @@ export class LineChart
         return (
             this.boundsWithoutColorLegend
                 .padRight(
-                    this.manager.showLegend
-                        ? this.lineLegendWidth
-                        : this.defaultRightPadding
+                    this.manager.showSeriesLabels ? this.verticalLabelsWidth : 1
                 )
                 // The top padding leaves room for tick labels.
                 // No padding is needed when plotted on a log axis because the
@@ -940,7 +770,7 @@ export class LineChart
     }
 
     @computed get externalLegend(): HorizontalColorLegendManager | undefined {
-        if (!this.manager.showLegend) {
+        if (!this.manager.showSeriesLabels) {
             const numericLegendData = this.hasColorScale
                 ? this.numericLegendData
                 : []

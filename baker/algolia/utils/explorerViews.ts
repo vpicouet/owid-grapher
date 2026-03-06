@@ -23,12 +23,13 @@ import {
     ChartRecord,
     ChartRecordType,
     ExplorerType,
+    IndexingContext,
 } from "@ourworldindata/types"
 
 import * as db from "../../../db/db.js"
 import { DATA_API_URL } from "../../../settings/serverSettings.js"
 import { getUniqueNamesFromTagHierarchies } from "@ourworldindata/utils"
-import { getAnalyticsPageviewsByUrlObj } from "../../../db/model/Pageview.js"
+import { createExplorersIndexingContext } from "./context.js"
 import {
     CsvUnenrichedExplorerViewRecord,
     EnrichedExplorerRecord,
@@ -45,10 +46,13 @@ import {
     FinalizedExplorerRecord,
 } from "./types.js"
 import {
+    EMPTY_DATASET_CHART_RECORD_DIMENSIONS,
     MAX_NON_FM_RECORD_SCORE,
     maybeAddChangeInPrefix,
+    parseJsonStringArray,
     processAvailableEntities as processRecordAvailableEntities,
     scaleRecordScores,
+    uniqNonEmptyStrings,
 } from "./shared.js"
 
 /**
@@ -171,22 +175,32 @@ async function fetchIndicatorMetadata(
         { etlPaths: new Set<string>(), ids: new Set<number>() }
     )
 
-    const metadataFromDB = (
-        await trx
-            .table("variables")
-            .select(
-                "id",
-                "catalogPath",
-                "name",
-                "titlePublic",
-                "display",
-                "descriptionShort"
-            )
-            .whereIn("id", [...ids])
-            .orWhereIn("catalogPath", [...etlPaths])
-    ).map((row) => ({
+    const rawMetadataFromDb = await trx
+        .table("variables as v")
+        .select(
+            "v.id",
+            "v.catalogPath",
+            "v.name",
+            "v.titlePublic",
+            "v.display",
+            "v.descriptionShort",
+            "ddv.datasetNamespace",
+            "ddv.datasetVersion",
+            "ddv.datasetProduct",
+            "ddv.datasetProducers"
+        )
+        .leftJoin(
+            "dataset_dimensions_by_variable as ddv",
+            "v.id",
+            "ddv.variableId"
+        )
+        .whereIn("v.id", [...ids])
+        .orWhereIn("v.catalogPath", [...etlPaths])
+
+    const metadataFromDB = rawMetadataFromDb.map((row) => ({
         ...row,
         display: row.display ? JSON.parse(row.display) : {},
+        datasetProducers: parseJsonStringArray(row.datasetProducers),
     })) as ExplorerIndicatorMetadataFromDb[]
 
     const indicatorMetadataByIdAndPath = {
@@ -409,10 +423,19 @@ const fetchGrapherInfo = async (
         .select(
             trx.raw("charts.id as id"),
             trx.raw("chart_configs.full->>'$.title' as title"),
-            trx.raw("chart_configs.full->>'$.subtitle' as subtitle")
+            trx.raw("chart_configs.full->>'$.subtitle' as subtitle"),
+            "ddc.datasetNamespaces",
+            "ddc.datasetVersions",
+            "ddc.datasetProducts",
+            "ddc.datasetProducers"
         )
         .from("charts")
         .join("chart_configs", { "charts.configId": "chart_configs.id" })
+        .leftJoin(
+            "dataset_dimensions_by_chart as ddc",
+            "charts.id",
+            "ddc.chartId"
+        )
         .whereIn("charts.id", grapherIds)
         .andWhereRaw("chart_configs.full->>'$.isPublished' = 'true'")
         .then((rows) => _.keyBy(rows, "id"))
@@ -433,6 +456,11 @@ async function enrichRecordWithGrapherInfo(
         return
     }
 
+    const datasetNamespaces = parseJsonStringArray(grapher.datasetNamespaces)
+    const datasetVersions = parseJsonStringArray(grapher.datasetVersions)
+    const datasetProducts = parseJsonStringArray(grapher.datasetProducts)
+    const datasetProducers = parseJsonStringArray(grapher.datasetProducers)
+
     return {
         ...record,
         availableEntities:
@@ -441,6 +469,10 @@ async function enrichRecordWithGrapherInfo(
         viewTitle: grapher.title,
         viewSubtitle: grapher.subtitle,
         titleLength: grapher.title.length,
+        datasetNamespaces,
+        datasetVersions,
+        datasetProducts,
+        datasetProducers,
     }
 }
 
@@ -495,6 +527,8 @@ async function enrichRecordWithTableData(
         ...record,
         availableEntities,
         titleLength: viewTitle.length,
+        // CSV explorers don't use ETL variables
+        ...EMPTY_DATASET_CHART_RECORD_DIMENSIONS,
     }
 }
 
@@ -520,15 +554,26 @@ async function enrichRecordWithIndicatorData(
     record: IndicatorUnenrichedExplorerViewRecord,
     indicatorMetadataDictionary: ExplorerIndicatorMetadataDictionary
 ): Promise<IndicatorEnrichedExplorerViewRecord | undefined> {
-    const allEntityNames = _.at(
+    const indicatorMetadata = _.at(
         indicatorMetadataDictionary,
         record.yVariableIds
-    )
-        .filter(Boolean)
-        .flatMap((meta) => meta.entityNames)
+    ).filter(Boolean)
 
-    const uniqueNonEmptyEntityNames = _.uniq(allEntityNames).filter(
-        (name): name is string => !!name
+    const availableEntities = uniqNonEmptyStrings(
+        indicatorMetadata.map((meta) => meta.entityNames)
+    )
+
+    const datasetNamespaces = uniqNonEmptyStrings(
+        indicatorMetadata.map((meta) => meta.datasetNamespace)
+    )
+    const datasetVersions = uniqNonEmptyStrings(
+        indicatorMetadata.map((meta) => meta.datasetVersion)
+    )
+    const datasetProducts = uniqNonEmptyStrings(
+        indicatorMetadata.map((meta) => meta.datasetProduct)
+    )
+    const datasetProducers = uniqNonEmptyStrings(
+        indicatorMetadata.map((meta) => meta.datasetProducers)
     )
 
     const firstYIndicator = record.yVariableIds[0]
@@ -555,10 +600,14 @@ async function enrichRecordWithIndicatorData(
 
     return {
         ...record,
-        availableEntities: uniqueNonEmptyEntityNames,
+        availableEntities,
         viewTitle,
         viewSubtitle,
         titleLength: viewTitle.length,
+        datasetNamespaces,
+        datasetVersions,
+        datasetProducts,
+        datasetProducers,
     }
 }
 
@@ -641,6 +690,7 @@ async function finalizeRecords(
                 numDimensions: record.yVariableIds.length,
                 numRelatedArticles: 0,
                 title: record.viewTitle as string,
+                containerTitle: explorerInfo.title,
                 subtitle: record.viewSubtitle!,
                 slug: explorerInfo.slug,
                 queryParams: record.viewQueryParams,
@@ -654,6 +704,11 @@ async function finalizeRecords(
                 titleLength: record.titleLength,
                 isFirstExplorerView: record.isFirstExplorerView,
                 isIncomeGroupSpecificFM: false,
+                isFM: false,
+                datasetNamespaces: record.datasetNamespaces,
+                datasetVersions: record.datasetVersions,
+                datasetProducts: record.datasetProducts,
+                datasetProducers: record.datasetProducers,
             }) as Omit<FinalizedExplorerRecord, "viewTitleIndexWithinExplorer">
     )
 
@@ -768,13 +823,11 @@ export const getExplorerViewRecordsForExplorer = async (
     return finalizeRecords(enrichedRecords, slug, pageviews, explorerInfo)
 }
 
-async function getExplorersWithInheritedTags(trx: db.KnexReadonlyTransaction) {
+async function getExplorersWithInheritedTags(
+    trx: db.KnexReadonlyTransaction,
+    topicHierarchies: IndexingContext["topicHierarchies"]
+) {
     const explorersBySlug = await db.getPublishedExplorersBySlug(trx)
-    // The DB query gets the tags for the explorer, but we need to add the parent tags as well.
-    // This isn't done in the query because it would require a recursive CTE.
-    // It's easier to write that query once, separately, and reuse it.
-    const topicHierarchiesByChildName =
-        await db.getTopicHierarchiesByChildName(trx)
     const publishedExplorersWithTags = []
 
     for (const explorer of Object.values(explorersBySlug)) {
@@ -790,7 +843,7 @@ async function getExplorersWithInheritedTags(trx: db.KnexReadonlyTransaction) {
         }
         const topicTags = getUniqueNamesFromTagHierarchies(
             explorer.tags,
-            topicHierarchiesByChildName
+            topicHierarchies
         )
 
         publishedExplorersWithTags.push({
@@ -804,14 +857,24 @@ async function getExplorersWithInheritedTags(trx: db.KnexReadonlyTransaction) {
 
 export const getExplorerViewRecords = async (
     trx: db.KnexReadonlyTransaction,
-    skipGrapherViews = false
+    options?: {
+        slug?: string
+        skipGrapherViews?: boolean
+        baseContext?: IndexingContext
+    }
 ): Promise<FinalizedExplorerRecord[]> => {
+    const { slug, skipGrapherViews = false, baseContext } = options ?? {}
+
     console.log("Getting explorer view records")
     if (skipGrapherViews) {
         console.log("(Skipping grapher views)")
     }
-    const publishedExplorersWithTags = await getExplorersWithInheritedTags(trx)
-    const pageviews = await getAnalyticsPageviewsByUrlObj(trx)
+
+    const context = await createExplorersIndexingContext(trx, baseContext)
+
+    const publishedExplorersWithTags = (
+        await getExplorersWithInheritedTags(trx, context.topicHierarchies)
+    ).filter((e) => slug === undefined || e.slug === slug)
 
     const explorerAdminServer = new ExplorerAdminServer()
 
@@ -821,7 +884,7 @@ export const getExplorerViewRecords = async (
             getExplorerViewRecordsForExplorer(
                 trx,
                 explorerInfo,
-                pageviews,
+                context.pageviews,
                 explorerAdminServer,
                 skipGrapherViews
             ),

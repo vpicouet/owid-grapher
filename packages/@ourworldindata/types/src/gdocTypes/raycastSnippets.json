@@ -31,7 +31,7 @@
     },
     {
         "name": "chart",
-        "text": "{.chart}\nurl: \ncaption: \n{}",
+        "text": "{.chart}\nurl: \ncaption: \npeerCountries: \n{}",
         "keyword": "+chart"
     },
     {
@@ -238,5 +238,30 @@
         "name": "conditional-section",
         "text": "{.conditional-section}\ninclude: \nexclude: \n[.+content]\n\n[]\n{}",
         "keyword": "+conditional-section"
+    },
+    {
+        "name": "data-callout",
+        "text": "{.data-callout}\nurl: \n[.+content]\n\n[]\n{}",
+        "keyword": "+data-callout"
+    },
+    {
+        "name": "explore-data-section",
+        "text": "{.explore-data-section}\ntitle: \nalign: \n[.+content]\n\n[]\n{}",
+        "keyword": "+explore-data-section"
+    },
+    {
+        "name": "featured-data-insights",
+        "text": "{.featured-data-insights}\n{}",
+        "keyword": "+featured-data-insights"
+    },
+    {
+        "name": "featured-metrics",
+        "text": "{.featured-metrics}\n{}",
+        "keyword": "+featured-metrics"
+    },
+    {
+        "name": "country-profile-selector",
+        "text": "{.country-profile-selector}\nurl: \n{}",
+        "keyword": "+country-profile-selector"
     }
 ]

@@ -60,6 +60,8 @@ import {
     RawBlockScript,
     RawBlockStaticViz,
     RawBlockConditionalSection,
+    RawBlockDataCallout,
+    RawBlockCountryProfileSelector,
 } from "@ourworldindata/types"
 import { match } from "ts-pattern"
 
@@ -134,6 +136,7 @@ function* rawBlockChartToArchieMLString(
         yield* propertyToArchieMLString("size", block.value)
         yield* propertyToArchieMLString("caption", block.value)
         yield* propertyToArchieMLString("visibility", block.value)
+        yield* propertyToArchieMLString("peerCountries", block.value)
     }
     yield "{}"
 }
@@ -1000,6 +1003,34 @@ function* rawBlockSocialsToArchieMLString(
     yield "[]"
 }
 
+function* rawBlockDataCalloutToArchieMLString(
+    block: RawBlockDataCallout
+): Generator<string, void, undefined> {
+    yield "{.data-callout}"
+    if (typeof block.value !== "string") {
+        yield* propertyToArchieMLString("url", block.value)
+        if (block.value.content) {
+            yield "[.+content]"
+            for (const contentBlock of block.value.content) {
+                yield* OwidRawGdocBlockToArchieMLStringGenerator(contentBlock)
+            }
+            yield "[]"
+        }
+    }
+    yield "{}"
+}
+
+function* rawBlockCountryProfileSelectorToArchieMLString(
+    block: RawBlockCountryProfileSelector
+): Generator<string, void, undefined> {
+    yield "{.country-profile-selector}"
+    yield* propertyToArchieMLString("url", block.value)
+    yield* propertyToArchieMLString("title", block.value)
+    yield* propertyToArchieMLString("description", block.value)
+    yield* propertyToArchieMLString("defaultCountries", block.value)
+    yield "{}"
+}
+
 export function* OwidRawGdocBlockToArchieMLStringGenerator(
     block: OwidRawGdocBlock | RawBlockTableRow
 ): Generator<string, void, undefined> {
@@ -1116,6 +1147,11 @@ export function* OwidRawGdocBlockToArchieMLStringGenerator(
             rawBlockFeaturedDataInsightsToArchieMLString
         )
         .with({ type: "socials" }, rawBlockSocialsToArchieMLString)
+        .with({ type: "data-callout" }, rawBlockDataCalloutToArchieMLString)
+        .with(
+            { type: "country-profile-selector" },
+            rawBlockCountryProfileSelectorToArchieMLString
+        )
         .exhaustive()
     yield* content
 }

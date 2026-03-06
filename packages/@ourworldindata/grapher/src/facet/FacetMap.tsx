@@ -5,7 +5,7 @@ import {
     GridParameters,
     HorizontalAlign,
     Color,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     exposeInstanceOnWindow,
     SplitBoundsPadding,
 } from "@ourworldindata/utils"
@@ -41,10 +41,8 @@ import {
 } from "../legend/HorizontalColorLegends"
 import { CategoricalBin, ColorScaleBin } from "../color/ColorScaleBin"
 import { GRAPHER_DARK_TEXT, GRAY_30 } from "../color/ColorConstants"
-import {
-    LegendInteractionState,
-    LegendStyleConfig,
-} from "../legend/LegendInteractionState"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 import {
     MAP_LEGEND_MAX_WIDTH_RATIO,
     MapChart,
@@ -455,14 +453,14 @@ export class FacetMap
             : undefined
     }
 
-    getLegendBinState(bin: ColorScaleBin): LegendInteractionState {
+    resolveLegendBinEmphasis(bin: ColorScaleBin): Emphasis {
         if (!this.legendHoverBin && !this.mapConfig.hoverCountry) {
-            return LegendInteractionState.Default
+            return Emphasis.Default
         }
 
         // Check if this bin is being hovered
         if (this.legendHoverBin && bin.equals(this.legendHoverBin)) {
-            return LegendInteractionState.Focused
+            return Emphasis.Highlighted
         }
 
         // Check if a country is being hovered and matches this bin
@@ -473,10 +471,10 @@ export class FacetMap
                 )
             )
             if (series.some((s) => s?.color === bin.color))
-                return LegendInteractionState.Focused
+                return Emphasis.Highlighted
         }
 
-        return LegendInteractionState.Muted
+        return Emphasis.Muted
     }
 
     @computed get legendStyleConfig(): LegendStyleConfig | undefined {
@@ -511,11 +509,11 @@ export class FacetMap
         const mapAspectRatio = MAP_VIEWPORT_FACETED_WORLD.ratio
 
         // Find the map's width and height
-        let mapWidth = bounds.width
+        const mapWidth = bounds.width
         let mapHeight = mapWidth / mapAspectRatio
         if (mapHeight > bounds.height) {
             mapHeight = bounds.height
-            mapWidth = mapHeight * mapAspectRatio
+            // mapWidth = mapHeight * mapAspectRatio
         }
 
         // Move the label closer to the map if there is vertical padding
@@ -587,7 +585,7 @@ export class FacetMap
                             >
                                 {seriesName}
                             </text>
-                            <g id={makeIdForHumanConsumption(seriesName)}>
+                            <g id={makeFigmaId(seriesName)}>
                                 <ChartComponent
                                     manager={series.manager}
                                     chartType={GRAPHER_MAP_TYPE}

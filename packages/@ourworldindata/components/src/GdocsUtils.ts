@@ -98,6 +98,12 @@ export function getPrefixedGdocPath(
         )
         .with(
             {
+                content: { type: OwidGdocType.Profile },
+            },
+            () => `${prefix}/profile/${gdoc.slug}`
+        )
+        .with(
+            {
                 content: { type: OwidGdocType.DataInsight },
             },
             () => `${prefix}/data-insights/${gdoc.slug}`
@@ -107,12 +113,6 @@ export function getPrefixedGdocPath(
                 content: { type: OwidGdocType.Author },
             },
             () => `${prefix}/team/${gdoc.slug}`
-        )
-        .with(
-            {
-                content: { type: OwidGdocType.Profile },
-            },
-            () => `${prefix}/profile/${gdoc.slug}`
         )
         .with(
             {

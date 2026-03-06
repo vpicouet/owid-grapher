@@ -34,7 +34,8 @@ export interface DropdownOptionGroup<
 }
 
 export type DropdownCollectionItem<DropdownOption extends BasicDropdownOption> =
-    DropdownOption | DropdownOptionGroup<DropdownOption>
+    | DropdownOption
+    | DropdownOptionGroup<DropdownOption>
 
 export type DropdownCollection<DropdownOption extends BasicDropdownOption> =
     DropdownCollectionItem<DropdownOption>[]
@@ -194,8 +195,14 @@ export function Dropdown<DropdownOption extends BasicDropdownOption>({
                     aria-label="Clear selection"
                 />
             )}
+            {/* Note: "portaled-popover" class is used by SlideInDrawer to detect
+                clicks inside portaled popovers. Update both if renaming. */}
             <Popover
-                className={cx("grapher-dropdown-menu", menuClassName)}
+                className={cx(
+                    "grapher-dropdown-menu",
+                    "portaled-popover",
+                    menuClassName
+                )}
                 offset={4}
                 UNSTABLE_portalContainer={portalContainer}
             >

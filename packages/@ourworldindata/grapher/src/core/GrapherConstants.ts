@@ -63,11 +63,11 @@ export const GRAPHER_FRAME_PADDING_HORIZONTAL = 16
 
 export const STATIC_EXPORT_DETAIL_SPACING = 8
 
-export const GRAPHER_OPACITY_MUTE = 0.5
+export const GRAPHER_OPACITY_MUTED = 0.5
 
 export const GRAPHER_AREA_OPACITY_DEFAULT = 0.8
-export const GRAPHER_AREA_OPACITY_MUTE = 0.3
-export const GRAPHER_AREA_OPACITY_FOCUS = 1
+export const GRAPHER_AREA_OPACITY_MUTED = 0.3
+export const GRAPHER_AREA_OPACITY_HIGHLIGHTED = 1
 
 export const GRAPHER_TEXT_OUTLINE_FACTOR = 0.25
 
@@ -100,8 +100,7 @@ export const isWorldEntityName = (entityName: EntityName): boolean =>
 
 export const CONTINENTS_INDICATOR_ID = 900801 // "Countries Continent"
 export const POPULATION_INDICATOR_ID_USED_IN_ADMIN = 953899 // "Population (various sources, 2024-07-15)"
-export const POPULATION_INDICATOR_ID_USED_IN_ENTITY_SELECTOR = 953903 // "Population (historical) (various sources, 2024-07-15)"
-export const GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ENTITY_SELECTOR = 900793 // "GDP per capita - Maddison Project Database (2024-04-26)"
+export const GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ADMIN = 1144914 // "GDP per capita, PPP (constant 2021 international $)"
 
 export const isContinentsVariableId = (id: string | number): boolean =>
     id.toString() === CONTINENTS_INDICATOR_ID.toString()
@@ -114,20 +113,19 @@ const population_regex =
     /^grapher\/demography\/[\d-]+\/population\/(population#population|historical#population_historical)$/
 
 /**
- * Manually configured list of sources that define geographic regions.
+ * Manually configured list of providers that define geographic regions.
  *
- * By convention, entities are named with the format 'RegionName (Source)',
+ * By convention, entities are named with the format 'RegionName (Provider)',
  * such as 'Africa (UN)' or 'Africa (FAO)'.
  *
- * These source identifiers are used to compile group of regions for the
+ * These provider identifiers are used to compile groups of regions for the
  * filter dropdown in the entity selector and on the data tab.
  *
  * Ideally, all regions would be defined in the ETL's regions file,
  * but currently we need to maintain this manual configuration until the
  * regions file is more complete.
  */
-export const CUSTOM_REGION_SOURCE_IDS = [
-    "un",
+export const ADDITIONAL_REGION_DATA_PROVIDERS = [
     "fao",
     "ei",
     "pip",
@@ -139,7 +137,14 @@ export const CUSTOM_REGION_SOURCE_IDS = [
     "undp",
     "wid",
     "oecd",
+    "unsd",
+    "unm49",
+    "maddison",
+    "ilo",
 ] as const
+
+export type AdditionalRegionDataProvider =
+    (typeof ADDITIONAL_REGION_DATA_PROVIDERS)[number]
 
 export const isPopulationVariableETLPath = (path: string): boolean => {
     return population_regex.test(path)
@@ -171,3 +176,9 @@ export const CHART_TYPES_THAT_SHOW_ALL_ENTITIES: GrapherChartType[] = [
     GRAPHER_CHART_TYPES.ScatterPlot,
     GRAPHER_CHART_TYPES.Marimekko,
 ]
+
+export interface FontSettings {
+    fontSize: number
+    fontWeight: number
+    lineHeight: number
+}

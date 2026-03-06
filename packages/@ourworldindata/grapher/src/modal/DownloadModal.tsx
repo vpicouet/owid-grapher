@@ -19,7 +19,6 @@ import {
     CodeSnippet,
     OverlayHeader,
     RadioButton,
-    LoadingIndicator,
 } from "@ourworldindata/components"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import {
@@ -30,6 +29,7 @@ import {
     faSpinner,
 } from "@fortawesome/free-solid-svg-icons"
 import {
+    type GrapherQueryParams,
     OwidColumnDef,
     OwidOrigin,
     QueryParams,
@@ -63,25 +63,26 @@ export interface DownloadModalManager {
     baseUrl?: string
     queryStr?: string
     externalQueryParams?: QueryParams
-    inputTable?: OwidTable
-    transformedTable?: OwidTable
-    tableForDisplay?: OwidTable
+    tableForDownload: OwidTable
+    filteredTableForDownload: OwidTable
     yColumnsFromDimensionsOrSlugsOrAuto?: CoreColumn[]
     detailsOrderedByReference?: string[]
     activeModal?: GrapherModal
     frameBounds?: Bounds
     captionedChartBounds?: Bounds
     isOnChartOrMapTab?: boolean
-    isOnTableTab?: boolean
     isOnArchivalPage?: boolean
     hasArchivedPage?: boolean
     showAdminControls?: boolean
     isWikimediaExport?: boolean
     isPublished?: boolean
-    activeColumnSlugs?: string[]
+    inputColumnSlugs?: string[]
     isServerSideDownloadAvailable?: boolean
     logImageDownloadEvent?: (action: GrapherImageDownloadEvent) => void
     activeDownloadModalTab: DownloadModalTabName
+    isOnMapTab?: boolean
+    isOnChartTab?: boolean
+    isOnTableTab?: boolean
 }
 
 interface DownloadModalProps {
@@ -389,8 +390,6 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
     }
 
     override render(): React.ReactElement {
-        if (!this.isReady) return <LoadingIndicator color="#000" />
-
         const {
             manager,
             svgPreviewUrl,
@@ -400,6 +399,7 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
             showInteractiveEmbedTip,
         } = this
         const pngPreviewUrl = this.pngPreviewUrl || this.fallbackPngUrl
+        const isRegenerating = !this.isReady
 
         let previewWidth: number
         let previewHeight: number
@@ -468,6 +468,7 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
                                 <button
                                     className="download-modal__download-button download-modal__download-button--variant-copy"
                                     onClick={this.onCopyPng}
+                                    disabled={isRegenerating}
                                 >
                                     <FontAwesomeIcon icon={faCopy} />
                                     Copy PNG
@@ -479,6 +480,7 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
                                 previewImageUrl={pngPreviewUrl}
                                 onClick={this.onPngDownload}
                                 imageStyle={imageStyle}
+                                isRegenerating={isRegenerating}
                             />
                             <DownloadButton
                                 title="Vector graphic (SVG)"
@@ -486,6 +488,7 @@ export class DownloadModalVisTab extends React.Component<DownloadModalProps> {
                                 previewImageUrl={svgPreviewUrl}
                                 onClick={this.onSvgDownload}
                                 imageStyle={imageStyle}
+                                isRegenerating={isRegenerating}
                             />
                         </div>
                         {this.showExportControls && (
@@ -570,7 +573,7 @@ interface DataDownloadContextClientSide extends DataDownloadContextBase {
     // Only needed for local CSV generation
     fullTable: OwidTable
     filteredTable: OwidTable
-    activeColumnSlugs: string[] | undefined
+    inputColumnSlugs: string[] | undefined
 }
 
 const createCsvBlobLocally = async (ctx: DataDownloadContextClientSide) => {
@@ -578,10 +581,7 @@ const createCsvBlobLocally = async (ctx: DataDownloadContextClientSide) => {
         ctx.csvDownloadType === CsvDownloadType.Full
             ? ctx.fullTable
             : ctx.filteredTable
-    const csv = downloadTable.toPrettyCsv(
-        ctx.shortColNames,
-        ctx.activeColumnSlugs
-    )
+    const csv = downloadTable.toPrettyCsv({ useShortNames: ctx.shortColNames })
 
     return new Blob([csv], { type: "text/csv;charset=utf-8" })
 }
@@ -597,6 +597,7 @@ const getDownloadSearchParams = (ctx: DataDownloadContextServerSide) => {
             .exhaustive()
     )
     searchParams.set("useColumnShortNames", ctx.shortColNames.toString())
+
     const otherParams =
         ctx.csvDownloadType === CsvDownloadType.CurrentSelection
             ? // Append all the current grapher settings, e.g.
@@ -604,7 +605,14 @@ const getDownloadSearchParams = (ctx: DataDownloadContextServerSide) => {
               ctx.searchParams
             : // Use the base grapher settings + mdim dimensions.
               ctx.externalSearchParams
+
+    const SEARCH_PARAMS_TO_EXCLUDE: string[] = [
+        "overlay", // always present when the modal is open, but just polluting the download URL
+    ] satisfies (keyof GrapherQueryParams)[]
+
     for (const [key, value] of otherParams.entries()) {
+        if (SEARCH_PARAMS_TO_EXCLUDE.includes(key)) continue
+
         searchParams.set(key, value)
     }
     return searchParams
@@ -887,7 +895,7 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
     const { yColumnsFromDimensionsOrSlugsOrAuto: yColumns } = props.manager
 
     const { cols: nonRedistributableCols, sourceLinks } =
-        getNonRedistributableInfo(props.manager.inputTable)
+        getNonRedistributableInfo(props.manager.tableForDownload)
 
     // Server-side download is not necessarily available for all types of charts
     const serverSideDownloadAvailable =
@@ -913,23 +921,19 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
                 props.manager.baseUrl ??
                 `/grapher/${props.manager.displaySlug}`,
 
-            fullTable: props.manager.inputTable ?? BlankOwidTable(),
+            fullTable: props.manager.tableForDownload ?? BlankOwidTable(),
             filteredTable:
-                (props.manager.isOnTableTab
-                    ? props.manager.tableForDisplay
-                    : props.manager.transformedTable) ?? BlankOwidTable(),
-            activeColumnSlugs: props.manager.activeColumnSlugs,
+                props.manager.filteredTableForDownload ?? BlankOwidTable(),
+            inputColumnSlugs: props.manager.inputColumnSlugs,
         }
     }, [
         props.manager.baseUrl,
         props.manager.displaySlug,
         props.manager.queryStr,
         props.manager.externalQueryParams,
-        props.manager.isOnTableTab,
-        props.manager.inputTable,
-        props.manager.transformedTable,
-        props.manager.tableForDisplay,
-        props.manager.activeColumnSlugs,
+        props.manager.tableForDownload,
+        props.manager.filteredTableForDownload,
+        props.manager.inputColumnSlugs,
     ])
 
     const onDownloadClick = useCallback(
@@ -1034,8 +1038,14 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
 
     const firstYColDef = yColumns?.[0]?.def as OwidColumnDef | undefined
 
+    const activeView = props.manager.isOnTableTab
+        ? "table"
+        : props.manager.isOnMapTab
+          ? "map"
+          : "chart"
+
     const fullDataDescription = `Includes all entities and time points`
-    const filteredDataDescription = `Includes only the entities and time points currently visible in the chart`
+    const filteredDataDescription = `Includes only the entities and time points currently visible in the ${activeView}`
 
     const fullTableRowCountSnippet = makeNumberOfRowsSnippet(
         downloadCtx.fullTable.numRows
@@ -1046,7 +1056,7 @@ export const DownloadModalDataTab = (props: DownloadModalProps) => {
 
     return (
         <>
-            <SourceAndCitationSection table={props.manager.inputTable} />
+            <SourceAndCitationSection table={props.manager.tableForDownload} />
             <div className="download-modal__data-section">
                 <div className="download-modal__heading-with-caption">
                     <h3 className="grapher_h3-semibold">Quick download</h3>
@@ -1100,10 +1110,11 @@ interface DownloadButtonProps {
     previewImageUrl?: string
     imageStyle?: React.CSSProperties
     tracking?: string
+    isRegenerating?: boolean
 }
 
 function DownloadButton(props: DownloadButtonProps): React.ReactElement {
-    const { onClick } = props
+    const { onClick, isRegenerating = false } = props
 
     const [isDownloading, setIsDownloading] = useState(false)
     const [showLoadingUI, setShowLoadingUI] = useState(false)
@@ -1130,7 +1141,7 @@ function DownloadButton(props: DownloadButtonProps): React.ReactElement {
             })}
             onClick={handleClick}
             data-track-note={props.tracking}
-            disabled={isDownloading}
+            disabled={isDownloading || isRegenerating}
         >
             {props.icon && (
                 <div className="download-modal__option-icon">{props.icon}</div>
@@ -1148,7 +1159,7 @@ function DownloadButton(props: DownloadButtonProps): React.ReactElement {
                     </p>
                     {showLoadingUI && (
                         <p className="grapher_label-1-regular download-modal__download-button-loading-label">
-                            Downloading…
+                            Loading…
                         </p>
                     )}
                 </div>

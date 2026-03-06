@@ -50,10 +50,8 @@ import {
     isProjectedDataBin,
     NumericBin,
 } from "../color/ColorScaleBin"
-import {
-    LegendInteractionState,
-    LegendStyleConfig,
-} from "../legend/LegendInteractionState"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 import {
     ColumnSlug,
     GrapherVariant,
@@ -61,7 +59,7 @@ import {
 } from "@ourworldindata/types"
 import { ClipPath, makeClipPath } from "../chart/ChartUtils"
 import { NoDataModal } from "../noDataModal/NoDataModal"
-import { Component, createRef } from "react"
+import { Component, createRef, PointerEvent } from "react"
 import { ChoroplethMap } from "./ChoroplethMap"
 import { ChoroplethGlobe } from "./ChoroplethGlobe"
 import { GlobeController } from "./GlobeController"
@@ -156,7 +154,7 @@ export class MapChart
         }
     }
 
-    @action.bound onMapMouseMove(ev: React.MouseEvent): void {
+    @action.bound onMapPointerMove(ev: PointerEvent): void {
         const ref = this.manager?.base?.current
         if (ref) {
             this.tooltipState.position = getRelativeMouse(ref, ev)
@@ -483,28 +481,28 @@ export class MapChart
         return undefined
     }
 
-    getLegendBinState(bin: ColorScaleBin): LegendInteractionState {
+    resolveLegendBinEmphasis(bin: ColorScaleBin): Emphasis {
         if (!this.categoricalHoverBracket && !this.numericHoverBracket)
-            return LegendInteractionState.Default
+            return Emphasis.Default
 
         // Check if this bin is being hovered
         if (
             this.categoricalHoverBracket &&
             bin.equals(this.categoricalHoverBracket)
         ) {
-            return LegendInteractionState.Focused
+            return Emphasis.Highlighted
         }
         if (this.numericHoverBracket && bin.equals(this.numericHoverBracket)) {
-            return LegendInteractionState.Focused
+            return Emphasis.Highlighted
         }
 
-        return LegendInteractionState.Muted
+        return Emphasis.Muted
     }
 
     legendStyleConfig: LegendStyleConfig = {
         marker: {
             default: { stroke: DEFAULT_STROKE_COLOR },
-            focused: {
+            highlighted: {
                 stroke: HOVER_STROKE_COLOR,
                 strokeWidth: HOVER_STROKE_WIDTH,
             },
@@ -535,8 +533,6 @@ export class MapChart
     @computed private get categoryLegend():
         | HorizontalCategoricalColorLegend
         | undefined {
-        if (this.manager.isDisplayedAlongsideComplementaryTable)
-            return undefined
         return this.manager.showLegend && this.categoricalLegendData.length > 1
             ? new HorizontalCategoricalColorLegend({ manager: this })
             : undefined
@@ -545,8 +541,6 @@ export class MapChart
     @computed private get numericLegend():
         | HorizontalNumericColorLegend
         | undefined {
-        if (this.manager.isDisplayedAlongsideComplementaryTable)
-            return undefined
         return this.manager.showLegend && this.numericLegendData.length > 1
             ? new HorizontalNumericColorLegend({ manager: this })
             : undefined
@@ -674,7 +668,7 @@ export class MapChart
             <g
                 ref={this.base}
                 className={MAP_CHART_CLASSNAME}
-                onMouseMove={this.onMapMouseMove}
+                onPointerMove={this.onMapPointerMove}
             >
                 {this.renderMapOrGlobe()}
                 {this.renderMapLegend()}

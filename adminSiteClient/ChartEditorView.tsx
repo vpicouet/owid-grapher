@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import * as _ from "lodash-es"
 import * as React from "react"
 import { observer } from "mobx-react"
@@ -376,6 +377,7 @@ export class ChartEditorView<
     disposers: IReactionDisposer[] = []
     override componentWillUnmount(): void {
         this.disposers.forEach((dispose) => dispose())
+        this.editor?.dispose()
     }
 
     override render(): React.ReactElement {
@@ -394,6 +396,9 @@ export class ChartEditorView<
         const { grapherState, availableTabs } = editor
 
         const chartEditor = isChartEditorInstance(editor) ? editor : undefined
+        const queryParams = chartEditor?.forceDatapage
+            ? "?forceDatapage=true"
+            : ""
 
         return (
             <>
@@ -499,7 +504,7 @@ export class ChartEditorView<
                     {grapherState.id && (
                         <a
                             className="preview"
-                            href={`/admin/charts/${grapherState.id}/preview`}
+                            href={`/admin/charts/${grapherState.id}/preview${queryParams}`}
                             target="_blank"
                             rel="noopener"
                         >

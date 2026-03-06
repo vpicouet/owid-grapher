@@ -33,8 +33,8 @@ import {
     GrapherAnalytics,
     GrapherState,
     fetchInputTableForConfig,
-    loadVariableDataAndMetadata,
     FetchInputTableForConfigFn,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import {
     Bounds,
@@ -43,6 +43,7 @@ import {
     exposeInstanceOnWindow,
     isInIFrame,
     keyMap,
+    dimensionsToViewId,
     merge,
     mergeGrapherConfigs,
     omitUndefinedValues,
@@ -83,6 +84,7 @@ import { TransformParamType } from "@ourworldindata/core-table/src/Transforms.js
 export interface ExplorerProps extends SerializedGridProgram {
     grapherConfigs?: GrapherInterface[]
     partialGrapherConfigs?: GrapherInterface[]
+    chartConfigIdByViewId?: Record<string, string>
     queryStr?: string
     isEmbeddedInAnOwidPage?: boolean
     isInStandalonePage?: boolean
@@ -92,6 +94,7 @@ export interface ExplorerProps extends SerializedGridProgram {
     bakedBaseUrl: string
     bakedGrapherUrl: string
     dataApiUrl: string
+    catalogUrl: string
     bounds?: Bounds
     staticBounds?: Bounds
     loadMetadataOnly?: boolean
@@ -243,14 +246,10 @@ export class Explorer
             adminBaseUrl: this.adminBaseUrl,
             canHideExternalControlsInEmbed: true,
             archiveContext: props.archiveContext,
-            additionalDataLoaderFn: (
-                varId: number,
-                loadMetadataOnly?: boolean
-            ) =>
-                loadVariableDataAndMetadata(varId, this.dataApiUrl, {
+            additionalDataLoaderFn: (catalogKey) =>
+                loadCatalogData(catalogKey, {
+                    baseUrl: this.props.catalogUrl,
                     assetMap: assetMaps?.runtime,
-                    noCache: props.isPreview,
-                    loadMetadataOnly,
                 }),
         })
 
@@ -262,6 +261,7 @@ export class Explorer
         program: ExplorerProps,
         grapherConfigs: GrapherInterface[],
         partialGrapherConfigs: GrapherInterface[],
+        chartConfigIdByViewId: Record<string, string> | undefined,
         explorerConstants: Record<string, string>,
         urlMigrationSpec?: ExplorerPageUrlMigrationSpec,
         archiveContext?: ArchiveContext
@@ -274,6 +274,7 @@ export class Explorer
             isEmbeddedInAnOwidPage: false,
             isInStandalonePage: true,
             archiveContext,
+            chartConfigIdByViewId,
         }
 
         if (window.location.href.includes(EXPLORERS_PREVIEW_ROUTE)) {
@@ -322,6 +323,7 @@ export class Explorer
 
     bakedBaseUrl = this.props.bakedBaseUrl
     dataApiUrl = this.props.dataApiUrl
+    catalogUrl = this.props.catalogUrl
     adminBaseUrl = this.props.adminBaseUrl
     bakedGrapherUrl = this.props.bakedGrapherUrl
 
@@ -382,7 +384,8 @@ export class Explorer
                     if (entry.isIntersecting) {
                         this.analytics.logExplorerView(
                             this.explorerProgram.slug,
-                            this.explorerProgram.decisionMatrix.currentParams
+                            this.explorerProgram.decisionMatrix.currentParams,
+                            this.getChartConfigIdForCurrentParams()
                         )
                         observer.disconnect()
                     }
@@ -535,8 +538,22 @@ export class Explorer
 
         this.analytics.logExplorerView(
             this.explorerProgram.slug,
-            this.explorerProgram.decisionMatrix.currentParams
+            this.explorerProgram.decisionMatrix.currentParams,
+            this.getChartConfigIdForCurrentParams()
         )
+    }
+
+    private getChartConfigIdForCurrentParams() {
+        // We get the params this way to match the logic on the backend.
+        // `this.currentChoiceParams` gives a different result.
+        const decisionMatrix = this.explorerProgram.decisionMatrix
+        const selectedRow = decisionMatrix.table.rowsAt([
+            decisionMatrix.selectedRowIndex,
+        ])[0]
+        if (!selectedRow) return undefined
+        const params = decisionMatrix.getChoiceParamsForRow(selectedRow)
+        const viewId = dimensionsToViewId(params)
+        return this.props.chartConfigIdByViewId?.[viewId]
     }
 
     @action.bound private setGrapherTable(table: OwidTable) {
@@ -859,7 +876,7 @@ export class Explorer
 
     @computed private get currentChoiceParams(): ExplorerChoiceParams {
         const { decisionMatrix } = this.explorerProgram
-        return decisionMatrix.currentParams
+        return decisionMatrix.toConstrainedOptions()
     }
 
     @computed get queryParams(): ExplorerFullQueryParams {
@@ -917,7 +934,10 @@ export class Explorer
                 () =>
                     this.grapher?.debounceMode
                         ? debouncedPushParams()
-                        : pushParams()
+                        : pushParams(),
+                // Fire immediately to update the URL if initial params were
+                // invalid (e.g. an unavailable choice was requested)
+                { fireImmediately: true }
             )
         )
     }

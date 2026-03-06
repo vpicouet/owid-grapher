@@ -10,7 +10,7 @@ import {
     SortOrder,
     getRelativeMouse,
     EntitySelectionMode,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     dyFromAlign,
     exposeInstanceOnWindow,
 } from "@ourworldindata/utils"
@@ -30,7 +30,11 @@ import {
     VerticalAlign,
     ColorScaleConfigInterface,
 } from "@ourworldindata/types"
-import { OwidTable, CoreColumn } from "@ourworldindata/core-table"
+import {
+    OwidTable,
+    CoreColumn,
+    ColumnTypeMap,
+} from "@ourworldindata/core-table"
 import { getShortNameForEntity } from "../chart/ChartUtils"
 import {
     LEGEND_STYLE_FOR_STACKED_CHARTS,
@@ -49,10 +53,8 @@ import {
     HorizontalColorLegendManager,
 } from "../legend/HorizontalColorLegends"
 import { CategoricalBin, ColorScaleBin } from "../color/ColorScaleBin"
-import {
-    LegendInteractionState,
-    LegendStyleConfig,
-} from "../legend/LegendInteractionState"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
 import { ColorScale } from "../color/ColorScale"
 import { SelectionArray } from "../selection/SelectionArray"
@@ -327,21 +329,19 @@ export class MarimekkoChart
         return []
     }
 
-    getLegendBinState(bin: ColorScaleBin): LegendInteractionState {
+    resolveLegendBinEmphasis(bin: ColorScaleBin): Emphasis {
         const { focusColorBin } = this
 
         // If nothing is focused, all items are active
         if (!focusColorBin && this.hoverColors.length === 0)
-            return LegendInteractionState.Default
+            return Emphasis.Default
 
         const isHovered = this.hoverColors?.includes(bin.color)
-        if (isHovered) return LegendInteractionState.Focused
+        if (isHovered) return Emphasis.Highlighted
 
         // Check if this bin matches the focused color bin
         const isFocused = focusColorBin && bin.equals(focusColorBin)
-        return isFocused
-            ? LegendInteractionState.Focused
-            : LegendInteractionState.Muted
+        return isFocused ? Emphasis.Highlighted : Emphasis.Muted
     }
 
     legendStyleConfig: LegendStyleConfig = LEGEND_STYLE_FOR_STACKED_CHARTS
@@ -367,7 +367,7 @@ export class MarimekkoChart
     @computed private get showLegend(): boolean {
         return (
             (!!this.colorColumnSlug || this.categoricalLegendData.length > 1) &&
-            !this.manager.isDisplayedAlongsideComplementaryTable
+            !!this.manager.showLegend
         )
     }
 
@@ -524,8 +524,7 @@ export class MarimekkoChart
         return (
             <g
                 ref={this.base}
-                id={makeIdForHumanConsumption("marimekko-chart")}
-                className="MarimekkoChart"
+                id={makeFigmaId("marimekko-chart")}
                 onMouseMove={(ev): void => this.onMouseMove(ev)}
                 onMouseLeave={(): void => this.dismissTooltip()}
             >
@@ -593,7 +592,10 @@ export class MarimekkoChart
                         )}
                         {colorColumn &&
                             !colorColumn.isMissing &&
-                            tooltipItem?.entityColor && (
+                            tooltipItem?.entityColor &&
+                            !(
+                                colorColumn instanceof ColumnTypeMap.Continent
+                            ) && (
                                 <TooltipValue
                                     label={
                                         colorScale.legendDescription ??
@@ -996,10 +998,7 @@ export class MarimekkoChart
                         : markerNetHeight - directionUnawareMakerYMid
                 labelLines.push(
                     <g
-                        id={makeIdForHumanConsumption(
-                            "label-line",
-                            item.labelKey
-                        )}
+                        id={makeFigmaId("label-line", item.labelKey)}
                         className="indicator"
                         key={`labelline-${item.labelKey}`}
                     >
@@ -1025,8 +1024,7 @@ export class MarimekkoChart
 
             labelLines.push(
                 <g
-                    id={makeIdForHumanConsumption("label-line", item.labelKey)}
-                    className="indicator"
+                    id={makeFigmaId("label-line", item.labelKey)}
                     key={`labelline-${item.labelKey}`}
                 >
                     <path
@@ -1051,8 +1049,7 @@ export class MarimekkoChart
         const placedLabels = this.labelsWithPlacementInfo.map((item) => (
             <g
                 key={`label-${item.labelKey}`}
-                id={makeIdForHumanConsumption("label", item.labelKey)}
-                className="bar-label"
+                id={makeFigmaId("label", item.labelKey)}
                 transform={`translate(${item.correctedPlacement}, ${labelOffset})`}
             >
                 {item.label}

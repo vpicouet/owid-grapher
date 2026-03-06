@@ -1,6 +1,6 @@
 import * as _ from "lodash-es"
 import * as React from "react"
-import { makeIdForHumanConsumption } from "@ourworldindata/utils"
+import { makeFigmaId } from "@ourworldindata/utils"
 import { TextWrap } from "@ourworldindata/components"
 import { computed, makeObservable } from "mobx"
 import { observer } from "mobx-react"
@@ -11,11 +11,11 @@ import {
 import { ColorScaleBin, NumericBin } from "../color/ColorScaleBin"
 import { GRAPHER_DARK_TEXT } from "../color/ColorConstants"
 import {
-    LegendInteractionState,
     LegendStyleConfig,
     LegendMarkerStyle,
     LegendTextStyle,
-} from "../legend/LegendInteractionState"
+} from "./LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 
 export interface VerticalColorLegendManager {
     maxLegendWidth?: number
@@ -28,7 +28,7 @@ export interface VerticalColorLegendManager {
     legendX?: number
     legendY?: number
     isStatic?: boolean
-    getLegendBinState?: (bin: ColorScaleBin) => LegendInteractionState
+    resolveLegendBinEmphasis?: (bin: ColorScaleBin) => Emphasis
     legendStyleConfig?: LegendStyleConfig
     categoricalLegendStyleConfig?: LegendStyleConfig
 }
@@ -78,6 +78,7 @@ export class VerticalColorLegend extends React.Component<{
             fontWeight: 700,
             lineHeight: 1,
             text: this.manager.legendTitle,
+            separators: [" ", "-"],
         })
     }
 
@@ -114,6 +115,7 @@ export class VerticalColorLegend extends React.Component<{
                 fontSize,
                 lineHeight: 1,
                 text: label,
+                separators: [" ", "-"],
             })
             const width = rectSize + rectPadding + textWrap.width
             const height = Math.max(textWrap.height, rectSize)
@@ -154,11 +156,8 @@ export class VerticalColorLegend extends React.Component<{
         )
     }
 
-    private getBinState(bin: ColorScaleBin): LegendInteractionState {
-        return (
-            this.manager.getLegendBinState?.(bin) ??
-            LegendInteractionState.Default
-        )
+    private getBinState(bin: ColorScaleBin): Emphasis {
+        return this.manager.resolveLegendBinEmphasis?.(bin) ?? Emphasis.Default
     }
 
     private getTextStyleConfig(bin: ColorScaleBin): LegendTextStyle {
@@ -181,7 +180,7 @@ export class VerticalColorLegend extends React.Component<{
         const { series, rectSize, rectPadding } = this
 
         return (
-            <g id={makeIdForHumanConsumption("labels")}>
+            <g id={makeFigmaId("labels")}>
                 {series.map((series) => {
                     const style = this.getTextStyleConfig(series.bin)
 
@@ -204,7 +203,7 @@ export class VerticalColorLegend extends React.Component<{
         const { series, rectSize, rectPadding } = this
 
         return (
-            <g id={makeIdForHumanConsumption("swatches")}>
+            <g id={makeFigmaId("swatches")}>
                 {series.map((series) => {
                     const style = this.getMarkerStyleConfig(series.bin)
 
@@ -215,7 +214,7 @@ export class VerticalColorLegend extends React.Component<{
 
                     return (
                         <rect
-                            id={makeIdForHumanConsumption(series.textWrap.text)}
+                            id={makeFigmaId(series.textWrap.text)}
                             key={series.textWrap.text}
                             x={this.legendX}
                             y={renderedTextPosition[1] - rectSize}
@@ -277,7 +276,7 @@ export class VerticalColorLegend extends React.Component<{
     override render(): React.ReactElement {
         return (
             <g
-                id={makeIdForHumanConsumption("vertical-color-legend")}
+                id={makeFigmaId("vertical-color-legend")}
                 className="ScatterColorLegend clickable"
             >
                 {this.title &&

@@ -12,12 +12,10 @@ import {
     countries,
     regions,
     getRegionByNameOrVariantName,
-} from "./regions.js"
+} from "./regions/index.js"
 import {
     OwidGdocType,
     type OwidGdocProfileContent,
-    type OwidGdocProfileInterface,
-    OwidGdocPublicationContext,
     BlockSize,
 } from "@ourworldindata/types"
 
@@ -80,24 +78,6 @@ const buildProfileTemplate = (): OwidGdocProfileContent => ({
     },
 })
 
-const buildProfile = (scope?: string): OwidGdocProfileInterface => ({
-    id: "profile-test",
-    slug: "profile-test-slug",
-    content: {
-        ...buildProfileTemplate(),
-        scope: scope ?? "",
-    },
-    contentMd5: "md5",
-    published: true,
-    createdAt: new Date("2025-10-30T00:00:00Z"),
-    updatedAt: new Date("2025-10-30T00:00:00Z"),
-    publishedAt: new Date("2025-10-30T00:00:00Z"),
-    revisionId: "rev-1",
-    publicationContext: OwidGdocPublicationContext.listed,
-    manualBreadcrumbs: null,
-    markdown: null,
-})
-
 describe("instantiateProfile", () => {
     it("replaces placeholders with articulated entity name and code", () => {
         const country = getCountryByName("United States") as Country
@@ -146,7 +126,7 @@ describe("instantiateProfile", () => {
         expect(instantiated.title).toEqual("France Energy Profile")
     })
 
-    it("regenerates the table of contents with replaced tokens", () => {
+    it("does not generate TOC (deferred to instantiateProfileForEntity)", () => {
         const country = getCountryByName("Canada") as Country
         const template: OwidGdocProfileContent = {
             ...buildProfileTemplate(),
@@ -168,11 +148,9 @@ describe("instantiateProfile", () => {
 
         const instantiated = instantiateProfile(template, country)
 
-        expect(instantiated.toc?.[0]).toMatchObject({
-            title: "How much does Canada emit?",
-            slug: "how-much-does-canada-emit",
-            isSubheading: false,
-        })
+        // TOC generation is now deferred to instantiateProfileForEntity,
+        // after data-callout blocks with missing data have been cleared
+        expect(instantiated.toc).toBeUndefined()
     })
 
     it("formats possessives for articulated names", () => {
@@ -230,17 +208,13 @@ describe("instantiateProfile", () => {
 
 describe("getEntitiesForProfile", () => {
     it("returns an empty list when the scope is blank", () => {
-        const profile = buildProfile("")
-
-        const entities = getEntitiesForProfile(profile)
+        const entities = getEntitiesForProfile("")
 
         expect(entities).toEqual([])
     })
 
     it("returns specific countries when they're the only ones specified", () => {
-        const profile = buildProfile("United States, Canada")
-
-        const entities = getEntitiesForProfile(profile)
+        const entities = getEntitiesForProfile("United States, Canada")
 
         expect(entities).toHaveLength(2)
         expect(entities).toEqual(
@@ -252,9 +226,7 @@ describe("getEntitiesForProfile", () => {
     })
 
     it("returns all countries when scope is 'countries'", () => {
-        const profile = buildProfile("countries")
-
-        const entities = getEntitiesForProfile(profile)
+        const entities = getEntitiesForProfile("countries")
 
         expect(entities).toHaveLength(countries.length)
         expect(entities).toEqual(
@@ -266,12 +238,11 @@ describe("getEntitiesForProfile", () => {
     })
 
     it("returns continents when scope is 'continents'", () => {
-        const profile = buildProfile("continents")
         const continents = regions.filter(
             (region) => region.regionType === "continent"
         )
 
-        const entities = getEntitiesForProfile(profile)
+        const entities = getEntitiesForProfile("continents")
 
         expect(entities).toHaveLength(continents.length)
         const europe = getRegionByNameOrVariantName("Europe")
@@ -287,9 +258,7 @@ describe("getEntitiesForProfile", () => {
     })
 
     it("deduplicates entities referenced by name or code", () => {
-        const profile = buildProfile("United States, USA")
-
-        const entities = getEntitiesForProfile(profile)
+        const entities = getEntitiesForProfile("United States, USA")
 
         expect(entities).toHaveLength(1)
         expect(entities[0]).toMatchObject({
@@ -299,18 +268,65 @@ describe("getEntitiesForProfile", () => {
     })
 
     it("includes both countries and regions when scope is 'all'", () => {
-        const profile = buildProfile("all")
         const continents = regions.filter(
             (region) => region.regionType === "continent"
         )
 
-        const entities = getEntitiesForProfile(profile)
+        const entities = getEntitiesForProfile("all")
 
         expect(entities).toHaveLength(countries.length + continents.length)
         expect(entities).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ code: "USA" }),
                 expect.objectContaining({ code: "OWID_EUR" }),
+            ])
+        )
+    })
+
+    it("exclude specific entities when exclude is provided", () => {
+        const entities = getEntitiesForProfile(
+            "United States, Canada, Mexico",
+            "Canada"
+        )
+
+        expect(entities).toHaveLength(2)
+        expect(entities).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ code: "USA" }),
+                expect.objectContaining({ code: "MEX" }),
+            ])
+        )
+        expect(entities).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ code: "CAN" })])
+        )
+    })
+
+    it("exclude multiple entities when exclude contains multiple values", () => {
+        const entities = getEntitiesForProfile(
+            "countries",
+            "United States, Canada"
+        )
+
+        expect(entities).not.toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ code: "USA" }),
+                expect.objectContaining({ code: "CAN" }),
+            ])
+        )
+        expect(entities.length).toBe(countries.length - 2)
+    })
+
+    it("handles exclude with no matching entities gracefully", () => {
+        const entities = getEntitiesForProfile(
+            "United States, Canada",
+            "Narnia"
+        )
+
+        expect(entities).toHaveLength(2)
+        expect(entities).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ code: "USA" }),
+                expect.objectContaining({ code: "CAN" }),
             ])
         )
     })

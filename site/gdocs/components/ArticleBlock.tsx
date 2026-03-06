@@ -60,6 +60,8 @@ import { FeaturedDataInsights } from "../../FeaturedDataInsights.js"
 import { BlockQueryClientProvider } from "./BlockQueryClientProvider.js"
 import { ExploreDataSection } from "./ExploreDataSection.js"
 import { LTPTableOfContents } from "./LTPTableOfContents.js"
+import { DataCallout } from "./DataCallout.js"
+import { CountryProfileSelector } from "./CountryProfileSelector.js"
 
 function ArticleBlockInternal({
     b: block,
@@ -937,6 +939,15 @@ function ArticleBlockInternal({
             <Socials
                 className={getLayout("socials", containerType)}
                 links={block.links}
+            />
+        ))
+        .with({ type: "data-callout" }, (block) => (
+            <DataCallout block={block} containerType={containerType} />
+        ))
+        .with({ type: "country-profile-selector" }, (block) => (
+            <CountryProfileSelector
+                block={block}
+                className={getLayout("country-profile-selector", containerType)}
             />
         ))
         .exhaustive()

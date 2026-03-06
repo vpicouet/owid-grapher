@@ -38,7 +38,7 @@ tmp-logs
 packages/@ourworldindata/*/dist/
 packages/@ourworldindata/*/node_modules
 wpmigration
-# dist/ - KEEPING WEBPACK ASSETS IN GIT (56MB, under 100MB limit)
+dist/
 .wrangler/
 .nx/cache
 .nx/workspace-data
@@ -55,8 +55,5 @@ playwright-report/
 # Sentry Config File
 .env.sentry-build-plugin
 
-*.gz
-
-*.out
-
-.tmp.driveupload/
+# Claude
+.claude/settings.local.json

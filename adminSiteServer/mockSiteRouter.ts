@@ -54,6 +54,7 @@ import {
     getEntitiesForProfile,
     ALL_GDOC_TYPES,
 } from "@ourworldindata/utils"
+import { checkShouldProfileRender } from "../db/model/Gdoc/dataCallouts.js"
 import {
     EXPLORERS_ROUTE_FOLDER,
     explorerUrlMigrationsById,
@@ -282,6 +283,7 @@ getPlainRouteWithROTransaction(
                 await renderPreviewDataPageOrGrapherPage(
                     chartRow.config,
                     chartRow.id,
+                    chartRow.forceDatapage,
                     trx
                 )
             res.send(previewDataPageOrGrapherPage)
@@ -323,17 +325,16 @@ getPlainRouteWithROTransaction(
     "/data-insights{/:pageNumberOrSlug}",
     async (req, res, trx) => {
         const topicName = req.query.topic as string | undefined
-        let topicTag: TopicTag | undefined
-        try {
-            topicTag = topicName
+        const topicSlug = topicName
+            ? await getSlugForTopicTag(trx, topicName)
+            : undefined
+        let topicTag: TopicTag | undefined =
+            topicName && topicSlug
                 ? {
                       name: topicName,
-                      slug: await getSlugForTopicTag(trx, topicName),
+                      slug: topicSlug,
                   }
                 : undefined
-        } catch {
-            topicTag = undefined
-        }
 
         const totalPageCount = calculateDataInsightIndexPageCount(
             await db.getPublishedDataInsightCount(trx, topicTag?.slug)
@@ -704,7 +705,10 @@ getPlainRouteWithROTransaction(
                 return res.status(404).send(renderNotFoundPage())
             }
 
-            const entitiesInScope = getEntitiesForProfile(gdoc as GdocProfile)
+            const entitiesInScope = getEntitiesForProfile(
+                gdoc.content.scope,
+                gdoc.content.exclude
+            )
             const isEntityInScope = entitiesInScope.some(
                 (profileEntity) => profileEntity.code === entity.code
             )
@@ -712,10 +716,15 @@ getPlainRouteWithROTransaction(
                 return res.status(404).send(renderNotFoundPage())
             }
 
-            const instantiatedProfile = instantiateProfileForEntity(
+            const instantiatedProfile = await instantiateProfileForEntity(
                 gdoc as GdocProfile,
-                entity
+                entity,
+                { knex: trx }
             )
+
+            if (!checkShouldProfileRender(instantiatedProfile.content)) {
+                return res.status(404).send(renderNotFoundPage())
+            }
 
             return res.send(renderGdoc(instantiatedProfile, true))
         } catch (error) {

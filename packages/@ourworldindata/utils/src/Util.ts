@@ -47,7 +47,7 @@ import {
     EXPLORE_DATA_SECTION_DEFAULT_TITLE,
     EXPLORE_DATA_SECTION_ID,
 } from "@ourworldindata/types"
-import { PointVector } from "./PointVector.js"
+import { Point, PointVector } from "./PointVector.js"
 import * as React from "react"
 import { match, P } from "ts-pattern"
 import urlSlug from "url-slug"
@@ -132,7 +132,11 @@ const getRootSVG = (
 
 export const getRelativeMouse = (
     node: Element | SVGGraphicsElement | SVGSVGElement,
-    event: React.TouchEvent | TouchEvent | { clientX: number; clientY: number }
+    event:
+        | React.TouchEvent
+        | TouchEvent
+        | PointerEvent
+        | { clientX: number; clientY: number }
 ): PointVector => {
     const eventOwner = checkIsTouchEvent(event) ? event.targetTouches[0] : event
 
@@ -188,9 +192,7 @@ function makeSafeForFigma(name: string): string {
  *
  * Note that these IDs are not meant to be used in CSS!
  */
-export function makeIdForHumanConsumption(
-    ...unsafeKeys: (string | undefined)[]
-): string {
+export function makeFigmaId(...unsafeKeys: (string | undefined)[]): string {
     return makeSafeForFigma(unsafeKeys.filter((key) => key).join("__"))
 }
 
@@ -331,9 +333,6 @@ export const cagr = (
     )
 }
 
-export const makeAnnotationsSlug = (columnSlug: string): string =>
-    `${columnSlug}-annotations`
-
 // Take an arbitrary string and turn it into a nice url slug
 export const slugify = (str: string, allowSlashes?: boolean): string => {
     // Convert subscript and superscript numbers to regular numbers
@@ -392,12 +391,12 @@ export const guid = (): number => (_guidsDisabledForTesting ? 1 : ++_guid)
 export const TESTING_ONLY_disable_guid = (): boolean =>
     (_guidsDisabledForTesting = true)
 
-// Take an array of points and make it into an SVG path specification string
-export const pointsToPath = (points: Array<[number, number]>): string => {
+/** Create an SVG path from an array of points */
+export const pointsToPath = (points: Point[]): string => {
     let path = ""
     for (let i = 0; i < points.length; i++) {
-        if (i === 0) path += `M${points[i][0]} ${points[i][1]}`
-        else path += `L${points[i][0]} ${points[i][1]}`
+        if (i === 0) path += `M${points[i].x} ${points[i].y}`
+        else path += `L${points[i].x} ${points[i].y}`
     }
     return path
 }
@@ -533,7 +532,7 @@ export async function fetchWithTimeout(
 const _getUserCountryInformation = async (): Promise<
     UserCountryInformation | undefined
 > =>
-    await fetchWithRetry("https://detect-country.owid.io")
+    await fetchWithRetry("https://ourworldindata.org/api/detect-country")
         .then((res) => res.json())
         .then((res) => res.country)
         .catch(() => undefined)
@@ -1284,6 +1283,7 @@ export function extractGdocPageData(gdoc: OwidGdoc) {
         "linkedCharts",
         "linkedNarrativeCharts",
         "linkedIndicators",
+        "linkedCallouts",
         "imageMetadata",
         "relatedCharts",
     ])
@@ -1779,6 +1779,12 @@ export function traverseEnrichedBlock(
                 traverseEnrichedBlock(node, callback, spanCallback)
             }
         })
+        .with({ type: "data-callout" }, (dataCallout) => {
+            callback(dataCallout)
+            for (const node of dataCallout.content) {
+                traverseEnrichedBlock(node, callback, spanCallback)
+            }
+        })
         .with(
             {
                 type: P.union(
@@ -1815,7 +1821,8 @@ export function traverseEnrichedBlock(
                     "featured-data-insights",
                     "latest-data-insights",
                     "socials",
-                    "static-viz"
+                    "static-viz",
+                    "country-profile-selector"
                 ),
             },
             callback
@@ -1836,6 +1843,7 @@ export function spansToUnformattedPlainText(spans: Span[]): string {
                     {
                         spanType: P.union(
                             "span-link",
+                            "span-callout",
                             "span-italic",
                             "span-bold",
                             "span-fallback",
@@ -1965,6 +1973,17 @@ export function lowercaseObjectKeys(
 export const detailOnDemandRegex = /#dod:([\w\-_]+)/
 
 export const guidedChartRegex = /#guide:(https?:\/\/[^\s]+)/
+
+/**
+ * Matches plaintext callout token syntax:
+ * $latestTime(shortName)
+ * $latestValue(shortName)
+ *
+ * Group 1: function name (e.g., "latestTime", "latestValue")
+ * Group 2: parameters (e.g., "shortName")
+ */
+export const plaintextCalloutRegex =
+    /\$(latestValueWithUnit|latestValue|latestTime)\(([^)]*)\)/g
 
 export function extractDetailsFromSyntax(str: string): string[] {
     return [...str.matchAll(new RegExp(detailOnDemandRegex, "g"))].map(
@@ -2363,7 +2382,7 @@ export function dimensionsToViewId(
 ): string {
     return Object.entries(dimensions)
         .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-        .map(([_, value]) => slugify(value))
+        .map(([key, value]) => `${slugify(key)}=${slugify(value)}`)
         .join("__")
         .toLowerCase()
 }

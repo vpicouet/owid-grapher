@@ -2,13 +2,13 @@
 
 - yarn typecheck: runs the typescript typechecker across all files
 - yarn testLintChanged: run eslint on changed files
-- yarn testPrettierChanged: run prettier on changed files
-- yarn fixPrettierChanged: attempt to fix prettier issues on changed files
+- yarn testFormatChanged: check formatting on changed files
+- yarn fixFormatChanged: fix formatting on changed files
 - yarn test run --reporter dot: run unit tests. Uses vitest, can take one or more test filenames to only run a subset.
 - make migrate: apply migrations
 - make dbtest: run database and api tests
 
-When you have completed implementing a big set of changes, run `yarn fixPrettierChanged > /dev/null 2>&1 && yarn typecheck` and fix any errors you have.
+When you have completed implementing a big set of changes, run `yarn fixFormatChanged > /dev/null 2>&1 && yarn typecheck` and fix any errors you have.
 
 When you want to create a git commit, refer to docs/agent-guidelines/commit-messages.md for instructions.
 
@@ -44,7 +44,7 @@ Some key directories, going roughly along the dependency chain from the most sta
 
 Our main datastore is a mysql 8 database. The documentation for this lives in db/docs - there is README.md file which is a good overview and starting point, then one TABLE-NAME.yml file per table describing the table in more detail. ALWAYS list the directory db/docs/ to understand which tables are available and read the relevant table description files before constructing a query or writing a migration.
 
-You can run (read only) queries against the database with `yarn query "QUERY TEXT"` - e.g. if you need to understand the contents of a table of the cardinality of various tables.
+You can run (read only) queries against the database with `yarn query "QUERY TEXT"` - e.g. if you need to understand the contents of a table or the cardinality of various tables. Use `yarn query -s "QUERY TEXT"` to query the staging database for the current git branch (e.g., on branch `images-pageviews` it connects to `staging-site-images-pageviews`).
 
 # Additional documentation
 

@@ -32,6 +32,7 @@ import {
     MinimalExplorerInfo,
     DbEnrichedImage,
     DbEnrichedImageWithUserId,
+    DbEnrichedImageWithPageviews,
     MinimalTag,
     BreadcrumbItem,
     PostsGdocsTableName,
@@ -43,6 +44,7 @@ import {
     TagsTableName,
     TagGraphTableName,
     ExplorersTableName,
+    MultiDimDataPagesTableName,
     OwidGdocMinimalPostInterface,
     DbRawPostGdoc,
 } from "@ourworldindata/types"
@@ -332,7 +334,7 @@ export async function checkIfSlugCollides(
     knex: KnexReadonlyTransaction,
     gdoc: OwidGdocBaseInterface
 ): Promise<boolean> {
-    const existingGdoc = await knex(PostsGdocsTableName)
+    const existingGdocs = await knex(PostsGdocsTableName)
         .where({
             slug: gdoc.slug,
             published: true,
@@ -340,15 +342,15 @@ export async function checkIfSlugCollides(
         .whereNot({
             id: gdoc.id,
         })
-        .first()
-        .then((row) => (row ? parsePostsGdocsRow(row) : undefined))
+        .then((rows) => rows.map(parsePostsGdocsRow))
 
-    if (!existingGdoc) return false
+    if (existingGdocs.length === 0) return false
 
-    const existingCanonicalUrl = getCanonicalUrl("", existingGdoc)
     const incomingCanonicalUrl = getCanonicalUrl("", gdoc)
 
-    return existingCanonicalUrl === incomingCanonicalUrl
+    return existingGdocs.some(
+        (existing) => getCanonicalUrl("", existing) === incomingCanonicalUrl
+    )
 }
 
 export const getPublishedDataInsightCount = (
@@ -900,15 +902,70 @@ export async function selectReplacementChainForImage(
 }
 
 export function getCloudflareImages(
-    trx: KnexReadonlyTransaction
-): Promise<DbEnrichedImage[]> {
-    return knexRaw<DbEnrichedImage>(
+    trx: KnexReadonlyTransaction,
+    options?: {
+        excludeFeaturedImages?: boolean
+        excludeThumbnails?: boolean
+        excludeResearchAndWriting?: boolean
+    }
+): Promise<DbEnrichedImageWithPageviews[]> {
+    const {
+        excludeFeaturedImages = false,
+        excludeThumbnails = false,
+        excludeResearchAndWriting = false,
+    } = options || {}
+
+    let havingClause = ""
+    const conditions: string[] = []
+
+    if (excludeFeaturedImages) {
+        conditions.push("isFeaturedImage = 0")
+        conditions.push("isBodyContent = 1")
+    }
+    if (excludeThumbnails) {
+        conditions.push("i.filename NOT LIKE '%thumbnail%'")
+    }
+    if (excludeResearchAndWriting) {
+        conditions.push("isInResearchAndWriting = 0")
+    }
+
+    if (conditions.length > 0) {
+        havingClause = `HAVING ${conditions.join(" AND ")}`
+    }
+
+    return knexRaw<DbEnrichedImageWithPageviews>(
         trx,
         `-- sql
-        SELECT *
-        FROM images
-        WHERE cloudflareId IS NOT NULL
-        AND replacedBy IS NULL`
+        SELECT
+            i.*,
+            COALESCE(SUM(pv.views_365d), 0) AS views_365d,
+            MAX(CASE WHEN i.filename = pg.content->>'$."featured-image"' THEN 1 ELSE 0 END) AS isFeaturedImage,
+            MAX(CASE WHEN
+                JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body') IS NOT NULL
+                AND (
+                    JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].primary[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].secondary[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].rows[*].articles[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].more.articles[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].latest.articles[*].value.filename') IS NULL
+                )
+            THEN 1 ELSE 0 END) AS isBodyContent,
+            MAX(CASE WHEN
+                JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].primary[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].secondary[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].rows[*].articles[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].more.articles[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].latest.articles[*].value.filename') IS NOT NULL
+            THEN 1 ELSE 0 END) AS isInResearchAndWriting
+        FROM images i
+        LEFT JOIN posts_gdocs_x_images pxi ON i.id = pxi.imageId
+        LEFT JOIN posts_gdocs pg ON pxi.gdocId = pg.id AND pg.published = 1
+        LEFT JOIN analytics_pageviews pv ON pv.url = CONCAT('https://ourworldindata.org/', pg.slug)
+            AND pv.day = (SELECT MAX(day) FROM analytics_pageviews)
+        WHERE i.cloudflareId IS NOT NULL
+        AND i.replacedBy IS NULL
+        GROUP BY i.id
+        ${havingClause}`
     )
 }
 
@@ -1094,7 +1151,7 @@ export const getFeaturedMetricsByParentTagName = async (
 }
 
 /**
- * Takes a URL and checks if it points to a valid grapher, explorer, or MDIM view.
+ * Takes a URL and checks if it points to a valid grapher, explorer, or multi-dim view.
  * Doesn't validate query params as this would be quite complicated / overkill for our needs
  */
 export async function validateChartSlug(
@@ -1135,11 +1192,17 @@ export async function validateChartSlug(
             [slug]
         ).then((rows) => rows[0])
 
-        if (!grapher)
-            return {
-                isValid: false,
-                reason: "Grapher not found or not published",
-            }
+        if (!grapher) {
+            const multiDim = await trx(MultiDimDataPagesTableName)
+                .where({ slug, published: true })
+                .first()
+
+            if (!multiDim)
+                return {
+                    isValid: false,
+                    reason: "Grapher not found or not published",
+                }
+        }
 
         return { isValid: true, reason: "" }
     }

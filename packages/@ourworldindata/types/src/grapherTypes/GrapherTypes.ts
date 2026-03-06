@@ -4,7 +4,7 @@ import {
 } from "../OwidVariableDisplayConfigInterface.js"
 import { ColumnSlugs, EntityName } from "../domainTypes/CoreTableTypes.js"
 import { AxisAlign, Position } from "../domainTypes/Layout.js"
-import { Integer, OwidVariableId } from "../domainTypes/Various.js"
+import { Integer } from "../domainTypes/Various.js"
 import { DetailDictionary } from "../gdocTypes/Gdoc.js"
 import {
     GRAPHER_CHART_TYPES,
@@ -13,12 +13,12 @@ import {
     GRAPHER_TAB_CONFIG_OPTIONS,
     GRAPHER_TAB_QUERY_PARAMS,
 } from "./GrapherConstants.js"
-import { OwidVariableDataMetadataDimensions } from "../OwidVariable.js"
 import { ArchiveContext } from "../domainTypes/Archive.js"
 import {
     BinningStrategyIncludingManual,
     MidpointMode,
 } from "./BinningStrategyTypes.js"
+import { CatalogDataForKey, CatalogKey } from "../CatalogTypes.js"
 
 // Utility type that marks all properties of T that may be undefined as optional.
 export type UndefinedToOptional<T> = Partial<T> & {
@@ -212,10 +212,33 @@ export enum ScatterPointLabelStrategy {
     y = "y",
 }
 
+export enum PeerCountryStrategy {
+    /** Use the containing continent, income group and World as peers */
+    ParentRegions = "parentRegions",
+    /** Use countries with similar GDP per capita as peers */
+    GdpPerCapita = "gdpPerCapita",
+    /** Use countries with similar population as peers */
+    Population = "population",
+    /** Use countries that represent the full data range */
+    DataRange = "dataRange",
+    /** Use the chart's default selection as peers */
+    DefaultSelection = "defaultSelection",
+    /** Use geographically neighboring countries as peers */
+    Neighbors = "neighbors",
+    /** Don't automatically add any peer countries (useful in search) */
+    None = "none",
+}
+
+export type PeerCountryStrategyQueryParam = PeerCountryStrategy | "auto"
+
+/** Valid values for the peerCountries query parameter */
+export const VALID_PEER_COUNTRY_STRATEGY_QUERY_PARAMS: PeerCountryStrategyQueryParam[] =
+    ["auto", ...Object.values(PeerCountryStrategy)]
+
 export enum GrapherTooltipAnchor {
-    // the tooltip is positioned relative to the mouse cursor
+    /** The tooltip is positioned relative to the mouse cursor */
     mouse = "mouse",
-    // the tooltip is pinned to the bottom of the screen
+    /** The tooltip is pinned to the bottom of the screen */
     bottom = "bottom",
 }
 
@@ -449,6 +472,7 @@ export enum ColorSchemeName {
     OwidCategoricalC = "OwidCategoricalC",
     OwidCategoricalD = "OwidCategoricalD",
     OwidCategoricalE = "OwidCategoricalE",
+    OwidCategoricalMap = "OwidCategoricalMap",
     OwidEnergy = "OwidEnergy",
     OwidEnergyLines = "OwidEnergyLines",
     OwidDistinctLines = "OwidDistinctLines",
@@ -522,7 +546,7 @@ export interface GrapherInterface extends SortConfig {
     stackMode?: StackMode
 
     showNoDataArea?: boolean
-    hideLegend?: boolean
+    hideSeriesLabels?: boolean
     logo?: LogoOption
     hideLogo?: boolean
     hideRelativeToggle?: boolean
@@ -552,6 +576,7 @@ export interface GrapherInterface extends SortConfig {
     selectedEntityNames?: EntityName[]
     selectedEntityColors?: { [entityName: string]: string | undefined }
     focusedSeriesNames?: SeriesName[]
+    peerCountryStrategy?: PeerCountryStrategy
     missingDataStrategy?: MissingDataStrategy
     hideFacetControl?: boolean
     facettingLabelByYVariables?: string
@@ -598,6 +623,7 @@ export type GrapherQueryParams = {
     mapSelect?: string
     tableFilter?: string
     tableSearch?: string
+    peerCountries?: string
 }
 
 export type LegacyGrapherQueryParams = GrapherQueryParams & {
@@ -629,7 +655,9 @@ const GRAPHER_ALL_QUERY_PARAMS: Required<LegacyGrapherQueryParams> = {
     mapSelect: "",
     tableFilter: "",
     tableSearch: "",
+    peerCountries: "",
 }
+
 export const GRAPHER_QUERY_PARAM_KEYS = Object.keys(
     GRAPHER_ALL_QUERY_PARAMS
 ) as (keyof LegacyGrapherQueryParams)[]
@@ -653,7 +681,7 @@ export const grapherKeysToSerialize = [
     "addCountryMode",
     "stackMode",
     "showNoDataArea",
-    "hideLegend",
+    "hideSeriesLabels",
     "logo",
     "hideLogo",
     "hideRelativeToggle",
@@ -695,6 +723,7 @@ export const grapherKeysToSerialize = [
     "comparisonLines",
     "relatedQuestions",
     "missingDataStrategy",
+    "peerCountryStrategy",
 
     // internals
     "adminBaseUrl",
@@ -731,9 +760,9 @@ export enum GrapherWindowType {
     drawer = "drawer",
 }
 
-export type AdditionalGrapherDataFetchFn = (
-    varId: OwidVariableId,
-    loadMetadataOnly?: boolean
-) => Promise<OwidVariableDataMetadataDimensions>
-
 export type GrapherTrendArrowDirection = "up" | "right" | "down"
+
+/** Function type for loading additional indicator data from the catalog */
+export type AdditionalGrapherDataFetchFn = <K extends CatalogKey>(
+    catalogKey: K
+) => Promise<CatalogDataForKey<K>>

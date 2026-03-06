@@ -10,6 +10,10 @@ import {
     ColumnTypeMap,
     TimeColumn,
     MissingColumn,
+    makeOriginalTimeSlugFromColumnSlug,
+    ErrorValueTypes,
+    isNotErrorValueOrEmptyCell,
+    makeAnnotationsSlug,
 } from "@ourworldindata/core-table"
 import {
     GrapherChartType,
@@ -62,6 +66,8 @@ import {
     GlobeRegionName,
     GrapherWindowType,
     MapRegionName,
+    OwidTableSlugs,
+    PeerCountryStrategy,
 } from "@ourworldindata/types"
 import {
     objectWithPersistablesToObject,
@@ -80,7 +86,6 @@ import {
     slugify,
     extractDetailsFromSyntax,
     lowerCaseFirstLetterUnlessAbbreviation,
-    getOriginAttributionFragments,
     isTouchDevice,
     omitUndefinedValues,
     firstOfNonEmptyArray,
@@ -95,6 +100,7 @@ import {
     checkIsIncomeGroup,
     checkHasMembers,
     sortNumeric,
+    isMobile,
 } from "@ourworldindata/utils"
 import Cookies from "js-cookie"
 import * as _ from "lodash-es"
@@ -127,6 +133,7 @@ import {
     findValidChartTypeCombination,
     mapChartTypeNameToTabConfigOption,
     mapTabConfigOptionToChartTypeName,
+    getSupportedDimensionsForChartTypes,
 } from "../chart/ChartTabs.js"
 import { makeChartState } from "../chart/ChartTypeMap.js"
 import {
@@ -170,11 +177,11 @@ import {
 } from "../timeline/TimelineController.js"
 import { TooltipManager } from "../tooltip/TooltipProps.js"
 import {
-    EntityRegionTypeGroup,
-    groupEntityNamesByRegionType,
-    EntityNamesByRegionType,
-    isEntityRegionType,
-} from "./EntitiesByRegionType.js"
+    RegionGroup,
+    groupEntitiesByRegionType,
+    EntitiesByRegionGroup,
+    isEntityRegionGroupKey,
+} from "./RegionGroups.js"
 import {
     MinimalNarrativeChartInfo,
     GrapherProgrammaticInterface,
@@ -198,8 +205,6 @@ import {
     CookieKey,
     GRAPHER_PROD_URL,
     BASE_FONT_SIZE,
-    isContinentsVariableId,
-    isPopulationVariableETLPath,
     DEFAULT_GRAPHER_WIDTH,
     DEFAULT_GRAPHER_HEIGHT,
     STATIC_EXPORT_DETAIL_SPACING,
@@ -213,6 +218,10 @@ import {
 } from "./GrapherQueryParamParser.js"
 import { legacyToCurrentGrapherQueryParams } from "./GrapherUrlMigrations.js"
 import { getErrorMessageRelatedQuestionUrl } from "./relatedQuestion.js"
+import {
+    buildSourcesLineFromColumns,
+    pickColumnsForSourcesLine,
+} from "./sourcesLine.js"
 import { ChartManager } from "../chart/ChartManager.js"
 import { CaptionedChartManager } from "../captionedChart/CaptionedChart.js"
 import { SourcesModalManager } from "../modal/SourcesModal.js"
@@ -225,6 +234,7 @@ import { FacetChartManager } from "../facet/FacetChartConstants.js"
 import { EntitySelectorModalManager } from "../modal/EntitySelectorModal.js"
 import { SettingsMenuManager } from "../controls/SettingsMenu.js"
 import { SlopeChartManager } from "../slopeCharts/SlopeChartConstants.js"
+import { selectPeerCountriesForGrapher } from "./PeerCountrySelection.js"
 
 export class GrapherState
     implements
@@ -306,6 +316,9 @@ export class GrapherState
     /** Colors for selected entities */
     selectedEntityColors: { [entityName: string]: string | undefined } = {}
 
+    /** Strategy for selecting peer countries for comparison */
+    peerCountryStrategy: PeerCountryStrategy | undefined = undefined
+
     /** Whether the user can change countries, add additional ones or neither */
     addCountryMode = EntitySelectionMode.MultipleEntities
 
@@ -359,8 +372,11 @@ export class GrapherState
     /** Which logo to show on the upper right side */
     logo: LogoOption | undefined = undefined
 
-    /** Whether to hide the legend */
-    hideLegend: boolean | undefined = false
+    /**
+     * Whether to hide the inline series labels drawn at the end of each
+     * series. Applies to line, slope, and stacked area charts
+     */
+    hideSeriesLabels: boolean | undefined = false
 
     /** Whether to hide the logo */
     hideLogo: boolean | undefined = undefined
@@ -410,7 +426,7 @@ export class GrapherState
      */
     hideTimeline: boolean | undefined = undefined
 
-    /** Stack mode. Only absolute and relative are actively used. */
+    /** Stack mode */
     stackMode = StackMode.absolute
 
     /** Whether to zoom to the selected data points */
@@ -469,8 +485,7 @@ export class GrapherState
     _inputTable: OwidTable = new OwidTable()
 
     /** Optional custom function for fetching additional data beyond the main table */
-    private _additionalDataLoaderFn: AdditionalGrapherDataFetchFn | undefined =
-        undefined
+    additionalDataLoaderFn: AdditionalGrapherDataFetchFn | undefined = undefined
 
     /** The original config as authored, used to detect user changes from authored defaults */
     legacyConfigAsAuthored: Partial<LegacyGrapherInterface> = {}
@@ -507,12 +522,16 @@ export class GrapherState
 
     variant = GrapherVariant.Default
 
+    /** Whether to hide a chart's legends */
+    hideLegend: boolean | undefined = false
+
     /**
-     * Indicates whether the chart is embedded alongside a complementary table.
-     * If that's the case, the chart can be simplified (e.g. hide legends or
-     * annotations) since the table serves as an additional source of information.
+     * Minimal labeling is used in search when a thumbnail is embedded
+     * alongside a complementary table because the table already provides a lot
+     * of information, which is why the chart can be simplified to avoid
+     * redundancy and visual clutter
      */
-    isDisplayedAlongsideComplementaryTable = false
+    useMinimalLabeling = false
 
     // Bounds
     staticBounds: Bounds = DEFAULT_GRAPHER_BOUNDS
@@ -582,11 +601,25 @@ export class GrapherState
     _isInFullScreenMode = false
     windowInnerWidth: number | undefined = undefined
     windowInnerHeight: number | undefined = undefined
+    screenHeight: number | undefined = undefined
 
     enableKeyboardShortcuts: boolean = false
     bindUrlToWindow: boolean = false
 
     slideShow: SlideShowController<any> | undefined = undefined
+
+    private shouldApplyPeerCountries: boolean = false
+
+    /**
+     * Cached promise for peer country application to prevent duplicate operations.
+     *
+     * When peer countries are being applied asynchronously, this stores the promise
+     * so that subsequent calls to applyPeerCountriesIfNeeded() will wait for the
+     * existing operation instead of starting a new one. This prevents race conditions
+     * when the function is called from multiple places (e.g., inputTable setter and
+     * generateStaticSvg).
+     */
+    private peerCountriesPromise: Promise<void> | undefined = undefined
 
     /** Whether the grapher is running in the editor */
     private isEditor =
@@ -617,6 +650,7 @@ export class GrapherState
             stackMode: observable.ref,
             showNoDataArea: observable.ref,
             hideLegend: observable.ref,
+            hideSeriesLabels: observable.ref,
             logo: observable.ref,
             hideLogo: observable.ref,
             hideRelativeToggle: observable.ref,
@@ -634,6 +668,7 @@ export class GrapherState
             hideConnectedScatterLines: observable,
             hideScatterLabels: observable.ref,
             scatterPointLabelStrategy: observable,
+            peerCountryStrategy: observable.ref,
             compareEndPointsOnly: observable.ref,
             matchingEntitiesOnly: observable.ref,
             hideTotalValueLabel: observable.ref,
@@ -665,6 +700,7 @@ export class GrapherState
             _isInFullScreenMode: observable.ref,
             windowInnerWidth: observable.ref,
             windowInnerHeight: observable.ref,
+            screenHeight: observable.ref,
             bakedGrapherURL: observable,
             externalQueryParams: observable.ref,
             _inputTable: observable.ref,
@@ -701,12 +737,12 @@ export class GrapherState
             hasTableTab: observable,
             hideShareButton: observable,
             hideExploreTheDataButton: observable,
-            isDisplayedAlongsideComplementaryTable: observable,
+            useMinimalLabeling: observable,
         })
 
         this.updateFromObject(options)
 
-        this._additionalDataLoaderFn = options.additionalDataLoaderFn
+        this.additionalDataLoaderFn = options.additionalDataLoaderFn
         this.isEmbeddedInAnOwidPage = options.isEmbeddedInAnOwidPage ?? false
         this.isEmbeddedInADataPage = options.isEmbeddedInADataPage ?? false
 
@@ -801,8 +837,8 @@ export class GrapherState
         // These properties wouldn't be serialized in the JSON config by default,
         // so this code extracts them and adds them to the serialized object.
         // Color properties from the color column are stored as obj.colorScale
-        if (this.colorColumnSlug && !obj.colorScale) {
-            const colorColumn = this.inputTable.get(this.colorColumnSlug)
+        if (this.inputColorColumnSlug && !obj.colorScale) {
+            const colorColumn = this.inputTable.get(this.inputColorColumnSlug)
             const colorScaleConfig = ColorScaleConfig.fromDSL(colorColumn.def)
             if (colorScaleConfig) obj.colorScale = colorScaleConfig.toObject()
         }
@@ -845,6 +881,14 @@ export class GrapherState
         } else if (this.areSelectedEntitiesDifferentThanAuthors) {
             // User has changed the selection, use theirs
         } else this.applyOriginalSelectionAsAuthored()
+
+        // Add peer countries if requested
+        if (this.shouldApplyPeerCountries) {
+            void this.applyPeerCountriesIfNeeded().finally(() => {
+                // Ensure peer countries are only applied once on table load
+                this.shouldApplyPeerCountries = false
+            })
+        }
     }
 
     /**
@@ -863,23 +907,27 @@ export class GrapherState
     @computed get tableAfterColorAndSizeToleranceApplication(): OwidTable {
         let table = this.inputTable
 
-        if (this.hasScatter && this.sizeColumnSlug) {
+        if (this.hasScatter && this.inputSizeColumnSlug) {
             const tolerance =
-                table.get(this.sizeColumnSlug)?.display?.tolerance ?? Infinity
-            table = table.interpolateColumnWithTolerance(this.sizeColumnSlug, {
-                toleranceOverride: tolerance,
-            })
+                table.get(this.inputSizeColumnSlug)?.display?.tolerance ??
+                Infinity
+            table = table.interpolateColumnWithTolerance(
+                this.inputSizeColumnSlug,
+                {
+                    toleranceOverride: tolerance,
+                }
+            )
         }
 
         if (
             (this.hasScatter || this.hasMarimekko) &&
-            this.categoricalColorColumnSlug
+            this.inputCategoricalColorColumnSlug
         ) {
             const tolerance =
-                table.get(this.categoricalColorColumnSlug)?.display
+                table.get(this.inputCategoricalColorColumnSlug)?.display
                     ?.tolerance ?? Infinity
             table = table.interpolateColumnWithTolerance(
-                this.categoricalColorColumnSlug,
+                this.inputCategoricalColorColumnSlug,
                 { toleranceOverride: tolerance }
             )
         }
@@ -1036,8 +1084,8 @@ export class GrapherState
                     ? this.selection.selectedEntityNames
                     : availableEntities
             )
-            .when(isEntityRegionType, (filter) => {
-                const regionNames = this.entityNamesByRegionType.get(filter)
+            .when(isEntityRegionGroupKey, (filter) => {
+                const regionNames = this.entitiesByRegionGroup.get(filter)
                 return regionNames ?? availableEntities
             })
             .exhaustive()
@@ -1045,6 +1093,119 @@ export class GrapherState
         // Apply entity filter if necessary
         if (visibleEntities.length < availableEntities.length)
             table = table.filterByEntityNames(visibleEntities)
+
+        return table
+    }
+
+    /**
+     * Table used for downloading when the user requests a data download
+     * of the complete data set */
+    @computed get tableForDownload(): OwidTable {
+        return this.prepareTableForDownload(this.table)
+    }
+
+    /**
+     * Table used for downloading when the user requests a data download
+     * of the currently displayed data.
+     */
+    @computed get filteredTableForDownload(): OwidTable {
+        const table = this.isOnTableTab
+            ? this.tableForDisplay
+            : this.transformedTable
+
+        return this.prepareTableForDownload(table)
+    }
+
+    private prepareTableForDownload(table: OwidTable): OwidTable {
+        const dataSlugs = this.inputColumnSlugs
+
+        // x and y column slugs
+        const xySlugs = [
+            this.inputXColumnSlug,
+            ...this.inputYColumnSlugs,
+        ].filter((slug) => slug !== undefined)
+
+        // Time column slug to include in the downloaded table
+        const timeSlug = table.timeColumn.slug
+
+        // Original time column slugs to include
+        const originalTimeSlugs = xySlugs
+            .map((ySlug) => makeOriginalTimeSlugFromColumnSlug(ySlug))
+            .filter((slug) => table.has(slug))
+
+        // Annotation columns to include
+        const annotationSlugs = xySlugs
+            .map((slug) => makeAnnotationsSlug(slug))
+            .filter((slug) => table.has(slug))
+
+        // Select only relevant columns (in the right order)
+        table = table.select([
+            table.entityNameSlug, // Entity name column
+            table.entityCodeSlug, // Entity code column
+            timeSlug, // Time column
+            ...dataSlugs, // Data columns
+            ...originalTimeSlugs, // Original time columns
+            ...annotationSlugs, // Annotation columns
+        ])
+
+        // Drop rows without any x or y values
+        if (xySlugs.length > 0) {
+            table = table.dropRowsWithErrorValuesForAllColumns(xySlugs)
+        }
+
+        // Only keep original times that differ from the main time
+        for (const originalTimeSlug of originalTimeSlugs) {
+            if (!table.has(originalTimeSlug)) continue
+
+            const times = table.get(timeSlug).valuesIncludingErrorValues
+
+            // Replace original times that are the same as the main time
+            // with a missing value placeholder
+            table = table.replaceCells(
+                [originalTimeSlug],
+                (originalTime, index) => {
+                    return originalTime === times[index]
+                        ? ErrorValueTypes.MissingValuePlaceholder
+                        : originalTime
+                }
+            )
+        }
+
+        // Drop original time columns that are now completely empty
+        table = table.dropColumns(
+            originalTimeSlugs.filter((slug) => table.get(slug).numValues === 0)
+        )
+
+        // Drop empty annotation columns
+        table = table.dropColumns(
+            annotationSlugs.filter((slug) => table.get(slug).numValues === 0)
+        )
+
+        // Fill in missing entity codes
+        if (table.entityCodeColumn.numErrorValues > 0) {
+            table = table.replaceCells(
+                [OwidTableSlugs.entityCode],
+                (value, index) => {
+                    if (isNotErrorValueOrEmptyCell(value)) return value
+
+                    const entityName = table.entityNameColumn
+                        .valuesIncludingErrorValues[index] as string
+
+                    const entityCode =
+                        this.inputTable.entityNameToCodeMap.get(entityName)
+
+                    return entityCode ?? value
+                }
+            )
+        }
+
+        // Drop entity code column if all values are empty (after backfilling)
+        const hasEntityCodes = table.entityCodeColumn.values.some(
+            (code) => code && code !== ""
+        )
+        if (!hasEntityCodes) {
+            table = table.dropColumns([OwidTableSlugs.entityCode])
+        }
 
         return table
     }
@@ -1179,6 +1340,28 @@ export class GrapherState
         if (parsed.tableSearch.status === "valid") {
             this.dataTableConfig.search = parsed.tableSearch.value
         }
+
+        // Peer countries
+        if (parsed.peerCountries.status === "valid") {
+            if (parsed.peerCountries.value === "auto") {
+                this.peerCountryStrategy ??= PeerCountryStrategy.Neighbors
+            } else {
+                this.peerCountryStrategy = parsed.peerCountries.value
+            }
+
+            // Apply immediately if we have data, otherwise set flag to apply later
+            if (this.availableEntityNames.length > 0) {
+                this.shouldApplyPeerCountries = true
+                void this.applyPeerCountriesIfNeeded().finally(() => {
+                    this.shouldApplyPeerCountries = false
+                })
+            } else {
+                this.shouldApplyPeerCountries = true
+            }
+        } else if (parsed.peerCountries.status === "invalid") {
+            // Clear the strategy if an invalid value was provided
+            this.peerCountryStrategy = undefined
+        }
     }
 
     @action.bound setTimeFromTimeQueryParam(time: string): void {
@@ -1228,6 +1411,10 @@ export class GrapherState
         return GRAPHER_TAB_NAMES.Table
     }
 
+    @action.bound resetToDefaultTab(): void {
+        this.setTab(this.defaultTab)
+    }
+
     @computed get chartType(): GrapherChartType | undefined {
         return this.validChartTypes[0]
     }
@@ -1260,7 +1447,14 @@ export class GrapherState
         return this.xAxis.toObject()
     }
 
+    @computed get showSeriesLabels(): boolean {
+        return !this.hideSeriesLabels
+    }
+
     @computed get showLegend(): boolean {
+        // Don't show any legends in minimal mode
+        if (this.useMinimalLabeling) return false
+
         // Hide the legend for stacked bar charts if the legend only ever shows a single entity
         if (this.isOnStackedBarTab) {
             const seriesStrategy =
@@ -1294,13 +1488,6 @@ export class GrapherState
 
     @computed get hasArchivedPage(): boolean {
         return this.archiveContext?.type === "archived-page-version"
-    }
-
-    @computed get additionalDataLoaderFn():
-        | AdditionalGrapherDataFetchFn
-        | undefined {
-        if (this.isOnArchivalPage) return undefined
-        return this._additionalDataLoaderFn
     }
 
     /**
@@ -1349,7 +1536,7 @@ export class GrapherState
         return makeChartState(chartType, this)
     }
 
-    @computed get chartSeriesNames(): SeriesName[] {
+    @computed private get chartSeriesNames(): SeriesName[] {
         if (!this.isReady) return []
 
         // Collect series names from all chart instances when faceted
@@ -1365,6 +1552,16 @@ export class GrapherState
         }
 
         return this.chartState.series.map((series) => series.seriesName)
+    }
+
+    @computed get focusableSeriesNames(): SeriesName[] {
+        if (this.isOnStackedDiscreteBarTab) {
+            return [
+                ...this.chartSeriesNames,
+                ...this.selection.selectedEntityNames,
+            ]
+        }
+        return this.chartSeriesNames
     }
 
     @computed get isStatic(): boolean {
@@ -1412,10 +1609,11 @@ export class GrapherState
     @computed get isAdmin(): boolean {
         if (typeof window === "undefined") return false
         if (this.isAdminObjectAvailable) return true
+
         // Using this.isAdminObjectAvailable is not enough because it's not
         // available in gdoc previews, which render in an iframe without the
         // admin scaffolding.
-        if (this.adminBaseUrl) {
+        if (this.adminBaseUrl && this.isInIFrame) {
             try {
                 const adminUrl = new URL(this.adminBaseUrl)
                 const currentUrl = new URL(window.location.href)
@@ -1424,6 +1622,7 @@ export class GrapherState
                 return false
             }
         }
+
         return false
     }
 
@@ -1716,15 +1915,23 @@ export class GrapherState
         return [
             GRAPHER_TAB_NAMES.LineChart,
             GRAPHER_TAB_NAMES.SlopeChart,
-            GRAPHER_TAB_NAMES.StackedArea,
-            GRAPHER_TAB_NAMES.StackedBar,
         ].includes(tabName as any)
+    }
+
+    private checkSingleTimeSelectionPreferred = (
+        tabName: GrapherTabName
+    ): boolean => {
+        // Scatter plots can show a time range, but a single time is preferred
+        return [GRAPHER_TAB_NAMES.ScatterPlot].includes(tabName as any)
     }
 
     @action.bound ensureTimeHandlesAreSensibleForTab(
         tab: GrapherTabName
     ): void {
-        if (this.checkOnlySingleTimeSelectionPossible(tab)) {
+        if (
+            this.checkOnlySingleTimeSelectionPossible(tab) ||
+            this.checkSingleTimeSelectionPreferred(tab)
+        ) {
             this.ensureHandlesAreOnSameTime()
         } else if (this.checkOnlyTimeRangeSelectionPossible(tab)) {
             this.ensureHandlesAreOnDifferentTimes()
@@ -1939,17 +2146,14 @@ export class GrapherState
         }
     }
 
-    // Get the dimension slots appropriate for this type of chart
+    /** Dimension slots appropriate for the given chart types */
     @computed get dimensionSlots(): DimensionSlot[] {
-        const xAxis = new DimensionSlot(this, DimensionProperty.x)
-        const yAxis = new DimensionSlot(this, DimensionProperty.y)
-        const color = new DimensionSlot(this, DimensionProperty.color)
-        const size = new DimensionSlot(this, DimensionProperty.size)
-
-        if (this.hasScatter) return [yAxis, xAxis, size, color]
-        if (this.hasMarimekko) return [yAxis, xAxis, color]
-        if (this.hasLineChart || this.hasDiscreteBar) return [yAxis, color]
-        return [yAxis]
+        const dimensionProperties = getSupportedDimensionsForChartTypes(
+            this.validChartTypes
+        )
+        return dimensionProperties.map(
+            (property) => new DimensionSlot(this, property)
+        )
     }
 
     @computed.struct get filledDimensions(): ChartDimension[] {
@@ -2133,13 +2337,14 @@ export class GrapherState
         // If the given combination is not valid, then ignore all but the first chart type
         if (!validChartTypes) return this.chartTypes.slice(0, 1)
 
-        // Projected data is only supported for line charts
+        // Projected data is only supported for line and discrete bar charts
         const isLineChart = validChartTypes[0] === GRAPHER_CHART_TYPES.LineChart
         if (isLineChart && this.hasProjectedData) {
-            return [
-                GRAPHER_CHART_TYPES.LineChart,
-                GRAPHER_CHART_TYPES.DiscreteBar,
-            ]
+            return validChartTypes.filter(
+                (type) =>
+                    type === GRAPHER_CHART_TYPES.LineChart ||
+                    type === GRAPHER_CHART_TYPES.DiscreteBar
+            )
         }
 
         return validChartTypes
@@ -2180,7 +2385,9 @@ export class GrapherState
         return !!(
             !this.forceHideAnnotationFieldsInTitle?.entity &&
             this.isOnChartTab &&
-            (seriesStrategy !== SeriesStrategy.entity || !this.showLegend) &&
+            (seriesStrategy !== SeriesStrategy.entity ||
+                !this.showLegend ||
+                !this.showSeriesLabels) &&
             selectedEntityNames.length === 1 &&
             (showEntityAnnotation ||
                 this.canChangeEntity ||
@@ -2214,6 +2421,20 @@ export class GrapherState
         )
     }
 
+    /** Check if 'vs. x-axis label' should be added to the title */
+    @computed private get shouldAddXIndicatorLabelToTitle(): boolean {
+        return (
+            // Only add if currently on the scatter tab
+            this.isOnScatterTab &&
+            // Don't add if the main chart type is a scatter
+            !this.isScatter &&
+            // Check if an x-column is available
+            this.isReady &&
+            !!this.xColumnSlug &&
+            this.inputTable.has(this.xColumnSlug)
+        )
+    }
+
     @computed get currentTitle(): string {
         let text = this.displayTitle.trim()
         if (text.length === 0) return text
@@ -2226,6 +2447,15 @@ export class GrapherState
         ): string => {
             const separator = text.endsWith("?") ? "" : ","
             return `${text}${separator} ${annotation}`
+        }
+
+        // Add the x-axis label to the title for secondary scatter plots
+        if (this.shouldAddXIndicatorLabelToTitle) {
+            const xAxisLabel =
+                this.xAxisConfig.label ??
+                this.inputTable.get(this.xColumnSlug).titlePublicOrDisplayName
+                    .title
+            if (xAxisLabel) text += ` vs. ${xAxisLabel}`
         }
 
         if (this.shouldAddEntitySuffixToTitle) {
@@ -2299,7 +2529,7 @@ export class GrapherState
             .map((dim) => dim.column)
     }
 
-    @computed get yColumnSlugs(): string[] {
+    @computed private get inputYColumnSlugs(): string[] {
         return this.ySlugs
             ? this.ySlugs.split(" ")
             : this.dimensions
@@ -2307,39 +2537,83 @@ export class GrapherState
                   .map((dim) => dim.columnSlug)
     }
 
-    @computed get yColumnSlug(): string | undefined {
+    @computed private get inputYColumnSlug(): string | undefined {
         return this.ySlugs
             ? this.ySlugs.split(" ")[0]
             : this.getSlugForProperty(DimensionProperty.y)
     }
 
-    @computed get xColumnSlug(): string | undefined {
+    @computed private get inputXColumnSlug(): string | undefined {
         return this.xSlug ?? this.getSlugForProperty(DimensionProperty.x)
     }
 
-    @computed get sizeColumnSlug(): string | undefined {
+    @computed private get inputSizeColumnSlug(): string | undefined {
         return this.sizeSlug ?? this.getSlugForProperty(DimensionProperty.size)
     }
 
-    @computed get colorColumnSlug(): string | undefined {
+    @computed private get inputColorColumnSlug(): string | undefined {
         return (
             this.colorSlug ?? this.getSlugForProperty(DimensionProperty.color)
         )
     }
 
-    @computed get numericColorColumnSlug(): string | undefined {
-        if (!this.colorColumnSlug) return undefined
+    @computed private get inputNumericColorColumnSlug(): string | undefined {
+        if (!this.inputColorColumnSlug) return undefined
 
-        const colorColumn = this.inputTable.get(this.colorColumnSlug)
+        const colorColumn = this.inputTable.get(this.inputColorColumnSlug)
         if (!colorColumn.isMissing && colorColumn.hasNumberFormatting)
-            return this.colorColumnSlug
+            return this.inputColorColumnSlug
 
         return undefined
     }
 
-    @computed get categoricalColorColumnSlug(): string | undefined {
-        if (!this.colorColumnSlug) return undefined
-        return this.numericColorColumnSlug ? undefined : this.colorColumnSlug
+    @computed private get inputCategoricalColorColumnSlug():
+        | string
+        | undefined {
+        if (!this.inputColorColumnSlug) return undefined
+        return this.inputNumericColorColumnSlug
+            ? undefined
+            : this.inputColorColumnSlug
+    }
+
+    /** Y column slugs used by the active tab */
+    @computed get yColumnSlugs(): ColumnSlug[] {
+        return this.inputYColumnSlugs
+    }
+
+    /** Y column slug used by the active tab */
+    @computed get yColumnSlug(): ColumnSlug | undefined {
+        return this.inputYColumnSlug
+    }
+
+    /** Color column slug used by the active tab */
+    @computed get colorColumnSlug(): ColumnSlug | undefined {
+        if (!this.inputColorColumnSlug) return undefined
+
+        // Line and DiscreteBar charts only support numeric color columns
+        if (this.isOnLineChartTab || this.isOnDiscreteBarTab) {
+            return this.inputNumericColorColumnSlug
+        }
+
+        // ScatterPlot and Marimekko charts only support categorical color columns
+        if (this.isOnScatterTab || this.isOnMarimekkoTab) {
+            return this.inputCategoricalColorColumnSlug
+        }
+
+        return this.inputColorColumnSlug
+    }
+
+    /** X column slug used by the active tab */
+    @computed get xColumnSlug(): ColumnSlug | undefined {
+        // Marimekkos ignore the x column when there's also a scatter plot
+        if (this.isOnMarimekkoTab && this.hasScatter) return undefined
+
+        return this.inputXColumnSlug
+    }
+
+    /** Size column slug used by the active tab */
+    @computed get sizeColumnSlug(): ColumnSlug | undefined {
+        return this.inputSizeColumnSlug
     }
 
     @computed private get yScaleType(): ScaleType | undefined {
@@ -2366,32 +2640,19 @@ export class GrapherState
         return this.sourceDesc ?? this.defaultSourcesLine
     }
 
-    /** Columns that are used as a dimension in the currently active view */
-    @computed get activeColumnSlugs(): string[] {
-        const { yColumnSlugs, xColumnSlug, sizeColumnSlug, colorColumnSlug } =
-            this
-
+    /** All column slugs configured by the author (y, x, size, color) */
+    @computed get inputColumnSlugs(): ColumnSlug[] {
         return excludeUndefined([
-            ...yColumnSlugs,
-            xColumnSlug,
-            sizeColumnSlug,
-            colorColumnSlug,
+            ...this.inputYColumnSlugs,
+            this.inputXColumnSlug,
+            this.inputSizeColumnSlug,
+            this.inputColorColumnSlug,
         ])
     }
 
-    @computed get columnsWithSourcesExtensive(): CoreColumn[] {
-        const { yColumnSlugs, xColumnSlug, sizeColumnSlug, colorColumnSlug } =
-            this
-
-        const columnSlugs = excludeUndefined([
-            ...yColumnSlugs,
-            xColumnSlug,
-            sizeColumnSlug,
-            colorColumnSlug,
-        ])
-
+    @computed get inputColumnsWithSources(): CoreColumn[] {
         return this.inputTable
-            .getColumns(_.uniq(columnSlugs))
+            .getColumns(_.uniq(this.inputColumnSlugs))
             .filter(
                 (column) =>
                     !!column.source.name || !_.isEmpty(column.def.origins)
@@ -2406,80 +2667,17 @@ export class GrapherState
         this._baseFontSize = val
     }
 
-    private getColumnSlugsForCondensedSources(): string[] {
-        const { xColumnSlug, sizeColumnSlug, colorColumnSlug, hasMarimekko } =
-            this
-        const columnSlugs: string[] = []
-
-        // Exclude "Countries Continent" if it's used as the color dimension in a scatter plot, slope chart etc.
-        if (
-            colorColumnSlug !== undefined &&
-            !isContinentsVariableId(colorColumnSlug)
-        )
-            columnSlugs.push(colorColumnSlug)
-
-        if (xColumnSlug !== undefined) {
-            const xColumn = this.inputTable.get(xColumnSlug)
-                .def as OwidColumnDef
-            // Exclude population variable if it's used as the x dimension in a marimekko
-            if (
-                !hasMarimekko ||
-                !isPopulationVariableETLPath(xColumn?.catalogPath ?? "")
-            )
-                columnSlugs.push(xColumnSlug)
-        }
-
-        // Exclude population variable if it's used as the size dimension in a scatter plot
-        if (sizeColumnSlug !== undefined) {
-            const sizeColumn = this.inputTable.get(sizeColumnSlug)
-                .def as OwidColumnDef
-            if (!isPopulationVariableETLPath(sizeColumn?.catalogPath ?? ""))
-                columnSlugs.push(sizeColumnSlug)
-        }
-        return columnSlugs
-    }
-
-    @computed private get columnsWithSourcesCondensed(): CoreColumn[] {
-        const { yColumnSlugs } = this
-
-        const columnSlugs = [...yColumnSlugs]
-        columnSlugs.push(...this.getColumnSlugsForCondensedSources())
-
-        return this.inputTable
-            .getColumns(_.uniq(columnSlugs))
-            .filter(
-                (column) =>
-                    !!column.source.name || !_.isEmpty(column.def.origins)
-            )
-    }
-
     @computed private get defaultSourcesLine(): string {
-        const attributions = this.columnsWithSourcesCondensed.flatMap(
-            (column) => {
-                const { presentation = {} } = column.def
-                // If the variable metadata specifies an attribution on the
-                // variable level then this is preferred over assembling it from
-                // the source and origins
-                if (
-                    presentation.attribution !== undefined &&
-                    presentation.attribution !== ""
-                )
-                    return [presentation.attribution]
-                else {
-                    const originFragments = getOriginAttributionFragments(
-                        column.def.origins
-                    )
-                    return [column.source.name, ...originFragments]
-                }
-            }
-        )
-
-        const uniqueAttributions = _.uniq(_.compact(attributions))
-
-        if (uniqueAttributions.length > 3)
-            return `${uniqueAttributions[0]} and other sources`
-
-        return uniqueAttributions.join("; ")
+        const columnSlugs = pickColumnsForSourcesLine({
+            table: this.inputTable,
+            yColumnSlugs: this.yColumnSlugs,
+            xColumnSlug: this.xColumnSlug,
+            sizeColumnSlug: this.sizeColumnSlug,
+            colorColumnSlug: this.colorColumnSlug,
+            activeTab: this.activeTab,
+        })
+        const columns = this.inputTable.getColumns(columnSlugs)
+        return buildSourcesLineFromColumns(columns)
     }
 
     @computed private get axisDimensions(): ChartDimension[] {
@@ -2618,6 +2816,20 @@ export class GrapherState
         return this.validChartTypeSet.has(GRAPHER_CHART_TYPES.ScatterPlot)
     }
 
+    @computed get hasStackedArea(): boolean {
+        return this.validChartTypeSet.has(GRAPHER_CHART_TYPES.StackedArea)
+    }
+
+    @computed get hasStackedBar(): boolean {
+        return this.validChartTypeSet.has(GRAPHER_CHART_TYPES.StackedBar)
+    }
+
+    @computed get hasStackedDiscreteBar(): boolean {
+        return this.validChartTypeSet.has(
+            GRAPHER_CHART_TYPES.StackedDiscreteBar
+        )
+    }
+
     @computed get supportsMultipleYColumns(): boolean {
         return !this.isScatter
     }
@@ -2641,15 +2853,22 @@ export class GrapherState
         return new Bounds(0, 0, DEFAULT_GRAPHER_WIDTH, DEFAULT_GRAPHER_HEIGHT)
     }
 
-    generateStaticSvg(
+    async generateStaticSvg(
         renderToHtmlString: (element: React.ReactElement) => string
-    ): string {
+    ): Promise<string> {
+        // Wait for peer country application if requested but not yet applied
+        if (this.shouldApplyPeerCountries)
+            await this.applyPeerCountriesIfNeeded()
+
+        // Temporarily set isExportingToSvgOrPng to true
         const _isExportingToSvgOrPng = this.isExportingToSvgOrPng
         this.isExportingToSvgOrPng = true
 
         const innerHTML = renderToHtmlString(<Chart manager={this} />)
 
+        // Restore isExportingToSvgOrPng
         this.isExportingToSvgOrPng = _isExportingToSvgOrPng
+
         return innerHTML
     }
 
@@ -2671,7 +2890,7 @@ export class GrapherState
         return new Bounds(0, 0, this.staticBounds.width, height)
     }
 
-    rasterize: GrapherRasterizeFn = ({ includeDetails }) => {
+    rasterize: GrapherRasterizeFn = async ({ includeDetails }) => {
         const _shouldIncludeDetailsInStaticExport =
             this.shouldIncludeDetailsInStaticExport
         this.shouldIncludeDetailsInStaticExport = includeDetails
@@ -2680,7 +2899,7 @@ export class GrapherState
 
         try {
             // We need to ensure `rasterize` is only called on the client-side, otherwise this will fail
-            const staticSVG = this.generateStaticSvg(
+            const staticSVG = await this.generateStaticSvg(
                 reactRenderToStringClientOnly
             )
             return new StaticChartRasterizer(staticSVG, width, height).render()
@@ -2745,12 +2964,18 @@ export class GrapherState
         )
             return false
 
-        if (isOnMarimekkoTab && xColumnSlug === undefined) return false
+        // Disable relative mode for Marimekko charts without an x dimension
+        if (isOnMarimekkoTab && !xColumnSlug) return false
+
         return !hideRelativeToggle
     }
 
     @computed private get isTouchDevice(): boolean {
         return isTouchDevice()
+    }
+
+    @computed private get isMobile(): boolean {
+        return isMobile()
     }
 
     /** externalBounds should be set to the available plotting area for a
@@ -2850,10 +3075,14 @@ export class GrapherState
 
     @computed get hideFullScreenButton(): boolean {
         if (this.isInFullScreenMode) return false
-        if (!this.isSmall) return false
+        if (!this.isSmall || !this.isMobile || !this.screenHeight) return false
+
+        // Approximate full screen height on mobile devices
+        // that doesn't update when browser UI is shown/hidden
+        const fullScreenHeight = this.screenHeight
+
         // Hide the full screen button if the full screen height
         // is barely larger than the current chart height
-        const fullScreenHeight = this.windowInnerHeight!
         return fullScreenHeight < this.frameBounds.height + 80
     }
 
@@ -3000,14 +3229,56 @@ export class GrapherState
         return this.tableForSelection.availableEntityNames
     }
 
-    @computed get entityRegionTypeGroups(): EntityRegionTypeGroup[] {
-        return groupEntityNamesByRegionType(this.availableEntityNames)
+    @computed private get canApplyPeerCountries(): boolean {
+        return (
+            this.peerCountryStrategy !== undefined &&
+            this.availableEntityNames.length > 0 &&
+            // Only apply peer countries if it's unambiguous
+            // which entity is the target entity
+            this.selection.numSelectedEntities === 1
+        )
     }
 
-    @computed get entityNamesByRegionType(): EntityNamesByRegionType {
+    /**
+     * Adds peer countries to Grapher's selection
+     *
+     * Uses a cached promise pattern to prevent duplicate operations and allow
+     * generateStaticSvg() to wait for peer country application that was already
+     * initiated by the inputTable setter.
+     *
+     * This approach avoids making inputTable async, which would complicate the
+     * codebase since many parts assume synchronous data access.
+     */
+    @action.bound private async applyPeerCountriesIfNeeded(): Promise<void> {
+        // If already running, return the existing promise to wait for
+        if (this.peerCountriesPromise) return this.peerCountriesPromise
+
+        if (!this.canApplyPeerCountries) return
+
+        // Create and cache the promise immediately so that concurrent calls
+        // will find and wait for this same promise
+        this.peerCountriesPromise = (async (): Promise<void> => {
+            const peerCountries = await selectPeerCountriesForGrapher(this)
+            this.selection.addToSelection(peerCountries)
+        })()
+
+        try {
+            await this.peerCountriesPromise
+        } finally {
+            // Clear the promise cache after completion (success or failure)
+            // so future calls will trigger a new operation if needed
+            this.peerCountriesPromise = undefined
+        }
+    }
+
+    @computed get regionGroups(): RegionGroup[] {
+        return groupEntitiesByRegionType(this.availableEntityNames)
+    }
+
+    @computed get entitiesByRegionGroup(): EntitiesByRegionGroup {
         return new Map(
-            this.entityRegionTypeGroups.map(({ regionType, entityNames }) => [
-                regionType,
+            this.regionGroups.map(({ regionGroupKey, entityNames }) => [
+                regionGroupKey,
                 entityNames,
             ])
         )
@@ -3023,14 +3294,17 @@ export class GrapherState
 
     @computed get sortConfig(): SortConfig {
         const sortConfig = { ...this._sortConfig }
-        // In relative mode, where the values for every entity sum up to 100%, sorting by total
-        // doesn't make sense. It's also jumpy because of some rounding errors. For this reason,
-        // we sort by entity name instead.
-        // Marimekko charts are special and there we don't do this forcing of sort order
+        // In relative mode, where the values for every entity sum up to 100%,
+        // sorting by total doesn't make sense. It's also jumpy because of some
+        // rounding errors. For this reason, we sort by entity name instead
         if (
-            !this.isOnMarimekkoTab &&
             this.isRelativeMode &&
-            sortConfig.sortBy === SortBy.total
+            sortConfig.sortBy === SortBy.total &&
+            // No need to do this for Marimekko and discrete bar charts
+            // since relative mode means something else for Marimekko charts
+            // and discrete bar charts don't support relative mode
+            !this.isOnMarimekkoTab &&
+            !this.isOnDiscreteBarTab
         ) {
             sortConfig.sortBy = SortBy.entityName
             sortConfig.sortOrder = SortOrder.asc
@@ -3415,7 +3689,7 @@ export class GrapherState
     }
 
     /** Useful to compare current state against the published grapher */
-    @computed private get authorsVersion(): GrapherState {
+    @computed get authorsVersion(): GrapherState {
         return new GrapherState({
             ...this.legacyConfigAsAuthored,
             manager: undefined,

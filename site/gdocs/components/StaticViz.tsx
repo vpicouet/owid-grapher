@@ -2,7 +2,14 @@ import cx from "classnames"
 import { useLinkedStaticViz } from "../utils.js"
 import Image, { ImageParentContainer } from "./Image.js"
 import { useDocumentContext } from "../DocumentContext.js"
-import { useCallback, useMemo, useState, useId, type MouseEvent } from "react"
+import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+    useId,
+    type MouseEvent,
+} from "react"
 import { BlockErrorFallback } from "./BlockErrorBoundary.js"
 import { MarkdownTextWrap, OverlayHeader } from "@ourworldindata/components"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
@@ -11,8 +18,10 @@ import { CLOUDFLARE_IMAGES_URL } from "../../../settings/clientSettings.js"
 import { triggerDownloadFromBlob } from "@ourworldindata/utils"
 import { ImageMetadata, LinkedStaticViz, Span } from "@ourworldindata/types"
 import { useTriggerOnEscape } from "../../hooks.js"
-import { FloatingDownloadButton } from "./FloatingDownloadButton.js"
 import SpanElements from "./SpanElements.js"
+import { SiteAnalytics } from "../../SiteAnalytics.js"
+
+const analytics = new SiteAnalytics()
 
 interface StaticVizProps {
     name: string
@@ -57,26 +66,28 @@ export default function StaticViz(props: StaticVizProps) {
                     imageData={staticViz.desktop}
                     smallImageData={staticViz.mobile}
                     containerType={containerType}
-                    DownloadButton={
-                        <FloatingDownloadButton
-                            label="Open download options"
-                            onClick={() => setIsDownloadModalOpen(true)}
-                            containerClassName="static-viz__download-button-container"
-                        />
-                    }
+                    shouldHideDownloadButton
                 />
-                {isDownloadModalOpen && (
-                    <StaticVizDownloadModal
-                        staticViz={staticViz}
-                        onClose={() => setIsDownloadModalOpen(false)}
-                    />
-                )}
             </div>
+            <button
+                type="button"
+                className="static-viz__download-button"
+                onClick={() => setIsDownloadModalOpen(true)}
+            >
+                <FontAwesomeIcon icon={faDownload} />
+                Download image or data
+            </button>
             {caption ? (
                 <figcaption className="static-viz__caption">
                     <SpanElements spans={caption} />
                 </figcaption>
             ) : null}
+            {isDownloadModalOpen && (
+                <StaticVizDownloadModal
+                    staticViz={staticViz}
+                    onClose={() => setIsDownloadModalOpen(false)}
+                />
+            )}
         </figure>
     )
 }
@@ -88,6 +99,7 @@ interface DownloadOption {
     previewImage?: ImageMetadata
     onClick?: () => void
     href?: string
+    onClickAnalytics?: () => void
 }
 
 const StaticVizDownloadModal = ({
@@ -100,8 +112,19 @@ const StaticVizDownloadModal = ({
     const dialogTitleId = useId()
     useTriggerOnEscape(onClose)
 
+    useEffect(() => {
+        document.documentElement.classList.add("no-scroll")
+        return () => {
+            document.documentElement.classList.remove("no-scroll")
+        }
+    }, [])
+
     const downloadImage = useCallback(
-        async (image: ImageMetadata, fallbackName: string) => {
+        async (
+            image: ImageMetadata,
+            fallbackName: string,
+            variant: "desktop" | "mobile"
+        ) => {
             if (!image.cloudflareId) return
             const url = makeImageSrc(image)
             if (!url) return
@@ -110,11 +133,16 @@ const StaticVizDownloadModal = ({
                 const blob = await response.blob()
                 const filename = image.filename ?? fallbackName
                 triggerDownloadFromBlob(filename, blob)
+                analytics.logStaticVizDownload(
+                    staticViz.name,
+                    "image_download",
+                    variant
+                )
             } catch (error) {
                 console.error("Failed to download static viz image", error)
             }
         },
-        []
+        [staticViz.name]
     )
 
     const imageOptions: DownloadOption[] = useMemo(() => {
@@ -130,7 +158,8 @@ const StaticVizDownloadModal = ({
                 onClick: () =>
                     void downloadImage(
                         staticViz.desktop,
-                        `${staticViz.name}-desktop.png`
+                        `${staticViz.name}-desktop.png`,
+                        "desktop"
                     ),
             },
         ]
@@ -144,7 +173,8 @@ const StaticVizDownloadModal = ({
                 onClick: () =>
                     void downloadImage(
                         staticViz.mobile!,
-                        `${staticViz.name}-mobile.png`
+                        `${staticViz.name}-mobile.png`,
+                        "mobile"
                     ),
             })
         }
@@ -161,6 +191,12 @@ const StaticVizDownloadModal = ({
                 description:
                     "Download the data behind this visualization as a CSV file.",
                 href: `${staticViz.grapherUrl}.csv`,
+                onClickAnalytics: () =>
+                    analytics.logStaticVizDownload(
+                        staticViz.name,
+                        "data_download",
+                        staticViz.grapherUrl
+                    ),
             })
         }
         if (staticViz.sourceUrl) {
@@ -170,10 +206,16 @@ const StaticVizDownloadModal = ({
                 description:
                     "Visit the external dataset or documentation referenced for this visualization.",
                 href: staticViz.sourceUrl,
+                onClickAnalytics: () =>
+                    analytics.logStaticVizDownload(
+                        staticViz.name,
+                        "source_link_click",
+                        staticViz.sourceUrl
+                    ),
             })
         }
         return options
-    }, [staticViz.grapherUrl, staticViz.sourceUrl])
+    }, [staticViz.grapherUrl, staticViz.sourceUrl, staticViz.name])
 
     const handleOverlayClick = useCallback(
         (event: MouseEvent<HTMLDivElement>) => {
@@ -186,6 +228,8 @@ const StaticVizDownloadModal = ({
         staticViz.grapherUrl && staticViz.grapherUrl.trim().length
             ? staticViz.grapherUrl
             : undefined
+
+    const hasTwoImages = imageOptions.length > 1
 
     return (
         <div
@@ -224,10 +268,11 @@ const StaticVizDownloadModal = ({
                     )}
                     <section className="static-viz-download-modal__section">
                         <div className="static-viz-download-modal__heading">
-                            <h3>Images</h3>
+                            <h3>{hasTwoImages ? "Images" : "Image"}</h3>
                             <p>
-                                Download high-resolution images for this static
-                                visualization.
+                                {hasTwoImages
+                                    ? "Download high-resolution images for this static visualization."
+                                    : "Download a high-resolution version of this static visualization."}
                             </p>
                         </div>
                         {imageOptions.map((option) => (
@@ -258,6 +303,7 @@ const StaticVizDownloadModal = ({
                                     title={option.title}
                                     description={option.description}
                                     href={option.href}
+                                    onClickAnalytics={option.onClickAnalytics}
                                 />
                             ))}
                         </section>
@@ -292,12 +338,14 @@ const DownloadButton = ({
     previewImage,
     onClick,
     href,
+    onClickAnalytics,
 }: {
     title: string
     description: string
     previewImage?: ImageMetadata
     onClick?: () => void
     href?: string
+    onClickAnalytics?: () => void
 }) => {
     const content = (
         <>
@@ -331,6 +379,7 @@ const DownloadButton = ({
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={onClickAnalytics}
             >
                 {content}
             </a>

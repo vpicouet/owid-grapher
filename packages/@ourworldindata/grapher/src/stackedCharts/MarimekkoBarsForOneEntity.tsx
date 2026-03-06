@@ -1,4 +1,4 @@
-import { makeIdForHumanConsumption } from "@ourworldindata/utils"
+import { makeFigmaId } from "@ourworldindata/utils"
 import { DualAxis } from "../axis/Axis"
 import {
     Bar,
@@ -7,7 +7,8 @@ import {
     MarimekkoBarProps,
 } from "./MarimekkoChartConstants"
 import { InteractionState } from "../interaction/InteractionState.js"
-import { BAR_OPACITY } from "./StackedConstants"
+import { STACKED_BAR_STYLE } from "./StackedConstants.js"
+import { Emphasis } from "../interaction/Emphasis.js"
 
 interface MarimekkoBarsProps {
     entityName: string
@@ -87,7 +88,7 @@ export function MarimekkoBarsForOneEntity(
     return (
         <g
             key={entityName}
-            id={makeIdForHumanConsumption("bar", entityName)}
+            id={makeFigmaId("bar", entityName)}
             className="bar"
             transform={`translate(${currentX}, ${labelYOffset})`}
             onMouseOver={(ev): void => onEntityMouseOver?.(entityName, ev)}
@@ -124,18 +125,18 @@ function MarimekkoBar({
     const strokeWidth = isHovered || isSelected ? 1 : 0.5
     const strokeOpacity = isPlaceholder ? 0.8 : isFaint ? 0.2 : 1.0
     const fillOpacity = isHovered
-        ? BAR_OPACITY.FOCUS
+        ? STACKED_BAR_STYLE[Emphasis.Highlighted].opacity
         : isFaint
-          ? BAR_OPACITY.MUTE
+          ? STACKED_BAR_STYLE[Emphasis.Muted].opacity
           : isSelected
             ? isPlaceholder
                 ? 0.3
-                : BAR_OPACITY.DEFAULT
-            : BAR_OPACITY.DEFAULT
+                : STACKED_BAR_STYLE[Emphasis.Default].opacity
+            : STACKED_BAR_STYLE[Emphasis.Default].opacity
     const overalOpacity = isPlaceholder ? 0.2 : 1.0
 
-    let barY: number = 0
-    let barHeight: number = 0
+    let barY: number
+    let barHeight: number
     if (bar.kind === BarShape.Bar) {
         barY = dualAxis.verticalAxis.place(y0 + bar.yPoint.valueOffset)
         barHeight =

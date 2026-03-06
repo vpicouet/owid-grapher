@@ -3,35 +3,34 @@ import {
     generateGrapherImageSrcSet,
     Grapher,
     GrapherState,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import {
     GrapherInterface,
     MultiDimDataPageConfigEnriched,
     R2GrapherConfigDirectory,
-    OwidTableSlugs,
+    AdditionalGrapherDataFetchFn,
 } from "@ourworldindata/types"
 import {
     excludeUndefined,
     Bounds,
     searchParamsToMultiDimView,
-    makeAnnotationsSlug,
 } from "@ourworldindata/utils"
-import {
-    OwidTable,
-    makeOriginalTimeSlugFromColumnSlug,
-    makeOriginalValueSlugFromColumnSlug,
-} from "@ourworldindata/core-table"
 import { StatusError } from "itty-router"
 import { Env } from "./env.js"
 import { ImageOptions } from "./imageOptions.js"
 
 export const grapherBaseUrl = "https://ourworldindata.org/grapher"
 
-const WORKER_CACHE_TIME_IN_SECONDS = 60
-
 interface FetchGrapherConfigResult {
     grapherConfig: GrapherInterface | null
     multiDimAvailableDimensions?: string[]
+    status: number
+    etag: string | undefined
+}
+
+interface FetchMultiDimGrapherConfigResult {
+    grapherConfig: GrapherInterface | null
     status: number
     etag: string | undefined
 }
@@ -70,35 +69,47 @@ export function getDataApiUrl(env: Env) {
     )
 }
 
-export async function fetchFromR2(
-    url: URL,
-    etag: string | undefined,
-    fallbackUrl?: URL,
-    shouldCache: boolean = true
-) {
+function buildResponseFromR2Object(
+    r2Object: R2ObjectBody | R2Object
+): Response {
     const headers = new Headers()
-    if (etag) headers.set("If-None-Match", etag)
-    const init = {
-        cf: shouldCache
-            ? { cacheEverything: true, cacheTtl: WORKER_CACHE_TIME_IN_SECONDS }
-            : { cacheEverything: false },
-        headers,
+    r2Object.writeHttpMetadata(headers)
+    headers.set("ETag", r2Object.httpEtag)
+
+    if ("body" in r2Object) {
+        return new Response(r2Object.body, { status: 200, headers })
     }
-    const primaryResponse = await fetch(url.toString(), init)
-    // The fallback URL here is used so that on staging or dev we can fallback
-    // to the production bucket if the file is not found in the branch bucket
-    if (primaryResponse.status === 404 && fallbackUrl) {
-        return fetch(fallbackUrl.toString(), init)
+
+    return new Response(null, { status: 304, headers })
+}
+
+export async function fetchFromR2(
+    bucket: R2Bucket,
+    key: string,
+    etag: string | undefined
+) {
+    const object = etag
+        ? await bucket.get(key, {
+              onlyIf: new Headers({ "If-None-Match": etag }),
+          })
+        : await bucket.get(key)
+
+    if (!object) {
+        return new Response(null, { status: 404 })
     }
-    return primaryResponse
+
+    return buildResponseFromR2Object(object)
 }
 
 export async function fetchUnparsedGrapherConfig(
     identifier: GrapherIdentifier,
     env: Env,
-    etag?: string,
-    shouldCache: boolean = true
+    etag?: string
 ) {
+    if (!env.GRAPHER_CONFIG_R2_BUCKET) {
+        throw new Error("Missing GRAPHER_CONFIG_R2_BUCKET binding")
+    }
+
     // The top level directory is either the bucket path (should be set in dev environments and production)
     // or the branch name on preview staging environments
     console.log("branch", env.CF_PAGES_BRANCH)
@@ -115,44 +126,59 @@ export async function fetchUnparsedGrapherConfig(
 
     console.log("fetching grapher config from this key", key)
 
-    const requestUrl = new URL(key, env.GRAPHER_CONFIG_R2_BUCKET_URL)
+    const primaryResponse = await fetchFromR2(
+        env.GRAPHER_CONFIG_R2_BUCKET,
+        key,
+        etag
+    )
+    if (primaryResponse.status !== 404) {
+        return primaryResponse
+    }
 
-    let fallbackUrl
-
-    if (
-        env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK_URL &&
-        env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH
-    ) {
-        const topLevelDirectory = env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH
-        const fallbackKey = excludeUndefined([
-            topLevelDirectory,
-            directory,
-            `${identifier.id}.json`,
-        ]).join("/")
-        fallbackUrl = new URL(
-            fallbackKey,
-            env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK_URL
+    // On staging and local development we can optionally fallback to the production bucket
+    // if the config was not found in the branch bucket.
+    if (!env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH) {
+        return primaryResponse
+    }
+    if (!env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK) {
+        throw new Error(
+            "GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH is set but GRAPHER_CONFIG_R2_BUCKET_FALLBACK binding is missing"
         )
     }
 
-    // Fetch grapher config
-    return fetchFromR2(requestUrl, etag, fallbackUrl, shouldCache)
+    const fallbackKey = excludeUndefined([
+        env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH,
+        directory,
+        `${identifier.id}.json`,
+    ]).join("/")
+    console.log("fetching grapher config from fallback key", fallbackKey)
+
+    return fetchFromR2(env.GRAPHER_CONFIG_R2_BUCKET_FALLBACK, fallbackKey, etag)
 }
 
 async function fetchMultiDimGrapherConfig(
     multiDimConfig: MultiDimDataPageConfigEnriched,
     searchParams: URLSearchParams,
     env: Env
-) {
+): Promise<FetchMultiDimGrapherConfigResult> {
     const view = searchParamsToMultiDimView(multiDimConfig, searchParams)
-    const shouldCache = !searchParams.has("nocache")
     const response = await fetchUnparsedGrapherConfig(
         { type: "uuid", id: view.fullConfigId },
         env,
-        undefined,
-        shouldCache
+        undefined
     )
-    return (await response.json()) as GrapherInterface
+    if (response.status !== 200) {
+        return {
+            grapherConfig: null,
+            status: response.status,
+            etag: response.headers.get("etag") ?? undefined,
+        }
+    }
+    return {
+        grapherConfig: (await response.json()) as GrapherInterface,
+        status: response.status,
+        etag: response.headers.get("etag") ?? undefined,
+    }
 }
 
 export async function fetchGrapherConfig({
@@ -166,12 +192,10 @@ export async function fetchGrapherConfig({
     etag?: string
     searchParams?: URLSearchParams
 }): Promise<FetchGrapherConfigResult> {
-    const shouldCache = !searchParams?.has("nocache")
     const fetchResponse = await fetchUnparsedGrapherConfig(
         identifier,
         env,
-        etag,
-        shouldCache
+        etag
     )
 
     if (fetchResponse.status === 404) {
@@ -196,13 +220,30 @@ export async function fetchGrapherConfig({
     const config: unknown = await fetchResponse.json()
     let grapherConfig: GrapherInterface
     let multiDimAvailableDimensions: string[] | undefined
+    let responseEtag = fetchResponse.headers.get("etag") ?? undefined
     if (identifier.type === "multi-dim-slug") {
         const multiDimConfig = config as MultiDimDataPageConfigEnriched
-        grapherConfig = await fetchMultiDimGrapherConfig(
+        const multiDimGrapherConfigResult = await fetchMultiDimGrapherConfig(
             multiDimConfig,
             searchParams ?? new URLSearchParams(),
             env
         )
+        if (multiDimGrapherConfigResult.status !== 200) {
+            return {
+                grapherConfig: null,
+                status: multiDimGrapherConfigResult.status,
+                etag: multiDimGrapherConfigResult.etag ?? responseEtag,
+            }
+        }
+        if (!multiDimGrapherConfigResult.grapherConfig) {
+            return {
+                grapherConfig: null,
+                status: 500,
+                etag: multiDimGrapherConfigResult.etag ?? responseEtag,
+            }
+        }
+        grapherConfig = multiDimGrapherConfigResult.grapherConfig
+        responseEtag = multiDimGrapherConfigResult.etag ?? responseEtag
         multiDimAvailableDimensions = multiDimConfig.dimensions.map(
             (dim) => dim.slug
         )
@@ -213,7 +254,7 @@ export async function fetchGrapherConfig({
     const result: FetchGrapherConfigResult = {
         grapherConfig,
         status: 200,
-        etag: fetchResponse.headers.get("etag") ?? undefined,
+        etag: responseEtag,
     }
     if (identifier.type === "multi-dim-slug") {
         result.multiDimAvailableDimensions = multiDimAvailableDimensions
@@ -271,6 +312,11 @@ export async function initGrapher(
         throw new StatusError(grapherConfigResponse.status)
     }
 
+    const additionalDataLoaderFn = ((catalogKey) =>
+        loadCatalogData(catalogKey, {
+            baseUrl: env.CATALOG_URL,
+        })) as AdditionalGrapherDataFetchFn
+
     const bounds = new Bounds(0, 0, options.svgWidth, options.svgHeight)
     const grapherState = new GrapherState({
         ...grapherConfigResponse.grapherConfig,
@@ -284,6 +330,7 @@ export async function initGrapher(
             // Set the baseUrl to ensure mdims have correct canonical URL in the metadata json
             baseUrl: `${grapherBaseUrl}/${identifier.id}`,
         },
+        additionalDataLoaderFn,
         ...options.grapherProps,
     })
     grapherState.isExportingToSvgOrPng = true
@@ -372,54 +419,4 @@ export function addClassNamesToBody(page: Response, classNames: string[]) {
     })
 
     return rewriter.transform(page)
-}
-
-export function getGrapherTableWithRelevantColumns(
-    grapherState: GrapherState,
-    options?: { shouldUseFilteredTable: boolean }
-): OwidTable {
-    // Extract table from Grapher
-    const fullTable = grapherState.inputTable
-    const filteredTable = grapherState.isOnTableTab
-        ? grapherState.tableForDisplay
-        : grapherState.transformedTable
-    const table = options?.shouldUseFilteredTable ? filteredTable : fullTable
-
-    // Trim table to only include columns that are relevant to the current
-    // grapher view. This filtering is necessary for CSV-based data explorers
-    // because the full table contains columns for all possible views.
-    const entityNameSlugs = [
-        OwidTableSlugs.entityName,
-        OwidTableSlugs.entityCode,
-        OwidTableSlugs.entityId,
-        table.entityNameColumn.slug,
-    ]
-    const timeSlugs = [
-        OwidTableSlugs.time,
-        OwidTableSlugs.year,
-        OwidTableSlugs.date,
-        OwidTableSlugs.day,
-        table.timeColumn.slug,
-    ]
-    const valueSlugs = excludeUndefined([
-        ...grapherState.yColumnSlugs,
-        grapherState.xColumnSlug,
-        grapherState.colorColumnSlug,
-        grapherState.sizeColumnSlug,
-    ])
-    const extraSlugs = valueSlugs.flatMap((slug) => [
-        makeAnnotationsSlug(slug),
-        makeOriginalTimeSlugFromColumnSlug(slug),
-        makeOriginalValueSlugFromColumnSlug(slug),
-    ])
-    const slugs = [
-        ...entityNameSlugs,
-        ...timeSlugs,
-        ...valueSlugs,
-        ...extraSlugs,
-    ].filter((slug) => slug && table.has(slug)) as string[]
-
-    const uniqueSlugs = _.uniq(slugs)
-
-    return table.select(uniqueSlugs)
 }

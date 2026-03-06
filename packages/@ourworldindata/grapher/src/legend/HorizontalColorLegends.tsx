@@ -9,7 +9,7 @@ import {
     Bounds,
     HorizontalAlign,
     VerticalAlign,
-    makeIdForHumanConsumption,
+    makeFigmaId,
 } from "@ourworldindata/utils"
 import { TextWrap } from "@ourworldindata/components"
 import {
@@ -25,11 +25,11 @@ import {
 } from "../core/GrapherConstants"
 import { darkenColorForLine } from "../color/ColorUtils"
 import {
-    LegendInteractionState,
     LegendStyleConfig,
     LegendTextStyle,
     LegendMarkerStyle,
-} from "../legend/LegendInteractionState"
+} from "./LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 import { GRAPHER_DARK_TEXT } from "../color/ColorConstants"
 
 export interface PositionedBin {
@@ -89,7 +89,7 @@ export interface HorizontalColorLegendManager {
     onLegendMouseOver?: (d: ColorScaleBin) => void
     onLegendClick?: (d: ColorScaleBin) => void
     isStatic?: boolean
-    getLegendBinState?: (bin: ColorScaleBin) => LegendInteractionState
+    resolveLegendBinEmphasis?: (bin: ColorScaleBin) => Emphasis
     legendStyleConfig?: LegendStyleConfig
     categoricalLegendStyleConfig?: LegendStyleConfig
     numericLegendStyleConfig?: LegendStyleConfig
@@ -150,11 +150,8 @@ export abstract class HorizontalColorLegend extends React.Component<{
         return this.manager.legendTickSize ?? DEFAULT_TICK_SIZE
     }
 
-    protected getBinState(bin: ColorScaleBin): LegendInteractionState {
-        return (
-            this.manager.getLegendBinState?.(bin) ??
-            LegendInteractionState.Default
-        )
+    protected getBinState(bin: ColorScaleBin): Emphasis {
+        return this.manager.resolveLegendBinEmphasis?.(bin) ?? Emphasis.Default
     }
 
     abstract get height(): number
@@ -503,16 +500,16 @@ export class HorizontalNumericColorLegend extends HorizontalColorLegend {
         return (
             <g
                 ref={this.base}
-                id={makeIdForHumanConsumption("numeric-color-legend")}
+                id={makeFigmaId("numeric-color-legend")}
                 className="numericColorLegend"
             >
-                <g id={makeIdForHumanConsumption("lines")}>
+                <g id={makeFigmaId("lines")}>
                     {numericLabels.map((label, index) => {
                         const style = this.getMarkerStyleConfig(label.bin)
                         return (
                             <line
                                 key={index}
-                                id={makeIdForHumanConsumption(label.text)}
+                                id={makeFigmaId(label.text)}
                                 x1={label.bounds.x + label.bounds.width / 2}
                                 y1={bottomY - numericBinSize}
                                 x2={label.bounds.x + label.bounds.width / 2}
@@ -533,7 +530,7 @@ export class HorizontalNumericColorLegend extends HorizontalColorLegend {
                         )
                     })}
                 </g>
-                <g id={makeIdForHumanConsumption("swatches")}>
+                <g id={makeFigmaId("swatches")}>
                     {_.sortBy(
                         positionedBins.map((positionedBin, index) => {
                             const bin = positionedBin.bin
@@ -577,7 +574,7 @@ export class HorizontalNumericColorLegend extends HorizontalColorLegend {
                         (rect) => rect.props["strokeWidth"]
                     )}
                 </g>
-                <g id={makeIdForHumanConsumption("labels")}>
+                <g id={makeFigmaId("labels")}>
                     {numericLabels.map((label, index) => {
                         const style = this.getTextStyleConfig(label.bin)
                         return (
@@ -802,7 +799,7 @@ export class HorizontalCategoricalColorLegend extends HorizontalColorLegend {
         const { marks } = this
 
         return (
-            <g id={makeIdForHumanConsumption("labels")}>
+            <g id={makeFigmaId("labels")}>
                 {marks.map((mark, index) => {
                     const style = this.getTextStyleConfig(mark.bin)
 
@@ -831,7 +828,7 @@ export class HorizontalCategoricalColorLegend extends HorizontalColorLegend {
         const { marks } = this
 
         return (
-            <g id={makeIdForHumanConsumption("swatches")}>
+            <g id={makeFigmaId("swatches")}>
                 {marks.map((mark, index) => {
                     const style = this.getMarkerStyleConfig(mark.bin)
 
@@ -841,7 +838,7 @@ export class HorizontalCategoricalColorLegend extends HorizontalColorLegend {
 
                     return (
                         <rect
-                            id={makeIdForHumanConsumption(mark.label.text)}
+                            id={makeFigmaId(mark.label.text)}
                             key={`${mark.label}-${index}`}
                             x={this.legendX + mark.x}
                             y={this.categoryLegendY + mark.y}
@@ -911,7 +908,7 @@ export class HorizontalCategoricalColorLegend extends HorizontalColorLegend {
     override render(): React.ReactElement {
         return (
             <g
-                id={makeIdForHumanConsumption("categorical-color-legend")}
+                id={makeFigmaId("categorical-color-legend")}
                 className="categoricalColorLegend"
             >
                 {this.renderSwatches()}

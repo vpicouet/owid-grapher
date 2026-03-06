@@ -14,21 +14,26 @@ import {
 import { Bounds, excludeUndefined } from "@ourworldindata/utils"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig"
 import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
+import { Time } from "@ourworldindata/types"
+import {
+    PlacedStackedBarSeries,
+    RenderStackedBarSeries,
+} from "./StackedConstants"
 import {
     getXAxisConfigDefaultsForStackedBar,
     resolveCollision,
+    toPlacedStackedBarSeries,
 } from "./StackedUtils"
 import {
     HorizontalAxisComponent,
     VerticalAxisZeroLine,
 } from "../axis/AxisViews"
 import { StackedBars } from "./StackedBars"
-import {
-    InitialVerticalLabelsSeries,
-    VerticalLabelsState,
-} from "../verticalLabels/VerticalLabelsState"
-import { VerticalLabels } from "../verticalLabels/VerticalLabels"
+import { InitialSimpleLabelSeries } from "../verticalLabels/SimpleVerticalLabelsTypes.js"
+import { SimpleVerticalLabelsState } from "../verticalLabels/SimpleVerticalLabelsState"
+import { SimpleVerticalLabels } from "../verticalLabels/SimpleVerticalLabels"
 import { NoDataModal } from "../noDataModal/NoDataModal"
+import { resolveEmphasis } from "../interaction/Emphasis.js"
 
 const LEGEND_PADDING = 4
 
@@ -126,13 +131,9 @@ export class StackedBarChartThumbnail
     }
 
     @computed private get verticalLabelsState():
-        | VerticalLabelsState
+        | SimpleVerticalLabelsState
         | undefined {
-        if (
-            !this.manager.showLegend ||
-            this.manager.isDisplayedAlongsideComplementaryTable
-        )
-            return undefined
+        if (!this.manager.showLegend) return undefined
 
         const series = excludeUndefined(
             this.chartState.series.map((series, seriesIndex) => {
@@ -150,15 +151,15 @@ export class StackedBarChartThumbnail
             })
         )
 
-        return new VerticalLabelsState(series, {
+        return new SimpleVerticalLabelsState(series, {
             fontSize: this.labelFontSize,
             fontWeight: 500,
             maxWidth: 0.25 * this.bounds.width,
             yRange: this.labelsRange,
             resolveCollision: (
-                s1: InitialVerticalLabelsSeries,
-                s2: InitialVerticalLabelsSeries
-            ): InitialVerticalLabelsSeries => {
+                s1: InitialSimpleLabelSeries,
+                s2: InitialSimpleLabelSeries
+            ): InitialSimpleLabelSeries => {
                 const series1 = this.chartState.seriesByName.get(s1.seriesName)
                 const series2 = this.chartState.seriesByName.get(s2.seriesName)
 
@@ -179,6 +180,18 @@ export class StackedBarChartThumbnail
 
     @computed private get paddedLabelsWidth(): number {
         return this.labelsWidth ? this.labelsWidth + LEGEND_PADDING : 0
+    }
+
+    @computed
+    private get placedSeries(): readonly PlacedStackedBarSeries<Time>[] {
+        return toPlacedStackedBarSeries(this.chartState.series, this.dualAxis)
+    }
+
+    @computed private get renderSeries(): RenderStackedBarSeries<Time>[] {
+        return this.placedSeries.map((series) => ({
+            ...series,
+            emphasis: resolveEmphasis({ focus: series.focus }),
+        }))
     }
 
     override render(): React.ReactElement {
@@ -202,13 +215,9 @@ export class StackedBarChartThumbnail
                     bounds={this.dualAxis.bounds}
                     showEndpointsOnly
                 />
-                <StackedBars
-                    dualAxis={this.dualAxis}
-                    series={this.chartState.series}
-                    formatColumn={this.chartState.formatColumn}
-                />
+                <StackedBars series={this.renderSeries} />
                 {this.verticalLabelsState && (
-                    <VerticalLabels
+                    <SimpleVerticalLabels
                         state={this.verticalLabelsState}
                         yAxis={this.dualAxis.verticalAxis}
                         x={this.innerBounds.right + LEGEND_PADDING}

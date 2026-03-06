@@ -4,6 +4,7 @@ import { observer } from "mobx-react"
 import {
     computed,
     action,
+    comparer,
     reaction,
     when,
     IReactionDisposer,
@@ -24,7 +25,7 @@ import {
     getUserNavigatorLanguagesNonEnglish,
     getRegionAlternativeNames,
     convertDaysSinceEpochToDate,
-    checkIsOwidIncomeGroupName,
+    checkIsOwidIncomeGroupCode,
     checkHasMembers,
     Region,
     getRegionByName,
@@ -50,8 +51,6 @@ import {
 import {
     DEFAULT_GRAPHER_ENTITY_TYPE,
     DEFAULT_GRAPHER_ENTITY_TYPE_PLURAL,
-    POPULATION_INDICATOR_ID_USED_IN_ENTITY_SELECTOR,
-    GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ENTITY_SELECTOR,
     isPopulationVariableETLPath,
     isWorldEntityName,
 } from "../core/GrapherConstants"
@@ -63,30 +62,35 @@ import {
     AdditionalGrapherDataFetchFn,
     ColumnSlug,
     EntityName,
+    NumericCatalogKey,
     OwidColumnDef,
     ProjectionColumnInfo,
     Time,
     ToleranceStrategy,
     type EntitySelectorEvent,
 } from "@ourworldindata/types"
-import { buildVariableTable } from "../core/LegacyToOwidTable"
 import { DrawerContext } from "../slideInDrawer/SlideInDrawer.js"
 import * as R from "remeda"
 import { MapConfig } from "../mapCharts/MapConfig"
 import { match } from "ts-pattern"
 import {
-    entityRegionTypeLabels,
-    EntityNamesByRegionType,
-    EntityRegionType,
-    EntityRegionTypeGroup,
-    isAggregateSource,
-} from "../core/EntitiesByRegionType"
+    regionGroupLabels,
+    EntitiesByRegionGroup,
+    RegionGroupKey,
+    RegionGroup,
+    isAnyRegionDataProviderKey,
+    parseLabel,
+} from "../core/RegionGroups"
 import { SearchField } from "../controls/SearchField"
 import { MAP_REGION_LABELS } from "../mapCharts/MapChartConstants.js"
+import {
+    columnDefsByCatalogKey,
+    loadCatalogDataAsOwidTable,
+} from "../core/loadCatalogData.js"
 
 export type CoreColumnBySlug = Record<ColumnSlug, CoreColumn>
 
-type EntityFilter = EntityRegionType | "all"
+type EntityFilter = RegionGroupKey | "all"
 
 type ValueBySlugAndTimeAndEntityName<T> = Map<
     ColumnSlug,
@@ -110,7 +114,8 @@ export interface EntitySelectorManager {
     selection: SelectionArray
     entityType?: string
     entityTypePlural?: string
-    activeColumnSlugs?: string[]
+    // TODO: Use the column slugs currently in use, if possible
+    inputColumnSlugs?: ColumnSlug[]
     isEntitySelectorModalOrDrawerOpen?: boolean
     canChangeEntity?: boolean
     canHighlightEntities?: boolean
@@ -124,8 +129,8 @@ export interface EntitySelectorManager {
     onSelectEntity?: (entityName: EntityName) => void
     onDeselectEntity?: (entityName: EntityName) => void
     onClearEntities?: () => void
-    entityRegionTypeGroups?: EntityRegionTypeGroup[]
-    entityNamesByRegionType?: EntityNamesByRegionType
+    regionGroups?: RegionGroup[]
+    entitiesByRegionGroup?: EntitiesByRegionGroup
     isReady?: boolean
     logEntitySelectorEvent: (
         action: EntitySelectorEvent,
@@ -167,61 +172,21 @@ interface FilterDropdownOption {
     trackNote?: string // unused
 }
 
-const EXTERNAL_SORT_INDICATOR_DEFINITIONS = [
+export const EXTERNAL_SORT_INDICATOR_DEFINITIONS = [
     {
-        key: "population",
+        catalogKey: "population" satisfies NumericCatalogKey,
+        slug: columnDefsByCatalogKey["population"].slug,
         label: "Population",
-        indicatorId: POPULATION_INDICATOR_ID_USED_IN_ENTITY_SELECTOR,
-        slug: indicatorIdToSlug(
-            POPULATION_INDICATOR_ID_USED_IN_ENTITY_SELECTOR
-        ),
-        // checks if a column has population data
-        isMatch: (column: CoreColumn): boolean => {
-            // check the slug first
-            const externalSlug = indicatorIdToSlug(
-                POPULATION_INDICATOR_ID_USED_IN_ENTITY_SELECTOR
-            )
-            if (column.slug === externalSlug) return true
-
-            // then check the catalog path
-            return isPopulationVariableETLPath(
-                (column.def as OwidColumnDef)?.catalogPath ?? ""
-            )
-        },
     },
     {
-        key: "gdpPerCapita",
+        catalogKey: "gdp" satisfies NumericCatalogKey,
+        slug: columnDefsByCatalogKey["gdp"].slug,
         label: "GDP per capita (int. $)",
-        indicatorId: GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ENTITY_SELECTOR,
-        slug: indicatorIdToSlug(
-            GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ENTITY_SELECTOR
-        ),
-        // checks if a column has GDP per capita data
-        isMatch: (column: CoreColumn): boolean => {
-            // check the slug first
-            const externalSlug = indicatorIdToSlug(
-                GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ENTITY_SELECTOR
-            )
-            if (column.slug === externalSlug) return true
-
-            // then check the label
-            const label = getTitleForSortColumnLabel(column)
-            // matches "gdp per capita" and content within parentheses
-            const potentialMatches =
-                label.match(/\(.*?\)|(\bgdp per capita\b)/gi) ?? []
-            // filter for "gdp per capita" matches that are not within parentheses
-            const matches = potentialMatches.filter(
-                (match) => !match.includes("(")
-            )
-
-            return matches.length > 0
-        },
     },
 ] as const
 
 type ExternalSortIndicatorDefinition =
     (typeof EXTERNAL_SORT_INDICATOR_DEFINITIONS)[number]
-type ExternalSortIndicatorKey = ExternalSortIndicatorDefinition["key"]
 
 const regionNamesSet = new Set(regions.map((region) => region.name))
 
@@ -283,8 +248,12 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         // we need to change the sort config accordingly
         this.disposers.push(
             reaction(
-                () => this.sortOptions,
-                () => this.updateSortConfigIfOptionHasBecomeUnavailable()
+                () => ({
+                    slugs: this.sortOptions.map((option) => option.slug),
+                    isReady: this.manager.isReady,
+                }),
+                () => this.updateSortConfigIfOptionHasBecomeUnavailable(),
+                { equals: comparer.structural }
             )
         )
     }
@@ -341,7 +310,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         // We don't want to update the sort config when `sortOptions` are not ready,
         // because the new chart dimensions are currently loading
         if (!this.manager.isReady) return
-        if (!this.manager.activeColumnSlugs?.length) return
+        if (!this.manager.inputColumnSlugs?.length) return
 
         // Check whether the current sort option is still available in the newly-updated
         // sortOptions
@@ -390,7 +359,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
 
             const countryRegionsWithoutIncomeGroups = localCountryInfo.regions
                 ? localCountryInfo.regions.filter(
-                      (region) => !checkIsOwidIncomeGroupName(region)
+                      (region) => !checkIsOwidIncomeGroupCode(region)
                   )
                 : []
 
@@ -619,7 +588,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
     }
 
     @computed private get searchPlaceholderEntityType(): string {
-        if (isAggregateSource(this.entityFilter)) return "region"
+        if (isAnyRegionDataProviderKey(this.entityFilter)) return "region"
 
         return match(this.entityFilter)
             .with("all", () => this.entityType.singular)
@@ -724,12 +693,12 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
 
     @computed private get numericalChartColumns(): CoreColumn[] {
         const {
-            activeColumnSlugs = [],
+            inputColumnSlugs = [],
             mapColumnSlug,
             isOnMapTab,
         } = this.manager
 
-        const activeSlugs = isOnMapTab ? [mapColumnSlug] : activeColumnSlugs
+        const activeSlugs = isOnMapTab ? [mapColumnSlug] : inputColumnSlugs
 
         return activeSlugs
             .map((slug) => this.table.get(slug))
@@ -742,17 +711,17 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
      * it will be used instead of the "Population" external indicator.
      */
     @computed
-    private get chartColumnsByExternalSortIndicatorKey(): Partial<
-        Record<ExternalSortIndicatorKey, CoreColumn>
+    private get externalSortColumnsByCatalogKey(): Partial<
+        Record<NumericCatalogKey, CoreColumn>
     > {
-        const matchingColumns: Partial<
-            Record<ExternalSortIndicatorKey, CoreColumn>
-        > = {}
+        const matchingColumns: Partial<Record<NumericCatalogKey, CoreColumn>> =
+            {}
         for (const external of EXTERNAL_SORT_INDICATOR_DEFINITIONS) {
             const matchingColumn = this.numericalChartColumns.find((column) =>
-                external.isMatch(column)
+                isExternalSortIndicatorMatch(external.catalogKey, column)
             )
-            if (matchingColumn) matchingColumns[external.key] = matchingColumn
+            if (matchingColumn)
+                matchingColumns[external.catalogKey] = matchingColumn
         }
         return matchingColumns
     }
@@ -761,13 +730,11 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
     private get externalSortIndicatorDefinitions(): ExternalSortIndicatorDefinition[] {
         if (!this.supportsSortingByExternalIndicators) return []
 
-        // if the chart has a column that matches an external sort indicator,
+        // If the chart has a column that matches an external sort indicator,
         // prefer the chart column over the external indicator
-        const matchingKeys = Object.keys(
-            this.chartColumnsByExternalSortIndicatorKey
-        )
+        const matchingKeys = Object.keys(this.externalSortColumnsByCatalogKey)
         return EXTERNAL_SORT_INDICATOR_DEFINITIONS.filter(
-            (external) => !matchingKeys.includes(external.key)
+            (external) => !matchingKeys.includes(external.catalogKey)
         )
     }
 
@@ -860,10 +827,10 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         // add external indicators as sort options if applicable
         if (this.supportsSortingByExternalIndicators) {
             EXTERNAL_SORT_INDICATOR_DEFINITIONS.forEach((external) => {
-                // if the chart has a column that matches the external
+                // If the chart has a column that matches the external
                 // indicator, prefer it over the external indicator
                 const chartColumn =
-                    this.chartColumnsByExternalSortIndicatorKey[external.key]
+                    this.externalSortColumnsByCatalogKey[external.catalogKey]
 
                 if (chartColumn) {
                     options.push({
@@ -895,11 +862,11 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
             })
         }
 
-        // add the remaining numerical chart columns as sort options,
+        // Add the remaining numerical chart columns as sort options,
         // excluding columns that match external indicators (since those
         // have already been added)
         const matchingSlugs = Object.values(
-            this.chartColumnsByExternalSortIndicatorKey
+            this.externalSortColumnsByCatalogKey
         ).map((column) => column.slug)
         const columns = this.numericalChartColumns.filter(
             (column) => !matchingSlugs.includes(column.slug)
@@ -1076,7 +1043,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
             })
 
         const entityNameSet = new Set(
-            this.manager.entityNamesByRegionType?.get(entityFilter) ?? []
+            this.manager.entitiesByRegionGroup?.get(entityFilter) ?? []
         )
         const filteredAvailableEntities = availableEntities.filter((entity) =>
             entityNameSet.has(entity.name)
@@ -1261,22 +1228,24 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
     @action.bound async loadAndSetExternalSortColumn(
         external: ExternalSortIndicatorDefinition
     ): Promise<void> {
-        const { slug, indicatorId } = external
+        const { catalogKey, slug } = external
         const { additionalDataLoaderFn } = this.manager
 
         // the indicator has already been loaded
         if (this.interpolatedSortColumnsBySlug[slug]) return
 
-        // load the external indicator
+        // load the external indicator from the catalog
         try {
             this.set({ isLoadingExternalSortColumn: true })
             if (additionalDataLoaderFn === undefined)
                 throw new Error(
                     "additionalDataLoaderFn is not set, can't load sort variables on demand"
                 )
-            const variable = await additionalDataLoaderFn(indicatorId)
-            const variableTable = buildVariableTable(variable)
-            const column = variableTable
+            const { table } = await loadCatalogDataAsOwidTable(
+                catalogKey,
+                additionalDataLoaderFn
+            )
+            const column = table
                 .filterByEntityNames(this.inputTable.availableEntityNames)
                 .interpolateColumnWithTolerance(slug, {
                     toleranceOverride: Infinity,
@@ -1284,7 +1253,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
                 .get(slug)
             if (column) this.setInterpolatedSortColumn(column)
         } catch {
-            console.error(`Failed to load variable with id ${indicatorId}`)
+            console.error(`Failed to load data from catalog: ${catalogKey}`)
         } finally {
             this.set({ isLoadingExternalSortColumn: false })
         }
@@ -1312,7 +1281,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
             const sortByTarget = this.isEntityNameSlug(slug)
                 ? "name"
                 : external
-                  ? external.key
+                  ? external.catalogKey
                   : "value"
             this.manager.logEntitySelectorEvent("sortBy", sortByTarget)
         }
@@ -1334,12 +1303,12 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
     }
 
     @computed get filterOptions(): FilterDropdownOption[] {
-        const { entityRegionTypeGroups = [] } = this.manager
+        const { regionGroups = [] } = this.manager
 
-        const options: FilterDropdownOption[] = entityRegionTypeGroups
-            .map(({ regionType, entityNames }) => ({
-                value: regionType,
-                label: entityRegionTypeLabels[regionType],
+        const options: FilterDropdownOption[] = regionGroups
+            .map(({ regionGroupKey, entityNames }) => ({
+                value: regionGroupKey,
+                label: regionGroupLabels[regionGroupKey],
                 count: entityNames.filter((entityName) =>
                     this.availableEntityNameSet.has(entityName)
                 ).length,
@@ -1392,9 +1361,6 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
                     renderTriggerValue={renderFilterTriggerValue}
                     renderMenuOption={renderFilterMenuOption}
                     aria-label="Filter by type"
-                    portalContainer={
-                        this.scrollableContainer.current ?? undefined
-                    }
                 />
             </div>
         )
@@ -1432,9 +1398,6 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
                         renderTriggerValue={renderSortTriggerValue}
                         renderMenuOption={renderSortMenuOption}
                         aria-label="Sort by"
-                        portalContainer={
-                            this.scrollableContainer.current ?? undefined
-                        }
                     />
                     <button
                         type="button"
@@ -1543,8 +1506,7 @@ export class EntitySelector extends React.Component<EntitySelectorProps> {
         if (value < 0) return { formattedValue, width: 0 }
 
         return {
-            formattedValue:
-                selectedSortColumn.formatValueShortWithAbbreviations(value),
+            formattedValue,
             width: R.clamp(barScale(value), { min: 0, max: 1 }),
         }
     }
@@ -1725,23 +1687,28 @@ function SelectableEntity({
         radio: RadioButton,
     }[type]
 
-    const nameWords = name.split(" ")
-    const label = isLocal ? (
-        <span className="label-with-location-icon">
-            {nameWords.slice(0, -1).join(" ")}{" "}
-            <span className="label-with-location-icon label-with-location-icon--no-line-break">
-                {nameWords[nameWords.length - 1]}
-                <Tippy
-                    content="Your current location"
-                    theme="grapher-explanation--short"
-                    placement="top"
-                >
-                    <FontAwesomeIcon icon={faLocationArrow} />
-                </Tippy>
-            </span>
+    const { name: displayName, suffix } = parseLabel(name)
+
+    const locationIcon = (
+        <span className="location-icon">
+            {/* Non-breaking space prevents the icon from wrapping to a new line alone */}
+            {"\u00A0"}
+            <Tippy
+                content="Your current location"
+                theme="grapher-explanation--short"
+                placement="top"
+            >
+                <FontAwesomeIcon icon={faLocationArrow} />
+            </Tippy>
         </span>
-    ) : (
-        name
+    )
+
+    const label = (
+        <span>
+            {displayName}
+            {suffix && <span className="suffix"> ({suffix})</span>}
+            {isLocal && locationIcon}
+        </span>
     )
 
     return (
@@ -1848,6 +1815,32 @@ function getTitleForSortColumnLabel(column: CoreColumn): string {
     return column.titlePublicOrDisplayName.title
 }
 
-function indicatorIdToSlug(indicatorId: number): ColumnSlug {
-    return indicatorId.toString()
+/** Determines if a column matches a specific external sort indicator type */
+function isExternalSortIndicatorMatch(
+    key: NumericCatalogKey,
+    column: CoreColumn
+): boolean {
+    // Trivial if the slugs match
+    if (column.def.slug === columnDefsByCatalogKey[key].slug) return true
+
+    return match(key)
+        .with("population", () => {
+            // Check the catalog path for population data
+            return isPopulationVariableETLPath(
+                (column.def as OwidColumnDef)?.catalogPath ?? ""
+            )
+        })
+        .with("gdp", () => {
+            // Check the label for GDP per capita data
+            const label = getTitleForSortColumnLabel(column)
+            // Matches "gdp per capita" and content within parentheses
+            const potentialMatches =
+                label.match(/\(.*?\)|(\bgdp per capita\b)/gi) ?? []
+            // Filter for "gdp per capita" matches that are not within parentheses
+            const matches = potentialMatches.filter(
+                (match) => !match.includes("(")
+            )
+            return matches.length > 0
+        })
+        .exhaustive()
 }

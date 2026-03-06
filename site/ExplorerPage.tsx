@@ -10,6 +10,7 @@ import {
     EMBEDDED_EXPLORER_DELIMITER,
     EMBEDDED_EXPLORER_GRAPHER_CONFIGS,
     EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS,
+    EMBEDDED_EXPLORER_VIEW_CONFIG_IDS,
     ExplorerContainerId,
     EXPLORERS_ROUTE_FOLDER,
     ExplorerProgram,
@@ -25,6 +26,7 @@ import {
     ADMIN_BASE_URL,
     BAKED_BASE_URL,
     BAKED_GRAPHER_URL,
+    CATALOG_URL,
     DATA_API_URL,
 } from "../settings/clientSettings.js"
 
@@ -33,6 +35,7 @@ interface ExplorerPageSettings {
     wpContent?: string
     grapherConfigs: GrapherInterface[]
     partialGrapherConfigs: GrapherInterface[]
+    chartConfigIdByViewId?: Record<string, string>
     baseUrl: string
     urlMigrationSpec?: ExplorerPageUrlMigrationSpec
     isPreviewing?: boolean
@@ -66,17 +69,12 @@ export const ExplorerPage = (props: ExplorerPageSettings) => {
         program,
         grapherConfigs,
         partialGrapherConfigs,
+        chartConfigIdByViewId,
         baseUrl,
         urlMigrationSpec,
         archiveContext,
     } = props
-    const {
-        explorerTitle,
-        explorerSubtitle,
-        slug,
-        thumbnail,
-        hideAlertBanner,
-    } = program
+    const { explorerTitle, explorerSubtitle, slug, thumbnail } = program
 
     const isOnArchivalPage = archiveContext?.type === "archive-page"
     const assetMaps = isOnArchivalPage ? archiveContext.assets : undefined
@@ -93,6 +91,10 @@ const partialGrapherConfigs = ${serializeJSONForHTML(
         partialGrapherConfigs,
         EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS
     )};
+const chartConfigIdByViewId = ${serializeJSONForHTML(
+        chartConfigIdByViewId ?? {},
+        EMBEDDED_EXPLORER_VIEW_CONFIG_IDS
+    )};
 const urlMigrationSpec = ${
         urlMigrationSpec ? JSON.stringify(urlMigrationSpec) : "undefined"
     };
@@ -102,6 +104,7 @@ const explorerConstants = ${serializeJSONForHTML(
             bakedBaseUrl: BAKED_BASE_URL,
             bakedGrapherUrl: BAKED_GRAPHER_URL,
             dataApiUrl: DATA_API_URL,
+            catalogUrl: CATALOG_URL,
         },
         EXPLORER_CONSTANTS_DELIMITER
     )}
@@ -110,6 +113,7 @@ window.Explorer.renderSingleExplorerOnExplorerPage(
     explorerProgram,
     grapherConfigs,
     partialGrapherConfigs,
+    chartConfigIdByViewId,
     explorerConstants,
     urlMigrationSpec,
     archiveContext
@@ -130,7 +134,6 @@ window.Explorer.renderSingleExplorerOnExplorerPage(
             </Head>
             <body className={GRAPHER_PAGE_BODY_CLASS}>
                 <SiteHeader
-                    hideAlertBanner={hideAlertBanner || false}
                     archiveInfo={isOnArchivalPage ? archiveContext : undefined}
                 />
                 <main id={ExplorerContainerId}>

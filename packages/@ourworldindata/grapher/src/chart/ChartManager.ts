@@ -33,13 +33,14 @@ export interface ChartManager {
     transformedTable?: OwidTable
 
     variant?: GrapherVariant
-    isDisplayedAlongsideComplementaryTable?: boolean
+    useMinimalLabeling?: boolean
     chartAreaPadding?: number
 
     isExportingToSvgOrPng?: boolean
     isRelativeMode?: boolean
     comparisonLines?: ComparisonLineConfig[]
     showLegend?: boolean
+    showSeriesLabels?: boolean
     tooltip?: TooltipManager["tooltip"]
     baseColorScheme?: ColorSchemeName
     invertColorScheme?: boolean
@@ -68,10 +69,6 @@ export interface ChartManager {
     xColumnSlug?: ColumnSlug
     sizeColumnSlug?: ColumnSlug
     colorColumnSlug?: ColumnSlug
-
-    // if colorColumnSlug is given, either one of these is set
-    categoricalColorColumnSlug?: ColumnSlug
-    numericColorColumnSlug?: ColumnSlug
 
     selection?: SelectionArray | EntityName[]
     entityType?: string

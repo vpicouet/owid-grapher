@@ -303,7 +303,7 @@ describe("externalLegendBins", () => {
         const chartState = new LineChartState({
             manager: {
                 ...baseManager,
-                showLegend: true,
+                showSeriesLabels: true,
             },
         })
         const chart = new LineChart({ chartState })
@@ -314,7 +314,7 @@ describe("externalLegendBins", () => {
         const chartState = new LineChartState({
             manager: {
                 ...baseManager,
-                showLegend: false,
+                showSeriesLabels: false,
             },
         })
         const chart = new LineChart({ chartState })
@@ -359,7 +359,7 @@ describe("color scale", () => {
 
         const manager: LineChartManager = {
             yColumnSlugs: ["y"],
-            numericColorColumnSlug: "color",
+            colorColumnSlug: "color",
             table: table,
             selection: ["usa"],
             seriesStrategy: SeriesStrategy.column,
@@ -422,7 +422,7 @@ describe("color scale", () => {
         )
         const manager: LineChartManager = {
             yColumnSlugs: ["y"],
-            numericColorColumnSlug: "y",
+            colorColumnSlug: "y",
             table: table,
             selection: ["usa"],
             seriesStrategy: SeriesStrategy.column,
@@ -438,4 +438,24 @@ describe("color scale", () => {
             colorValue: 500,
         })
     })
+})
+
+it("ignores x-axis config when a scatter plot is present", () => {
+    const table = SynthesizeGDPTable({
+        timeRange: [2000, 2010],
+        entityCount: 1,
+    })
+    const manager: LineChartManager = {
+        table,
+        yColumnSlugs: [SampleColumnSlugs.GDP],
+        xColumnSlug: SampleColumnSlugs.Population,
+        selection: table.sampleEntityName(1),
+        hasScatter: true,
+        xAxisConfig: { label: "Custom X Axis Label" },
+    }
+    const chartState = new LineChartState({ manager })
+    const chart = new LineChart({ chartState })
+
+    // x-axis label is ignored because a scatter tab is present
+    expect(chart.xAxis.label).toBe("")
 })

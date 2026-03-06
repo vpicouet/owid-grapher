@@ -64,6 +64,7 @@ import {
     RawBlockStaticViz,
     RawBlockLTPToc,
     RawBlockConditionalSection,
+    RawBlockCountryProfileSelector,
 } from "@ourworldindata/types"
 import { spanToHtmlString } from "./gdocUtils.js"
 import { match, P } from "ts-pattern"
@@ -135,6 +136,7 @@ export function enrichedBlockToRawBlock(
                     size: b.size,
                     caption: b.caption ? spansToHtmlText(b.caption) : undefined,
                     visibility: b.visibility ? b.visibility : undefined,
+                    peerCountries: b.peerCountries,
                 },
             })
         )
@@ -747,6 +749,29 @@ export function enrichedBlockToRawBlock(
                 })),
             }
         })
+        .with({ type: "data-callout" }, (b) => ({
+            type: "data-callout" as const,
+            value: {
+                url: b.url,
+                content: b.content.map(
+                    enrichedBlockToRawBlock
+                ) as RawBlockText[],
+            },
+        }))
+        .with(
+            { type: "country-profile-selector" },
+            (b): RawBlockCountryProfileSelector => ({
+                type: "country-profile-selector",
+                value: {
+                    url: b.url,
+                    title: b.title,
+                    description: b.description,
+                    defaultCountries: b.defaultCountries.length
+                        ? b.defaultCountries.join(", ")
+                        : undefined,
+                },
+            })
+        )
         .exhaustive()
 }
 
