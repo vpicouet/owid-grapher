@@ -1,0 +1,104 @@
+.archive-header-logo-bar {
+    position: relative;
+    z-index: $zindex-lightbox;
+    border-bottom: $header-border-height solid $vermillion;
+    background-color: $oxford-blue;
+
+    .site-logos {
+        justify-content: start;
+
+        .logos-wrapper {
+            display: flex;
+        }
+    }
+
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+.archive-navigation-bar {
+    background-color: $blue-50;
+    color: $white;
+
+    padding-top: 18px;
+    padding-bottom: 24px;
+
+    .archive-navigation-bar__wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .archive-navigation-bar__archive_text {
+        text-transform: uppercase;
+        @include h5-black-caps;
+        margin-bottom: 4px;
+        display: flex;
+        gap: 8px;
+    }
+
+    .archive-navigation-bar__archive_text--tooltip {
+        color: $blue-30;
+
+        &:hover,
+        &:active {
+            color: white;
+        }
+    }
+
+    .archive-navigation-bar__date {
+        text-align: center;
+        @include subtitle-1;
+        margin-top: 0;
+        margin-bottom: 0;
+
+        .archive-navigation-bar__time-value {
+            font-size: 0.7em;
+            color: $gray-10;
+        }
+    }
+
+    .archive-data-navigation-bar__buttons {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 16px;
+        width: 100%;
+    }
+}
+
+.archive-data-navigation-bar__button-left,
+.archive-data-navigation-bar__button-right {
+    width: 232px;
+
+    // On small screens, make the prev/next buttons icon-only and narrow, with
+    // the center one taking the rest of the space.
+    @include sm-only {
+        padding-left: 0;
+        padding-right: 0;
+        width: 40px;
+
+        > span {
+            display: none;
+        }
+
+        > svg {
+            margin: 0;
+        }
+    }
+}
+
+.archive-writing-navigation-bar__buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 16px;
+    margin-top: 16px;
+    width: 100%;
+
+    @include sm-only {
+        .owid-btn {
+            width: 100%;
+        }
+    }
+}

@@ -5,6 +5,7 @@ import {
     EMBEDDED_EXPLORER_DELIMITER,
     EMBEDDED_EXPLORER_GRAPHER_CONFIGS,
     EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS,
+    EMBEDDED_EXPLORER_VIEW_CONFIG_IDS,
     EXPLORER_CONSTANTS_DELIMITER,
 } from "./ExplorerConstants.js"
 import { ExplorerProps } from "./Explorer.js"
@@ -12,7 +13,7 @@ import { ExplorerProps } from "./Explorer.js"
 export async function buildExplorerProps(
     html: string,
     queryStr: string,
-    selection: SelectionArray,
+    selection?: SelectionArray,
     bounds?: Bounds
 ) {
     const explorerConstants = deserializeJSONFromHTML(
@@ -27,6 +28,10 @@ export async function buildExplorerProps(
         html,
         EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS
     )
+    const chartConfigIdByViewId = deserializeJSONFromHTML(
+        html,
+        EMBEDDED_EXPLORER_VIEW_CONFIG_IDS
+    ) as Record<string, string> | undefined
     if (_.isArray(grapherConfigs)) {
         grapherConfigs = grapherConfigs.map((grapherConfig) => ({
             ...grapherConfig,
@@ -48,10 +53,12 @@ export async function buildExplorerProps(
         bakedBaseUrl: explorerConstants.bakedBaseUrl,
         bakedGrapherUrl: explorerConstants.bakedGrapherUrl,
         dataApiUrl: explorerConstants.dataApiUrl,
+        catalogUrl: explorerConstants.catalogUrl,
         grapherConfigs,
         partialGrapherConfigs,
+        chartConfigIdByViewId,
         queryStr,
-        selection: new SelectionArray(selection.selectedEntityNames),
+        selection: new SelectionArray(selection?.selectedEntityNames ?? []),
         bounds: bounds,
         staticBounds: bounds,
     }

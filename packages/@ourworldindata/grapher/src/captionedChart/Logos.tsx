@@ -6,7 +6,7 @@ import {
     SMALL_OWID_LOGO_SVG,
 } from "./LogosSVG"
 import { LogoOption } from "@ourworldindata/types"
-import { makeIdForHumanConsumption } from "@ourworldindata/utils"
+import { makeFigmaId } from "@ourworldindata/utils"
 
 interface LogoAttributes {
     svg: string
@@ -92,7 +92,7 @@ export class Logo {
             (this.spec.svg.match(/<svg>(.*)<\/svg>/) || "")[1] || this.spec.svg
         return (
             <g
-                id={makeIdForHumanConsumption("logo")}
+                id={makeFigmaId("logo")}
                 transform={`translate(${Math.round(
                     targetX
                 )}, ${targetY}) scale(${parseFloat(scale.toFixed(2))})`}
@@ -109,7 +109,9 @@ export class Logo {
             style: { height: `${this.targetHeight}px` },
         }
         if (this.props.isLink && spec.url)
-            return <a {...props} href={spec.url} rel="noopener" />
+            return (
+                <a {...props} href={spec.url} target="_blank" rel="noopener" />
+            )
         else return <div {...props} />
     }
 }

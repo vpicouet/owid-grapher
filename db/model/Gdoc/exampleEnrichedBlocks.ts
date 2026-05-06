@@ -1,5 +1,5 @@
 import {
-    BlockImageSize,
+    BlockSize,
     EnrichedBlockChart,
     EnrichedBlockPerson,
     EnrichedBlockText,
@@ -46,6 +46,7 @@ const enrichedBlockText: EnrichedBlockText = {
 const enrichedChart: EnrichedBlockChart = {
     type: "chart",
     url: "https://ourworldindata.org/grapher/total-cases-covid-19",
+    size: BlockSize.Wide,
     parseErrors: [],
 }
 
@@ -99,6 +100,66 @@ export const enrichedBlockExamples: Record<
         },
         parseErrors: [],
     },
+    "chart-rows": {
+        type: "chart-rows",
+        kicker: "More views of this data",
+        title: "Daily incomes by decile",
+        source: "Global Carbon Budget (2025)",
+        rows: [
+            {
+                image: "life-expectancy-thumbnail.png",
+                url: "/grapher/life-expectancy",
+                content: [
+                    {
+                        type: "text",
+                        value: [
+                            {
+                                spanType: "span-simple-text",
+                                text: "Life expectancy has more than doubled.",
+                            },
+                        ],
+                        parseErrors: [],
+                    },
+                ],
+            },
+            {
+                image: "gdp-per-capita-thumbnail.png",
+                url: "/grapher/gdp-per-capita",
+                content: [
+                    {
+                        type: "text",
+                        value: [
+                            {
+                                spanType: "span-simple-text",
+                                text: "GDP per capita has grown steadily.",
+                            },
+                        ],
+                        parseErrors: [],
+                    },
+                ],
+            },
+        ],
+        parseErrors: [],
+    },
+    "pull-chart": {
+        type: "pull-chart",
+        align: "left-center",
+        image: "chart-thumbnail.png",
+        url: "/grapher/population",
+        content: [
+            {
+                type: "text",
+                value: [
+                    {
+                        spanType: "span-simple-text",
+                        text: "World population has grown rapidly.",
+                    },
+                ],
+                parseErrors: [],
+            },
+        ],
+        parseErrors: [],
+    },
     "all-charts": {
         type: "all-charts",
         heading: "All our charts on Poverty",
@@ -115,9 +176,7 @@ export const enrichedBlockExamples: Record<
         type: "chart",
         url: "https://ourworldindata.org/grapher/total-cases-covid-19",
         height: "400",
-        row: "1",
-        column: "1",
-        position: "featured",
+        size: BlockSize.Wide,
         caption: boldLinkExampleText,
         parseErrors: [],
     },
@@ -125,9 +184,7 @@ export const enrichedBlockExamples: Record<
         type: "narrative-chart",
         name: "world-has-become-less-democratic",
         height: "400",
-        row: "1",
-        column: "1",
-        position: "featured",
+        size: BlockSize.Wide,
         caption: boldLinkExampleText,
         parseErrors: [],
     },
@@ -158,17 +215,6 @@ export const enrichedBlockExamples: Record<
     donors: {
         type: "donors",
         value: {},
-        parseErrors: [],
-    },
-    scroller: {
-        type: "scroller",
-        blocks: [
-            {
-                url: "https://ourworldindata.org/grapher/total-cases-covid-19",
-                text: enrichedBlockText,
-                type: "enriched-scroller-item",
-            },
-        ],
         parseErrors: [],
     },
     callout: {
@@ -231,7 +277,8 @@ export const enrichedBlockExamples: Record<
         hasOutline: true,
         alt: "",
         caption: [spanSimpleText],
-        size: BlockImageSize.Wide,
+        size: BlockSize.Wide,
+        visibility: "desktop",
         parseErrors: [],
     },
     video: {
@@ -241,6 +288,15 @@ export const enrichedBlockExamples: Record<
         caption: boldLinkExampleText,
         shouldLoop: true,
         shouldAutoplay: false,
+        visibility: "mobile",
+        parseErrors: [],
+    },
+    "static-viz": {
+        type: "static-viz",
+        name: "some-static-viz",
+        size: BlockSize.Wide,
+        caption: boldLinkExampleText,
+        hasOutline: true,
         parseErrors: [],
     },
     list: {
@@ -294,6 +350,7 @@ export const enrichedBlockExamples: Record<
             {
                 type: "chart",
                 url: "https://ourworldindata.org/grapher/life-expectancy",
+                size: BlockSize.Wide,
                 parseErrors: [],
             },
             {
@@ -371,14 +428,6 @@ export const enrichedBlockExamples: Record<
         value: "<p>This is a paragraph</p>",
         parseErrors: [],
     },
-    script: {
-        type: "script",
-        lines: [
-            "import { Chart } from 'chart.js';",
-            "document.body.append(Chart);",
-        ],
-        parseErrors: [],
-    },
     heading: {
         type: "heading",
         level: 1,
@@ -419,6 +468,20 @@ export const enrichedBlockExamples: Record<
         items: [enrichedBlockText],
         parseErrors: [],
     },
+    "explore-data-section": {
+        type: "explore-data-section",
+        title: "Explore the data",
+        align: "center",
+        content: [enrichedBlockText],
+        parseErrors: [],
+    },
+    "conditional-section": {
+        type: "conditional-section",
+        content: [enrichedBlockText],
+        include: ["Europe"],
+        exclude: [],
+        parseErrors: [],
+    },
     "prominent-link": {
         type: "prominent-link",
         url: "https://ourworldindata.org/grapher/total-cases-covid-19",
@@ -430,6 +493,11 @@ export const enrichedBlockExamples: Record<
     "sdg-toc": {
         type: "sdg-toc",
         value: {},
+        parseErrors: [],
+    },
+    "ltp-toc": {
+        type: "ltp-toc",
+        title: "Contents",
         parseErrors: [],
     },
     "missing-data": {
@@ -582,6 +650,7 @@ export const enrichedBlockExamples: Record<
         heading: "Featured Work",
         "hide-authors": true,
         "hide-date": true,
+        variant: "featured",
         primary: [
             {
                 value: {
@@ -858,6 +927,14 @@ export const enrichedBlockExamples: Record<
         ],
         parseErrors: [],
     },
+    "featured-metrics": {
+        type: "featured-metrics",
+        parseErrors: [],
+    },
+    "featured-data-insights": {
+        type: "featured-data-insights",
+        parseErrors: [],
+    },
     "latest-data-insights": {
         type: "latest-data-insights",
         parseErrors: [],
@@ -883,6 +960,89 @@ export const enrichedBlockExamples: Record<
                 parseErrors: [],
             },
         ],
+        parseErrors: [],
+    },
+    "data-callout-group": {
+        type: "data-callout-group",
+        content: [
+            {
+                type: "data-callout",
+                url: "https://ourworldindata.org/grapher/life-expectancy?country=KEN",
+                content: [
+                    {
+                        type: "text",
+                        value: [
+                            {
+                                spanType: "span-simple-text",
+                                text: "Example callout text",
+                            },
+                        ],
+                        parseErrors: [],
+                    },
+                ],
+                parseErrors: [],
+            },
+        ],
+        parseErrors: [],
+    },
+    "data-callout": {
+        type: "data-callout",
+        url: "https://ourworldindata.org/grapher/life-expectancy?country=KEN",
+        content: [
+            {
+                type: "text",
+                value: [
+                    {
+                        spanType: "span-simple-text",
+                        text: "In ",
+                    },
+                    {
+                        spanType: "span-callout",
+                        functionName: "latestTime",
+                        parameters: ["life_expectancy_0"],
+                        children: [],
+                    },
+                    {
+                        spanType: "span-simple-text",
+                        text: ", Kenya had a life expectancy of ",
+                    },
+                    {
+                        spanType: "span-callout",
+                        functionName: "latestValue",
+                        parameters: ["life_expectancy_0"],
+                        children: [],
+                    },
+                    {
+                        spanType: "span-simple-text",
+                        text: ".",
+                    },
+                ],
+                parseErrors: [],
+            },
+        ],
+        parseErrors: [],
+    },
+    "country-profile-selector": {
+        type: "country-profile-selector",
+        url: "https://docs.google.com/document/d/ABC123/edit",
+        title: "Country profiles",
+        description: "Explore key metrics on energy consumption and sources.",
+        defaultCountries: [
+            "United Kingdom",
+            "United States",
+            "China",
+            "Nigeria",
+            "India",
+            "Brazil",
+        ],
+        parseErrors: [],
+    },
+    "bespoke-component": {
+        type: "bespoke-component",
+        bundle: "example-widget",
+        variant: "income-chart",
+        size: BlockSize.Wide,
+        config: { foo: "bar" },
         parseErrors: [],
     },
 }

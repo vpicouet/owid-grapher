@@ -5,13 +5,13 @@ import {
     Bounds,
     exposeInstanceOnWindow,
     PointVector,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     guid,
     excludeUndefined,
     getRelativeMouse,
     dyFromAlign,
-    isTouchDevice,
     domainExtent,
+    calculateTrendDirection,
 } from "@ourworldindata/utils"
 import { observable, computed, action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
@@ -21,7 +21,6 @@ import {
     DEFAULT_GRAPHER_BOUNDS,
     GRAPHER_FONT_SCALE_11,
     GRAPHER_FONT_SCALE_12,
-    GRAPHER_TEXT_OUTLINE_FACTOR,
 } from "../core/GrapherConstants"
 import {
     SeriesName,
@@ -33,7 +32,7 @@ import {
 } from "@ourworldindata/types"
 import { ChartInterface } from "../chart/ChartInterface"
 import { scaleLinear, ScaleLinear } from "d3-scale"
-import { select, type BaseType, type Selection } from "d3-selection"
+
 import {
     PlacedSlopeChartSeries,
     RawSlopeChartSeries,
@@ -47,8 +46,13 @@ import { VerticalAxis } from "../axis/Axis"
 import { VerticalAxisZeroLine } from "../axis/AxisViews"
 import { NoDataSection } from "../scatterCharts/NoDataSection"
 
-import { LineLegend, LineLegendProps } from "../lineLegend/LineLegend"
+import { VerticalLabels } from "../verticalLabels/VerticalLabels"
 import {
+    VerticalLabelsState,
+    VerticalLabelsStateOptions,
+} from "../verticalLabels/VerticalLabelsState"
+import {
+    formatTooltipRangeValues,
     makeTooltipRoundingNotice,
     makeTooltipToleranceNotice,
     Tooltip,
@@ -58,14 +62,11 @@ import {
 import { TooltipFooterIcon } from "../tooltip/TooltipProps"
 
 import { Halo } from "@ourworldindata/components"
-import { HorizontalColorLegendManager } from "../horizontalColorLegend/HorizontalColorLegends"
+import { HorizontalColorLegendManager } from "../legend/HorizontalColorLegends"
 import { CategoricalBin } from "../color/ColorScaleBin"
-import {
-    GRAPHER_BACKGROUND_DEFAULT,
-    GRAPHER_DARK_TEXT,
-} from "../color/ColorConstants"
-import { FocusArray } from "../focus/FocusArray"
-import { LineLabelSeries } from "../lineLegend/LineLegendTypes"
+import { GRAPHER_DARK_TEXT } from "../color/ColorConstants"
+import { LabelSeries } from "../verticalLabels/VerticalLabelsTypes"
+import { resolveEmphasis } from "../interaction/Emphasis"
 import { SlopeChartState } from "./SlopeChartState"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
@@ -77,12 +78,14 @@ import {
 } from "./SlopeChartHelpers"
 import { Slope } from "./Slope"
 import { MarkX } from "./MarkX"
+import { CATEGORICAL_LEGEND_STYLE } from "../lineCharts/LineChartConstants"
 
 type SVGMouseOrTouchEvent =
     | React.MouseEvent<SVGGElement>
     | React.TouchEvent<SVGGElement>
 
-const LINE_LEGEND_PADDING = 4
+const VERTICAL_LABELS_PADDING = 4
+const SIDEBAR_MARGIN = 10
 
 export type SlopeChartProps = ChartComponentProps<SlopeChartState>
 
@@ -91,6 +94,14 @@ export class SlopeChart
     extends React.Component<SlopeChartProps>
     implements ChartInterface, AxisManager
 {
+    private readonly slopeAreaRef = React.createRef<SVGGElement>()
+
+    private readonly tooltipState = new TooltipState<{
+        series: SlopeChartSeries
+    }>({ fade: "immediate" })
+
+    private hoveredSeriesName: string | undefined = undefined
+
     constructor(props: SlopeChartProps) {
         super(props)
 
@@ -99,15 +110,6 @@ export class SlopeChart
             tooltipState: observable,
         })
     }
-
-    private slopeAreaRef = React.createRef<SVGGElement>()
-
-    private sidebarMargin = 10
-
-    private hoveredSeriesName: string | undefined = undefined
-    private tooltipState = new TooltipState<{
-        series: SlopeChartSeries
-    }>({ fade: "immediate" })
 
     @computed get chartState(): SlopeChartState {
         return this.props.chartState
@@ -125,7 +127,7 @@ export class SlopeChart
         return this.bounds
             .padTop(6) // Leave room for overflowing dots
             .padBottom(this.bottomPadding)
-            .padRight(this.sidebarWidth + this.sidebarMargin)
+            .padRight(this.sidebarWidth + SIDEBAR_MARGIN)
     }
 
     @computed get fontSize(): number {
@@ -136,20 +138,12 @@ export class SlopeChart
         return this.chartState.missingDataStrategy
     }
 
-    @computed private get focusArray(): FocusArray {
-        return this.chartState.focusArray
-    }
-
     @computed private get formatColumn(): CoreColumn {
         return this.chartState.formatColumn
     }
 
     @computed private get lineStrokeWidth(): number {
         return this.manager.isStaticAndSmall ? 3 : 1.5
-    }
-
-    @computed private get backgroundColor(): string {
-        return this.manager.backgroundColor ?? GRAPHER_BACKGROUND_DEFAULT
     }
 
     @computed private get isHoverModeActive(): boolean {
@@ -160,10 +154,6 @@ export class SlopeChart
             // the currently hovered series
             !!this.manager.externalLegendHoverBin
         )
-    }
-
-    @computed private get canToggleFocusMode(): boolean {
-        return !isTouchDevice() && this.series.length > 1
     }
 
     @computed private get startTime(): Time {
@@ -324,7 +314,7 @@ export class SlopeChart
     }
 
     @computed get externalLegend(): HorizontalColorLegendManager | undefined {
-        if (!this.manager.showLegend) {
+        if (!this.manager.showSeriesLabels) {
             const categoricalLegendData = this.series.map(
                 (series, index) =>
                     new CategoricalBin({
@@ -334,20 +324,23 @@ export class SlopeChart
                         color: series.color,
                     })
             )
-            return { categoricalLegendData }
+            return {
+                categoricalLegendData,
+                categoricalLegendStyleConfig: CATEGORICAL_LEGEND_STYLE,
+            }
         }
         return undefined
     }
 
-    @computed private get maxLineLegendWidth(): number {
+    @computed private get maxLabelsWidth(): number {
         return 0.25 * this.innerBounds.width
     }
 
-    @computed private get lineLegendFontSize(): number {
-        return LineLegend.fontSize({ fontSize: this.fontSize })
+    @computed private get labelsFontSize(): number {
+        return this.rightLabelsState.fontSize
     }
 
-    @computed private get lineLegendYRange(): [number, number] {
+    @computed private get labelsYRange(): [number, number] {
         const top = this.bounds.top
 
         const bottom =
@@ -355,38 +348,34 @@ export class SlopeChart
             // leave space for the x-axis labels
             this.bottomPadding +
             // but allow for a little extra space
-            this.lineLegendFontSize / 2
+            this.labelsFontSize / 2
 
         return [top, bottom]
     }
 
-    @computed private get lineLegendPropsCommon(): Partial<LineLegendProps> {
+    @computed
+    private get commonLabelsOptions(): VerticalLabelsStateOptions {
         return {
-            yAxis: this.yAxis,
-            maxWidth: this.maxLineLegendWidth,
+            yAxis: () => this.yAxis,
+            yRange: () => this.labelsYRange,
+            maxWidth: this.maxLabelsWidth,
             fontSize: this.fontSize,
-            isStatic: this.manager.isStatic,
-            yRange: this.lineLegendYRange,
             verticalAlign: VerticalAlign.top,
-            showTextOutlines: true,
-            textOutlineColor: this.backgroundColor,
-            onMouseOver: this.onLineLegendMouseOver,
-            onMouseLeave: this.onLineLegendMouseLeave,
-            onClick: this.canToggleFocusMode
-                ? this.onLineLegendClick
-                : undefined,
+            showRegionTooltip: !this.manager.isStatic,
         }
     }
 
-    @computed private get lineLegendPropsRight(): Partial<LineLegendProps> {
-        return { xAnchor: "start" }
+    @computed
+    private get rightLabelsOptions(): VerticalLabelsStateOptions {
+        return { textAnchor: "start" }
     }
 
-    @computed private get lineLegendPropsLeft(): Partial<LineLegendProps> {
+    @computed
+    private get leftLabelsOptions(): VerticalLabelsStateOptions {
         return {
-            xAnchor: "end",
+            textAnchor: "end",
             seriesNamesSortedByImportance:
-                this.seriesSortedByImportanceForLineLegendLeft,
+                this.seriesSortedByImportanceForLeftLabels,
         }
     }
 
@@ -394,34 +383,34 @@ export class SlopeChart
         return this.formatColumn.formatValueShortWithAbbreviations(value)
     }
 
-    @computed private get lineLegendMaxLevelLeft(): number {
-        if (!this.manager.showLegend) return 0
+    @computed private get leftLabelsMaxLevel(): number {
+        if (!this.manager.showSeriesLabels) return 0
 
-        // can't use `lineLegendSeriesLeft` due to a circular dependency
+        // can't use `leftLabelsState` due to a circular dependency
         const series = this.series.map((series) =>
-            this.constructSingleLineLegendSeries(
+            this.constructSingleLabelSeries(
                 series,
                 (series) => series.start.value,
                 { showSeriesName: false }
             )
         )
 
-        return LineLegend.maxLevel({
-            series,
-            ...this.lineLegendPropsCommon,
+        return new VerticalLabelsState(series, {
+            ...this.commonLabelsOptions,
+            ...this.leftLabelsOptions,
             seriesNamesSortedByImportance:
-                this.seriesSortedByImportanceForLineLegendLeft,
-            // not including `lineLegendPropsLeft` due to a circular dependency
+                this.seriesSortedByImportanceForLeftLabels,
+        }).maxLevel
+    }
+
+    @computed private get leftLabelsState(): VerticalLabelsState {
+        return new VerticalLabelsState(this.leftLabelsSeries, {
+            ...this.commonLabelsOptions,
+            ...this.leftLabelsOptions,
         })
     }
 
-    @computed private get lineLegendWidthLeft(): number {
-        const props: LineLegendProps = {
-            series: this.lineLegendSeriesLeft,
-            ...this.lineLegendPropsCommon,
-            ...this.lineLegendPropsLeft,
-        }
-
+    @computed private get leftLabelsWidth(): number {
         // We usually use the "stable" width of the line legend, which might be
         // a bit too wide because the connector line width is always added, even
         // it no connector lines are drawn. Using the stable width prevents
@@ -430,19 +419,18 @@ export class SlopeChart
         // the stable width of the line legend takes too much space, so we use the
         // actual width instead.
         return this.isNarrow
-            ? LineLegend.width(props)
-            : LineLegend.stableWidth(props)
+            ? this.leftLabelsState.width
+            : this.leftLabelsState.stableWidth
     }
 
-    @computed private get lineLegendRight(): LineLegend {
-        return new LineLegend({
-            series: this.lineLegendSeriesRight,
-            ...this.lineLegendPropsCommon,
-            ...this.lineLegendPropsRight,
+    @computed private get rightLabelsState(): VerticalLabelsState {
+        return new VerticalLabelsState(this.rightLabelsSeries, {
+            ...this.commonLabelsOptions,
+            ...this.rightLabelsOptions,
         })
     }
 
-    @computed private get lineLegendWidthRight(): number {
+    @computed private get rightLabelsWidth(): number {
         // We usually use the "stable" width of the line legend, which might be
         // a bit too wide because the connector line width is always added, even
         // it no connector lines are drawn. Using the stable width prevents
@@ -451,24 +439,25 @@ export class SlopeChart
         // the stable width of the line legend takes too much space, so we use the
         // actual width instead.
         return this.isNarrow
-            ? this.lineLegendRight.width
-            : this.lineLegendRight.stableWidth
-    }
-
-    @computed private get visibleLineLegendLabelsRight(): Set<SeriesName> {
-        return new Set(this.lineLegendRight?.visibleSeriesNames ?? [])
+            ? this.rightLabelsState.width
+            : this.rightLabelsState.stableWidth
     }
 
     @computed
-    private get seriesSortedByImportanceForLineLegendLeft(): SeriesName[] {
+    private get visibleRightLabels(): Set<SeriesName> {
+        return new Set(this.rightLabelsState?.visibleSeriesNames ?? [])
+    }
+
+    @computed
+    private get seriesSortedByImportanceForLeftLabels(): SeriesName[] {
         return this.series
             .map((s) => s.seriesName)
             .sort((s1: SeriesName, s2: SeriesName): number => {
                 const PREFER_S1 = -1
                 const PREFER_S2 = 1
 
-                const s1_isLabelled = this.visibleLineLegendLabelsRight.has(s1)
-                const s2_isLabelled = this.visibleLineLegendLabelsRight.has(s2)
+                const s1_isLabelled = this.visibleRightLabels.has(s1)
+                const s2_isLabelled = this.visibleRightLabels.has(s2)
 
                 // prefer to show value labels for series that are already labelled
                 if (s1_isLabelled && !s2_isLabelled) return PREFER_S1
@@ -479,16 +468,13 @@ export class SlopeChart
     }
 
     @computed private get xRange(): [number, number] {
-        const lineLegendWidthLeft =
-            this.lineLegendWidthLeft + LINE_LEGEND_PADDING
-        const lineLegendWidthRight =
-            this.lineLegendWidthRight + LINE_LEGEND_PADDING
+        const leftLabelsWidth = this.leftLabelsWidth + VERTICAL_LABELS_PADDING
+        const rightLabelsWidth = this.rightLabelsWidth + VERTICAL_LABELS_PADDING
         const chartAreaWidth = this.innerBounds.width
 
         // start and end value when the slopes are as wide as possible
-        const minStartX =
-            this.innerBounds.x + this.yAxisWidth + lineLegendWidthLeft
-        const maxEndX = this.innerBounds.right - lineLegendWidthRight
+        const minStartX = this.innerBounds.x + this.yAxisWidth + leftLabelsWidth
+        const maxEndX = this.innerBounds.right - rightLabelsWidth
 
         // use all available space if the chart is narrow
         if (this.manager.isNarrow || this.isNarrow) {
@@ -508,8 +494,8 @@ export class SlopeChart
         const availableWidth =
             chartAreaWidth -
             this.yAxisWidth -
-            lineLegendWidthLeft -
-            lineLegendWidthRight
+            leftLabelsWidth -
+            rightLabelsWidth
         const idealWidth = idealAspectRatio * this.bounds.height
         const maxSlopeWidth = Math.min(idealWidth, availableWidth)
 
@@ -534,7 +520,7 @@ export class SlopeChart
     @computed private get hoveredSeriesNames(): SeriesName[] {
         const hoveredSeriesNames: SeriesName[] = []
 
-        // hovered series name (either by hovering over a slope or a line legend label)
+        // hovered series name (either by hovering over a slope or a label)
         if (this.hoveredSeriesName)
             hoveredSeriesNames.push(this.hoveredSeriesName)
 
@@ -552,7 +538,7 @@ export class SlopeChart
         return hoveredSeriesNames
     }
 
-    private constructSingleLineLegendSeries(
+    private constructSingleLabelSeries(
         series: SlopeChartSeries,
         getValue: (series: SlopeChartSeries) => number,
         {
@@ -562,7 +548,7 @@ export class SlopeChart
             showSeriesName?: boolean
             showAnnotation?: boolean
         }
-    ): LineLabelSeries {
+    ): LabelSeries {
         const { seriesName, displayName, color, annotation } = series
         const value = getValue(series)
         const formattedValue = this.formatValue(value)
@@ -574,15 +560,17 @@ export class SlopeChart
             formattedValue: showSeriesName ? formattedValue : undefined,
             placeFormattedValueInNewLine: this.useCompactLayout,
             yValue: value,
-            focus: series.focus,
-            hover: this.hoverStateForSeries(series),
+            emphasis: resolveEmphasis({
+                focus: series.focus,
+                hover: this.hoverStateForSeries(series),
+            }),
         }
     }
 
-    @computed private get lineLegendSeriesLeft(): LineLabelSeries[] {
-        const { showSeriesNamesInLineLegendLeft: showSeriesName } = this
+    @computed private get leftLabelsSeries(): LabelSeries[] {
+        const { shouldShowSeriesNamesInLeftLabels: showSeriesName } = this
         return this.series.map((series) =>
-            this.constructSingleLineLegendSeries(
+            this.constructSingleLabelSeries(
                 series,
                 (series) => series.start.value,
                 { showSeriesName }
@@ -590,52 +578,25 @@ export class SlopeChart
         )
     }
 
-    @computed private get lineLegendSeriesRight(): LineLabelSeries[] {
+    @computed private get rightLabelsSeries(): LabelSeries[] {
         return this.series.map((series) =>
-            this.constructSingleLineLegendSeries(
+            this.constructSingleLabelSeries(
                 series,
                 (series) => series.end.value,
                 {
-                    showSeriesName: this.manager.showLegend,
+                    showSeriesName: this.manager.showSeriesLabels,
                     showAnnotation: !this.useCompactLayout,
                 }
             )
         )
     }
 
-    private animSelection?: Selection<
-        BaseType,
-        unknown,
-        SVGGElement | null,
-        unknown
-    >
-    private playIntroAnimation() {
-        // Nice little intro animation
-        this.animSelection = select(this.slopeAreaRef.current)
-            .selectAll(".slope")
-            .attr("stroke-dasharray", "100%")
-            .attr("stroke-dashoffset", "100%")
-
-        this.animSelection
-            .transition()
-            .duration(600)
-            .attr("stroke-dashoffset", "0%")
-    }
-
     override componentDidMount() {
         exposeInstanceOnWindow(this)
-
-        if (!this.manager.disableIntroAnimation) {
-            this.playIntroAnimation()
-        }
     }
 
-    override componentWillUnmount(): void {
-        if (this.animSelection) this.animSelection.interrupt()
-    }
-
-    @computed private get showSeriesNamesInLineLegendLeft(): boolean {
-        return this.lineLegendMaxLevelLeft >= 4 && !!this.manager.showLegend
+    @computed private get shouldShowSeriesNamesInLeftLabels(): boolean {
+        return this.leftLabelsMaxLevel >= 4 && !!this.manager.showSeriesLabels
     }
 
     private updateTooltipPosition(event: SVGMouseOrTouchEvent): void {
@@ -679,7 +640,8 @@ export class SlopeChart
     }
 
     private hoverTimer?: number
-    @action.bound onLineLegendMouseOver(seriesName: SeriesName): void {
+    @action.bound onVerticalLabelMouseEnter(seriesName: SeriesName): void {
+        this.chartState.focusArray.clear()
         clearTimeout(this.hoverTimer)
         this.hoveredSeriesName = seriesName
     }
@@ -688,7 +650,7 @@ export class SlopeChart
         this.hoveredSeriesName = undefined
     }
 
-    @action.bound onLineLegendMouseLeave(): void {
+    @action.bound private debouncedClearHoveredSeries(): void {
         clearTimeout(this.hoverTimer)
 
         // Wait before clearing selection in case the mouse is moving
@@ -698,11 +660,12 @@ export class SlopeChart
         }, 200)
     }
 
-    @action.bound onLineLegendClick(seriesName: SeriesName): void {
-        this.focusArray.toggle(seriesName)
+    @action.bound onVerticalLabelMouseLeave(): void {
+        this.debouncedClearHoveredSeries()
     }
 
     @action.bound onSlopeMouseOver(series: SlopeChartSeries): void {
+        this.chartState.focusArray.clear()
         this.hoveredSeriesName = series.seriesName
         this.tooltipState.target = { series }
     }
@@ -770,13 +733,13 @@ export class SlopeChart
         const targetYear = constructTargetYearForToleranceNotice()
         const toleranceNotice = targetYear
             ? {
-                  icon: TooltipFooterIcon.notice,
+                  icon: TooltipFooterIcon.Notice,
                   text: makeTooltipToleranceNotice(targetYear),
               }
             : undefined
         const roundingNotice = series.column.roundsToSignificantFigures
             ? {
-                  icon: TooltipFooterIcon.none,
+                  icon: TooltipFooterIcon.None,
                   text: makeTooltipRoundingNotice(
                       [series.column.numSignificantFigures],
                       { plural: !isRelativeMode }
@@ -807,8 +770,13 @@ export class SlopeChart
                 dismiss={() => (this.tooltipState.target = null)}
             >
                 <TooltipValueRange
-                    column={series.column}
-                    values={values}
+                    label={series.column.displayName}
+                    unit={series.column.displayUnit}
+                    values={formatTooltipRangeValues(values, series.column)}
+                    trend={calculateTrendDirection(...values)}
+                    isRoundedToSignificantFigures={
+                        series.column.roundsToSignificantFigures
+                    }
                     labelVariant="unit-only"
                 />
             </Tooltip>
@@ -852,14 +820,17 @@ export class SlopeChart
         if (!this.showNoDataSection) return
 
         const bounds = new Bounds(
-            this.innerBounds.right + this.sidebarMargin,
+            this.innerBounds.right + SIDEBAR_MARGIN,
             this.bounds.top,
             this.sidebarWidth,
             this.bounds.height
         )
-        const seriesNames = this.noDataSeries.map((series) =>
-            this.makeMissingDataLabel(series)
-        )
+
+        // Reversing the order so that newly added entities without data
+        // show up at the top of the no data section
+        const seriesNames = this.noDataSeries
+            .map((series) => this.makeMissingDataLabel(series))
+            .reverse()
 
         return (
             <NoDataSection
@@ -873,14 +844,13 @@ export class SlopeChart
 
     private renderSlopes() {
         return (
-            <g id={makeIdForHumanConsumption("slopes")}>
+            <g id={makeFigmaId("slopes")}>
                 {this.renderSeries.map((series) => (
                     <Slope
                         key={series.seriesName}
                         series={series}
                         strokeWidth={this.lineStrokeWidth}
                         outlineWidth={0.5}
-                        outlineStroke={this.backgroundColor}
                     />
                 ))}
             </g>
@@ -1016,7 +986,7 @@ export class SlopeChart
         const { startX, endX } = this
 
         return (
-            <g id={makeIdForHumanConsumption("horizontal-axis")}>
+            <g id={makeFigmaId("horizontal-axis")}>
                 <MarkX
                     label={this.formattedStartTime}
                     x={startX}
@@ -1037,23 +1007,25 @@ export class SlopeChart
         )
     }
 
-    private renderLineLegendRight(): React.ReactElement {
+    private renderVerticalLabelsRight(): React.ReactElement {
         return (
-            <LineLegend
-                series={this.lineLegendSeriesRight}
-                x={this.xRange[1] + LINE_LEGEND_PADDING}
-                {...this.lineLegendPropsCommon}
-                {...this.lineLegendPropsRight}
+            <VerticalLabels
+                state={this.rightLabelsState}
+                x={this.xRange[1] + VERTICAL_LABELS_PADDING}
+                outline={true}
+                onMouseEnter={this.onVerticalLabelMouseEnter}
+                onMouseLeave={this.onVerticalLabelMouseLeave}
+                interactive={!this.manager.isStatic}
             />
         )
     }
 
-    private renderLineLegendLeft(): React.ReactElement | null {
+    private renderVerticalLabelsLeft(): React.ReactElement | null {
         // don't show labels for the start values in relative mode since they're all trivially zero
         if (this.manager.isRelativeMode) return null
 
         const uniqYValues = _.uniq(
-            this.lineLegendSeriesLeft.map((series) => series.yValue)
+            this.leftLabelsSeries.map((series) => series.yValue)
         )
         const allSlopesStartFromZero =
             uniqYValues.length === 1 && uniqYValues[0] === 0
@@ -1061,20 +1033,14 @@ export class SlopeChart
         // if all values have a start value of 0, show the 0-label only once
         if (allSlopesStartFromZero)
             return (
-                <Halo
-                    id="x-axis-zero-label"
-                    outlineWidth={
-                        GRAPHER_TEXT_OUTLINE_FACTOR * this.lineLegendFontSize
-                    }
-                    outlineColor={this.backgroundColor}
-                >
+                <Halo id="x-axis-zero-label" fontSize={this.labelsFontSize}>
                     <text
                         x={this.startX}
                         y={this.yAxis.place(0)}
                         textAnchor="end"
-                        dx={-LINE_LEGEND_PADDING - 4}
+                        dx={-VERTICAL_LABELS_PADDING - 4}
                         dy={dyFromAlign(VerticalAlign.middle)}
-                        fontSize={this.lineLegendFontSize}
+                        fontSize={this.labelsFontSize}
                     >
                         {this.formatValue(0)}
                     </text>
@@ -1082,20 +1048,22 @@ export class SlopeChart
             )
 
         return (
-            <LineLegend
-                series={this.lineLegendSeriesLeft}
-                x={this.xRange[0] - LINE_LEGEND_PADDING}
-                {...this.lineLegendPropsCommon}
-                {...this.lineLegendPropsLeft}
+            <VerticalLabels
+                state={this.leftLabelsState}
+                x={this.xRange[0] - VERTICAL_LABELS_PADDING}
+                outline={true}
+                onMouseEnter={this.onVerticalLabelMouseEnter}
+                onMouseLeave={this.onVerticalLabelMouseLeave}
+                interactive={!this.manager.isStatic}
             />
         )
     }
 
-    private renderLineLegends(): React.ReactElement | undefined {
+    private renderVerticalLabels(): React.ReactElement | undefined {
         return (
             <>
-                {this.renderLineLegendLeft()}
-                {this.renderLineLegendRight()}
+                {this.renderVerticalLabelsLeft()}
+                {this.renderVerticalLabelsRight()}
             </>
         )
     }
@@ -1106,7 +1074,7 @@ export class SlopeChart
                 {this.renderYAxis()}
                 {this.renderXAxis()}
                 {this.renderInteractiveSlopes()}
-                {this.renderLineLegends()}
+                {this.renderVerticalLabels()}
                 {this.renderNoDataSection()}
                 {this.tooltip}
             </>
@@ -1119,7 +1087,7 @@ export class SlopeChart
                 {this.renderYAxis()}
                 {this.renderXAxis()}
                 {this.renderSlopes()}
-                {this.renderLineLegends()}
+                {this.renderVerticalLabels()}
             </>
         )
     }

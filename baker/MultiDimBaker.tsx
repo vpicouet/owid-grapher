@@ -10,6 +10,7 @@ import {
     MultiDimDataPageProps,
     FaqEntryKeyedByGdocIdAndFragmentId,
     MultiDimDataPageConfigEnriched,
+    MultiDimDataPageInitialViewData,
     PostsGdocsVariablesFaqsTableName,
     DbPlainPostGdocVariableFaq,
     DbEnrichedImage,
@@ -40,7 +41,9 @@ import {
     getMultiDimDataPageBySlug,
 } from "../db/model/MultiDimDataPage.js"
 import { MultiDimArchivalManifest } from "../serverUtils/archivalUtils.js"
-import { getLatestMultiDimArchivedVersions } from "../db/model/archival/archivalDb.js"
+import { getLatestArchivedMultiDimPageVersions } from "../db/model/ArchivedMultiDimVersion.js"
+import { getDatapageDataV2 } from "../site/dataPage.js"
+import { getChartConfigByUuid } from "../db/model/ChartConfigs.js"
 
 const getLatestMultiDimArchivedVersionsIfEnabled = async (
     knex: db.KnexReadonlyTransaction,
@@ -48,7 +51,7 @@ const getLatestMultiDimArchivedVersionsIfEnabled = async (
 ): Promise<Record<number, ArchivedPageVersion>> => {
     if (!ARCHIVE_BASE_URL) return {}
 
-    return await getLatestMultiDimArchivedVersions(knex, multiDimIds)
+    return await getLatestArchivedMultiDimPageVersions(knex, multiDimIds)
 }
 
 export function getRelevantVariableIds(
@@ -130,13 +133,37 @@ export async function renderMultiDimDataPageFromConfig({
     const pageConfig = MultiDimDataPageConfig.fromObject(config)
     const variableIds = getRelevantVariableIds(config)
     const faqEntries = await getFaqEntries(knex, variableIds)
+    const initialViewDimensions = pageConfig.filterToAvailableChoices(
+        {}
+    ).selectedChoices
+    const initialView = pageConfig.findViewByDimensions(initialViewDimensions)
+
+    let initialViewData: MultiDimDataPageInitialViewData | undefined
+    const initialViewVariableId = initialView?.indicators?.y?.[0]?.id
+    if (initialView && initialViewVariableId) {
+        const [variableMetadata, fullGrapherConfig] = await Promise.all([
+            getVariableMetadata(initialViewVariableId, {
+                noCache: isPreviewing,
+            }),
+            getChartConfigByUuid(knex, initialView.fullConfigId),
+        ])
+        if (!fullGrapherConfig) {
+            throw new Error(
+                `Missing full grapher config for multi-dim view ${initialView.fullConfigId}`
+            )
+        }
+        const mergedMetadata = pageConfig.mergeViewMetadata(
+            initialViewDimensions,
+            variableMetadata
+        )
+        initialViewData = {
+            ...getDatapageDataV2(mergedMetadata, fullGrapherConfig),
+            faqs: mergedMetadata.presentation?.faqs ?? [],
+        }
+    }
 
     // PRIMARY TOPIC
-    const primaryTopic = await getPrimaryTopic(
-        knex,
-        config.topicTags,
-        slug ?? undefined
-    )
+    const primaryTopic = await getPrimaryTopic(knex, config.topicTags)
 
     let tagToSlugMap: Record<string, string> = {}
     let relatedResearchCandidates: DataPageRelatedResearch[] = []
@@ -188,6 +215,8 @@ export async function renderMultiDimDataPageFromConfig({
         canonicalUrl,
         slug,
         configObj: pageConfig.config,
+        initialViewData,
+        initialViewDimensions,
         tagToSlugMap,
         faqEntries,
         primaryTopic,
@@ -277,9 +306,10 @@ export const bakeAllMultiDimDataPages = async (
     const multiDimsBySlug = await getAllPublishedMultiDimDataPagesBySlug(knex)
 
     // Fetch archived versions for all multi-dim pages
-    const multiDimIds = Array.from(multiDimsBySlug.values()).map(
-        (row) => row.id
-    )
+    const multiDimIds = multiDimsBySlug
+        .values()
+        .map((row) => row.id)
+        .toArray()
     const archivedVersions = await getLatestMultiDimArchivedVersionsIfEnabled(
         knex,
         multiDimIds

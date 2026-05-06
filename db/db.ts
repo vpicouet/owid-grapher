@@ -1,5 +1,5 @@
 import * as _ from "lodash-es"
-import { knex, Knex } from "knex"
+import knex, { Knex } from "knex"
 import {
     GRAPHER_DB_HOST,
     GRAPHER_DB_USER,
@@ -8,6 +8,8 @@ import {
     GRAPHER_DB_PORT,
     BAKED_BASE_URL,
 } from "../settings/serverSettings.js"
+import { IS_ARCHIVE } from "../settings/clientSettings.js"
+import { PROD_URL } from "../site/SiteConstants.js"
 import { registerExitHandler } from "./cleanup.js"
 import { createTagGraph, Url } from "@ourworldindata/utils"
 import {
@@ -30,6 +32,7 @@ import {
     MinimalExplorerInfo,
     DbEnrichedImage,
     DbEnrichedImageWithUserId,
+    DbEnrichedImageWithPageviews,
     MinimalTag,
     BreadcrumbItem,
     PostsGdocsTableName,
@@ -41,6 +44,7 @@ import {
     TagsTableName,
     TagGraphTableName,
     ExplorersTableName,
+    MultiDimDataPagesTableName,
     OwidGdocMinimalPostInterface,
     DbRawPostGdoc,
 } from "@ourworldindata/types"
@@ -330,7 +334,7 @@ export async function checkIfSlugCollides(
     knex: KnexReadonlyTransaction,
     gdoc: OwidGdocBaseInterface
 ): Promise<boolean> {
-    const existingGdoc = await knex(PostsGdocsTableName)
+    const existingGdocs = await knex(PostsGdocsTableName)
         .where({
             slug: gdoc.slug,
             published: true,
@@ -338,15 +342,15 @@ export async function checkIfSlugCollides(
         .whereNot({
             id: gdoc.id,
         })
-        .first()
-        .then((row) => (row ? parsePostsGdocsRow(row) : undefined))
+        .then((rows) => rows.map(parsePostsGdocsRow))
 
-    if (!existingGdoc) return false
+    if (existingGdocs.length === 0) return false
 
-    const existingCanonicalUrl = getCanonicalUrl("", existingGdoc)
     const incomingCanonicalUrl = getCanonicalUrl("", gdoc)
 
-    return existingCanonicalUrl === incomingCanonicalUrl
+    return existingGdocs.some(
+        (existing) => getCanonicalUrl("", existing) === incomingCanonicalUrl
+    )
 }
 
 export const getPublishedDataInsightCount = (
@@ -490,11 +494,12 @@ export const getPublishedGdocsWithTags = async (
         OwidGdocType.LinearTopicPage,
         OwidGdocType.TopicPage,
         OwidGdocType.AboutPage,
-    ]
+        OwidGdocType.Announcement,
+    ],
+    options: { excludeDeprecated?: boolean } = {}
 ): Promise<DBEnrichedPostGdocWithTags[]> => {
-    return knexRaw<DBRawPostGdocWithTags>(
-        knex,
-        `-- sql
+    const { excludeDeprecated = false } = options
+    const query = `-- sql
         SELECT
         g.manualBreadcrumbs,
         g.content,
@@ -523,12 +528,16 @@ export const getPublishedGdocsWithTags = async (
         g.published = 1
         AND g.type IN (:gdocTypes)
         AND g.publishedAt <= NOW()
-    GROUP BY g.id
-    ORDER BY g.publishedAt DESC`,
-        {
-            gdocTypes,
+        ${
+            excludeDeprecated
+                ? `AND (g.content ->> '$."deprecation-notice"' IS NULL)`
+                : ""
         }
-    ).then((rows) => rows.map(parsePostsGdocsWithTagsRow))
+    GROUP BY g.id
+    ORDER BY g.publishedAt DESC`
+    return knexRaw<DBRawPostGdocWithTags>(knex, query, {
+        gdocTypes,
+    }).then((rows) => rows.map(parsePostsGdocsWithTagsRow))
 }
 
 export const getNonGrapherExplorerViewCount = (
@@ -556,7 +565,9 @@ export const getNonGrapherExplorerViewCount = (
 }
 
 /**
- * 1. Fetch all records in tag_graph, isTopic = true when there is a published TP/LTP/Article with the same slug as the tag
+ * 1. Fetch all records in tag_graph:
+ *    - isTopic = true when there is a published TP/LTP with the same slug as the tag
+ *    - isSearchable = true when isTopic OR the tag has searchableInAlgolia set
  * 2. Group tags by their parentId
  * 3. Return the flat tag graph along with a __rootId property so that the UI knows which record is the root node
  */
@@ -574,7 +585,8 @@ export async function getFlatTagGraph(knex: KnexReadonlyTransaction): Promise<
             tg.weight,
             t.slug,
             t.name,
-            p.slug IS NOT NULL AS isTopic
+            p.slug IS NOT NULL AS isTopic,
+            (p.slug IS NOT NULL OR t.searchableInAlgolia = TRUE) AS isSearchable
         FROM
             tag_graph tg
         LEFT JOIN tags t ON
@@ -584,12 +596,7 @@ export async function getFlatTagGraph(knex: KnexReadonlyTransaction): Promise<
         -- order by descending weight, tiebreak by name
         ORDER BY tg.weight DESC, t.name ASC`,
         {
-            types: [
-                OwidGdocType.TopicPage,
-                OwidGdocType.LinearTopicPage,
-                // For sub-topics e.g. Nuclear Energy we use the article format
-                OwidGdocType.Article,
-            ],
+            types: [OwidGdocType.TopicPage, OwidGdocType.LinearTopicPage],
         }
     ).then((rows) => _.groupBy(rows, "parentId"))
 
@@ -693,7 +700,7 @@ export function getBestBreadcrumbs(
     }
 
     // Only keep the topics in the paths, because only topics are clickable as breadcrumbs
-    const topicsOnly = Array.from(result.values()).reduce(
+    const topicsOnly = result.values().reduce(
         (acc, path) => {
             return [...acc, path.filter((tag) => tag.slug)]
         },
@@ -705,9 +712,10 @@ export function getBestBreadcrumbs(
         return path.length > best.length ? path : best
     }, [])
 
+    const baseUrl = IS_ARCHIVE ? PROD_URL : BAKED_BASE_URL
     const breadcrumbs = longestPath.map((tag) => ({
         label: tag.name,
-        href: `${BAKED_BASE_URL}/${tag.slug}`,
+        href: `${baseUrl}/${tag.slug}`,
     }))
 
     return breadcrumbs
@@ -802,7 +810,8 @@ export function getMinimalTagsWithIsTopic(
         SELECT t.id,
         t.name,
         t.slug,
-        t.slug IS NOT NULL AND MAX(IF(pg.type IN (:types), TRUE, FALSE)) AS isTopic
+        t.slug IS NOT NULL AND MAX(IF(pg.type IN (:types), TRUE, FALSE)) AS isTopic,
+        (t.slug IS NOT NULL AND MAX(IF(pg.type IN (:types), TRUE, FALSE))) OR t.searchableInAlgolia AS isSearchable
         FROM tags t
         LEFT JOIN posts_gdocs_x_tags gt ON t.id = gt.tagId
         LEFT JOIN posts_gdocs pg ON gt.gdocId = pg.id
@@ -828,6 +837,19 @@ export async function getGrapherLinkTargets(
         SELECT target
         FROM posts_gdocs_links
         WHERE linkType = '${ContentGraphLinkType.Grapher}'
+        `
+    )
+}
+
+export async function getStaticVizLinkTargets(
+    knex: KnexReadonlyTransaction
+): Promise<Pick<DbPlainPostGdocLink, "target">[]> {
+    return knexRaw<Pick<DbPlainPostGdocLink, "target">>(
+        knex,
+        `-- sql
+        SELECT DISTINCT target
+        FROM posts_gdocs_links
+        WHERE linkType = '${ContentGraphLinkType.StaticViz}'
         `
     )
 }
@@ -880,15 +902,70 @@ export async function selectReplacementChainForImage(
 }
 
 export function getCloudflareImages(
-    trx: KnexReadonlyTransaction
-): Promise<DbEnrichedImage[]> {
-    return knexRaw<DbEnrichedImage>(
+    trx: KnexReadonlyTransaction,
+    options?: {
+        excludeFeaturedImages?: boolean
+        excludeThumbnails?: boolean
+        excludeResearchAndWriting?: boolean
+    }
+): Promise<DbEnrichedImageWithPageviews[]> {
+    const {
+        excludeFeaturedImages = false,
+        excludeThumbnails = false,
+        excludeResearchAndWriting = false,
+    } = options || {}
+
+    let havingClause = ""
+    const conditions: string[] = []
+
+    if (excludeFeaturedImages) {
+        conditions.push("isFeaturedImage = 0")
+        conditions.push("isBodyContent = 1")
+    }
+    if (excludeThumbnails) {
+        conditions.push("i.filename NOT LIKE '%thumbnail%'")
+    }
+    if (excludeResearchAndWriting) {
+        conditions.push("isInResearchAndWriting = 0")
+    }
+
+    if (conditions.length > 0) {
+        havingClause = `HAVING ${conditions.join(" AND ")}`
+    }
+
+    return knexRaw<DbEnrichedImageWithPageviews>(
         trx,
         `-- sql
-        SELECT *
-        FROM images
-        WHERE cloudflareId IS NOT NULL
-        AND replacedBy IS NULL`
+        SELECT
+            i.*,
+            COALESCE(SUM(pv.views_365d), 0) AS views_365d,
+            MAX(CASE WHEN i.filename = pg.content->>'$."featured-image"' THEN 1 ELSE 0 END) AS isFeaturedImage,
+            MAX(CASE WHEN
+                JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body') IS NOT NULL
+                AND (
+                    JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].primary[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].secondary[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].rows[*].articles[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].more.articles[*].value.filename') IS NULL
+                    AND JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].latest.articles[*].value.filename') IS NULL
+                )
+            THEN 1 ELSE 0 END) AS isBodyContent,
+            MAX(CASE WHEN
+                JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].primary[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].secondary[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].rows[*].articles[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].more.articles[*].value.filename') IS NOT NULL
+                OR JSON_SEARCH(pg.content, 'one', i.filename, NULL, '$.body[*].latest.articles[*].value.filename') IS NOT NULL
+            THEN 1 ELSE 0 END) AS isInResearchAndWriting
+        FROM images i
+        LEFT JOIN posts_gdocs_x_images pxi ON i.id = pxi.imageId
+        LEFT JOIN posts_gdocs pg ON pxi.gdocId = pg.id AND pg.published = 1
+        LEFT JOIN analytics_pageviews pv ON pv.url = CONCAT('https://ourworldindata.org/', pg.slug)
+            AND pv.day = (SELECT MAX(day) FROM analytics_pageviews)
+        WHERE i.cloudflareId IS NOT NULL
+        AND i.replacedBy IS NULL
+        GROUP BY i.id
+        ${havingClause}`
     )
 }
 
@@ -945,17 +1022,17 @@ export function getImageUsage(trx: KnexReadonlyTransaction): Promise<
     )
 }
 
-// A topic is any tag that has a slug matching the slug of a published topic page, linear topic page, or article.
-// We want to keep tags that have topic children (i.e. areas and sub-areas) but not leaf nodes that aren't topics
-function checkDoesFlatTagGraphNodeHaveAnyTopicChildren(
+// A searchable tag is either a topic (tag with a published topic page) or has searchableInAlgolia set.
+// We want to keep tags that have searchable children (i.e. areas and sub-areas) but not leaf nodes that aren't searchable
+function checkDoesFlatTagGraphNodeHaveAnySearchableChildren(
     node: FlatTagGraphNode,
     flatTagGraph: FlatTagGraph
 ): boolean {
-    if (node.isTopic) return true
+    if (node.isSearchable) return true
     const children = flatTagGraph[node.childId]
     if (!children) return false
     return children.some((child) =>
-        checkDoesFlatTagGraphNodeHaveAnyTopicChildren(child, flatTagGraph)
+        checkDoesFlatTagGraphNodeHaveAnySearchableChildren(child, flatTagGraph)
     )
 }
 
@@ -964,11 +1041,11 @@ export async function generateTopicTagGraph(
 ): Promise<TagGraphRoot> {
     const { __rootId, ...parents } = await getFlatTagGraph(knex)
 
-    const tagGraphTopicsOnly = Object.entries(parents).reduce(
+    const tagGraphSearchableOnly = Object.entries(parents).reduce(
         (acc: FlatTagGraph, [parentId, children]) => {
             acc[Number(parentId)] = children.filter((child) => {
                 if (child.parentId === __rootId) return true
-                return checkDoesFlatTagGraphNodeHaveAnyTopicChildren(
+                return checkDoesFlatTagGraphNodeHaveAnySearchableChildren(
                     child,
                     parents
                 )
@@ -978,35 +1055,44 @@ export async function generateTopicTagGraph(
         {} as FlatTagGraph
     )
 
-    return createTagGraph(tagGraphTopicsOnly, __rootId)
+    return createTagGraph(tagGraphSearchableOnly, __rootId)
 }
 
 /**
  * Fetch all topic tags from the database.
  * Topics are any tags that have a slug.
- * Returns id, name, and slug of each topic tag.
+ * Returns name and slug of each topic tag.
  * Note: This does not include area tags, which are the top-level children of the tag
  * graph root and do not have a slug.
  */
-export const getAllTopicSlugs = async (
+export const getAllTopicTags = async (
     trx: KnexReadonlyTransaction
-): Promise<string[]> => {
-    const results = await knexRaw<{ slug: string }>(
+): Promise<{ slug: string; name: string; id: number }[]> => {
+    return knexRaw<{ slug: string; name: string; id: number }>(
         trx,
         `-- sql
-        SELECT slug
-        FROM ${TagsTableName}
-        WHERE slug IS NOT NULL
-        `
+        SELECT t.slug, t.name, t.id
+        FROM ${TagsTableName} t
+        JOIN ${PostsGdocsTableName} pg ON pg.slug = t.slug
+        WHERE pg.published = TRUE
+        AND pg.type IN (:types)
+        AND t.slug IS NOT NULL
+        `,
+        {
+            types: [
+                OwidGdocType.TopicPage,
+                OwidGdocType.LinearTopicPage,
+                OwidGdocType.Article,
+            ],
+        }
     )
-
-    return results.map((row) => row.slug)
 }
 
 /**
  * Fetch all area and topic tag names from the database.
  * Areas are the top-level children of the tag graph root, and don't have a slug.
- * Topics are any tags that have a slug.
+ * Topics are tags whose slug matches a published topic-page or linear-topic-page,
+ * or tags with searchableInAlgolia set.
  */
 const getAllAreaAndTopicTagNames = async (
     trx: KnexReadonlyTransaction
@@ -1015,9 +1101,13 @@ const getAllAreaAndTopicTagNames = async (
         trx,
         `-- sql
         WITH topic_tags AS (
-            SELECT name
-            FROM ${TagsTableName}
-            WHERE slug IS NOT NULL
+            SELECT t.name
+            FROM ${TagsTableName} t
+            LEFT JOIN ${PostsGdocsTableName} pg
+                ON pg.slug = t.slug
+                AND pg.published = TRUE
+                AND pg.type IN ('topic-page', 'linear-topic-page')
+            WHERE pg.id IS NOT NULL OR t.searchableInAlgolia = TRUE
         ),
         area_tags AS (
             SELECT t.name
@@ -1061,7 +1151,7 @@ export const getFeaturedMetricsByParentTagName = async (
 }
 
 /**
- * Takes a URL and checks if it points to a valid grapher, explorer, or MDIM view.
+ * Takes a URL and checks if it points to a valid grapher, explorer, or multi-dim view.
  * Doesn't validate query params as this would be quite complicated / overkill for our needs
  */
 export async function validateChartSlug(
@@ -1102,11 +1192,17 @@ export async function validateChartSlug(
             [slug]
         ).then((rows) => rows[0])
 
-        if (!grapher)
-            return {
-                isValid: false,
-                reason: "Grapher not found or not published",
-            }
+        if (!grapher) {
+            const multiDim = await trx(MultiDimDataPagesTableName)
+                .where({ slug, published: true })
+                .first()
+
+            if (!multiDim)
+                return {
+                    isValid: false,
+                    reason: "Grapher not found or not published",
+                }
+        }
 
         return { isValid: true, reason: "" }
     }

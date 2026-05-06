@@ -3,28 +3,19 @@ import { useEffect, useCallback, useState } from "react"
 import { match } from "ts-pattern"
 import {
     suggestFiltersFromQuerySuffix,
-    createQueryFilter,
     getSearchAutocompleteId,
     getSearchAutocompleteItemId,
     getFilterAriaLabel,
+    buildFilterTestId,
     splitIntoWords,
     isNotStopWord,
 } from "./searchUtils.js"
 import { useSearchAutocomplete } from "./SearchAutocompleteContext.js"
 import { SearchAutocompleteItemContents } from "./SearchAutocompleteItemContents.js"
-import { Filter, FilterType } from "./searchTypes.js"
+import { Filter, FilterType } from "@ourworldindata/types"
 import { useSearchContext } from "./SearchContext.js"
 import { listedRegionsNames } from "@ourworldindata/utils"
 import { useDebounceValue } from "usehooks-ts"
-
-// Default search suggestions to show when there's no query or filters
-const DEFAULT_SEARCHES = [
-    "gdp per capita",
-    "co2 emissions",
-    "life expectancy",
-    "child mortality",
-    "energy consumption",
-]
 
 export const SearchAutocomplete = ({
     localQuery,
@@ -39,7 +30,7 @@ export const SearchAutocomplete = ({
 }) => {
     const {
         state: { filters },
-        actions: { addCountry, setTopic },
+        actions: { addCountryAndSetQuery, setTopicAndClearQuery },
         synonymMap,
         analytics,
     } = useSearchContext()
@@ -58,12 +49,6 @@ export const SearchAutocomplete = ({
     } = useSearchAutocomplete()
 
     useEffect(() => {
-        if (!debouncedLocalQuery && !filters.length) {
-            setSuggestions(DEFAULT_SEARCHES.map(createQueryFilter))
-            setUnmatchedQuery("")
-            return
-        }
-
         const result = suggestFiltersFromQuerySuffix(
             debouncedLocalQuery,
             listedRegionsNames(),
@@ -111,10 +96,10 @@ export const SearchAutocomplete = ({
                 // For instance, when searching for "co2 france", we detect:
                 // - "france" as a country filter
                 //     - and show "france" as a filter pill (SearchFilterPill in 1)
-                //     - and add "france" to the active filters (addCountry in 2)
+                //     - and add "france" to the active filters (addCountryAndSetQuery in 2)
                 // - "co2" as the unmatchedQuery
                 //    - and show "co2" as the unmatched query (unmatchedQuery in 1)
-                //    - and set the queries to "co2" (setQueries in 2)
+                //    - and set the queries to "co2" (addCountryAndSetQuery in 2)
                 //
                 // This symmetry between display and handling logic needs to be
                 // manually maintained. If you change the handling logic, make
@@ -122,24 +107,37 @@ export const SearchAutocomplete = ({
                 // versa).
                 .with(FilterType.COUNTRY, () => {
                     logSearchAutocompleteClick()
-                    addCountry(filter.name)
-                    setQueries(unmatchedQueryNoStopWords)
+                    setLocalQuery(unmatchedQueryNoStopWords)
+                    addCountryAndSetQuery(
+                        filter.name,
+                        unmatchedQueryNoStopWords
+                    )
                 })
                 .with(FilterType.TOPIC, () => {
                     logSearchAutocompleteClick()
-                    setTopic(filter.name)
-                    setQueries("")
+                    setLocalQuery("")
+                    setTopicAndClearQuery(filter.name)
                 })
                 .with(FilterType.QUERY, () => {
                     logSearchAutocompleteClick()
                     setQueries(localQuery || filter.name) // only use filter.name for default searches, as it may be lagging
                 })
+                .with(
+                    FilterType.DATASET_PRODUCT,
+                    FilterType.DATASET_NAMESPACE,
+                    FilterType.DATASET_VERSION,
+                    FilterType.DATASET_PRODUCER,
+                    () => {
+                        // no-op: dataset filters are not suggested in autocomplete
+                    }
+                )
                 .exhaustive()
             setShowSuggestions(false)
         },
         [
-            addCountry,
-            setTopic,
+            addCountryAndSetQuery,
+            setTopicAndClearQuery,
+            setLocalQuery,
             setShowSuggestions,
             setQueries,
             unmatchedQuery,
@@ -158,10 +156,14 @@ export const SearchAutocomplete = ({
 
     return (
         <div className="search-autocomplete-container">
-            <ul id={getSearchAutocompleteId()} role="listbox">
+            <ul
+                id={getSearchAutocompleteId()}
+                data-testid="search-autocomplete-listbox"
+                role="listbox"
+            >
                 {suggestions.map((filter, index) => (
                     <li
-                        key={filter.name}
+                        key={`${filter.type}:${filter.name}`}
                         className={cx("search-autocomplete-item", {
                             "search-autocomplete-item--active":
                                 index === activeIndex,
@@ -191,6 +193,11 @@ export const SearchAutocomplete = ({
                             }
                             onMouseEnter={() => setActiveIndex(index)}
                             aria-label={getFilterAriaLabel(filter, "add")}
+                            data-testid={buildFilterTestId(
+                                "search-autocomplete-button",
+                                filter.type,
+                                filter.name
+                            )}
                         >
                             <SearchAutocompleteItemContents
                                 filter={filter}

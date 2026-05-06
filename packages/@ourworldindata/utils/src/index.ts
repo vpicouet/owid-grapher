@@ -1,5 +1,4 @@
 export {
-    pairs,
     type NoUndefinedValues,
     type AllKeysRequired,
     type PartialBy,
@@ -11,7 +10,7 @@ export {
     getRelativeMouse,
     exposeInstanceOnWindow,
     makeSafeForCSS,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     formatDay,
     formatYear,
     numberMagnitude,
@@ -26,7 +25,6 @@ export {
     previous,
     domainExtent,
     cagr,
-    makeAnnotationsSlug,
     slugify,
     slugifySameCase,
     guid,
@@ -38,10 +36,10 @@ export {
     isTouchDevice,
     type Json,
     csvEscape,
-    urlToSlug,
     trimObject,
     fetchText,
     fetchJson,
+    fetchWithTimeout,
     getUserCountryInformation,
     stripHTML,
     getRandomNumberGenerator,
@@ -61,15 +59,12 @@ export {
     rollingMap,
     keyMap,
     intersectionOfSets,
-    differenceOfSets,
     areSetsEqual,
-    isSubsetOf,
     intersection,
     sortByUndefinedLast,
     mapNullToUndefined,
     lowerCaseFirstLetterUnlessAbbreviation,
     sortNumeric,
-    findIndexFast,
     getClosestTimePairs,
     omitUndefinedValues,
     isInIFrame,
@@ -82,8 +77,6 @@ export {
     toRectangularMatrix,
     checkIsStringIndexable,
     checkIsTouchEvent,
-    triggerDownloadFromBlob,
-    triggerDownloadFromUrl,
     removeAllWhitespace,
     moveArrayItemToIndex,
     getIndexableKeys,
@@ -100,6 +93,7 @@ export {
     recursivelyMapArticleContent,
     traverseEnrichedBlock,
     checkNodeIsSpan,
+    generateToc,
     extractLinksFromMarkdown,
     getPaginationPageNumbers,
     spansToUnformattedPlainText,
@@ -114,6 +108,7 @@ export {
     checkIsGdocPostExcludingFragments,
     checkIsDataInsight,
     checkIsAuthor,
+    checkIsChronologicalFeedPost,
     cartesian,
     removeTrailingParenthetical,
     commafyNumber,
@@ -126,7 +121,6 @@ export {
     getParentVariableIdFromChartConfig,
     isArrayDifferentFromReference,
     readFromAssetMap,
-    downloadImage,
     getUniqueNamesFromTagHierarchies,
     getUserNavigatorLanguages,
     getUserNavigatorLanguagesNonEnglish,
@@ -136,12 +130,15 @@ export {
     lowercaseObjectKeys,
     detailOnDemandRegex,
     guidedChartRegex,
+    plaintextCalloutRegex,
     extractDetailsFromSyntax,
     parseFloatOrUndefined,
     bind,
     merge,
     calculateTrendDirection,
     getDisplayUnit,
+    stripOuterParentheses,
+    dimensionsToViewId,
 } from "./Util.js"
 
 export {
@@ -162,9 +159,20 @@ export {
     getPhraseForArchivalDate,
 } from "./metadataHelpers.js"
 
-export { multiDimDimensionsToViewId, getAllVariableIds } from "./multiDim.js"
+export { getAllVariableIds } from "./multiDim.js"
 
 export { isPresent } from "./isPresent.js"
+
+export {
+    downloadImage,
+    makeDownloadCodeExamples,
+    makeFilteredDownloadDescription,
+    makeFullDownloadDescription,
+    makeNumberOfRowsSnippet,
+    SERVER_SIDE_DOWNLOAD_HELP_TEXT,
+    triggerDownloadFromBlob,
+    triggerDownloadFromUrl,
+} from "./download.js"
 
 import dayjs from "./dayjs.js"
 export { dayjs }
@@ -191,40 +199,55 @@ export {
 } from "./TimeBounds.js"
 
 export {
-    RegionType,
-    regions,
+    type RegionType,
     type Region,
-    countries,
-    listedRegionsNames,
     type Country,
     type IncomeGroup,
-    type OwidIncomeGroupName,
-    checkIsOwidIncomeGroupName,
+    type OwidIncomeGroupCode,
+    type Continent,
+    type Aggregate,
+    type RegionDataProvider,
+    regions,
+    countries,
+    listedRegionsNames,
+    checkIsOwidIncomeGroupCode,
     getCountryBySlug,
     getCountryByName,
     getRegionByNameOrVariantName,
-    isCountryName,
     getContinents,
-    type Continent,
     getAggregates,
-    type Aggregate,
-    type AggregateSource,
-    aggregateSources,
-    getOthers,
+    getAggregatesByProvider,
+    getRegionDataProviders,
     countriesByName,
-    incomeGroupsByName,
+    incomeGroupsByCode,
     getRegionAlternativeNames,
     mappableCountries,
     checkIsCountry,
     checkIsOwidContinent,
     checkIsIncomeGroup,
+    checkIsAggregate,
     getIncomeGroups,
     getCountryNamesForRegion,
     checkHasMembers,
     getRegionByName,
+    getRegionByCode,
+    getRegionBySlug,
+    getRegionByShortName,
     getParentRegions,
     getSiblingRegions,
-} from "./regions.js"
+    getContinentForCountry,
+    articulateEntity,
+} from "./regions/index.js"
+export {
+    instantiateProfile,
+    type ProfileEntity,
+    getEntitiesForProfile,
+    validateConditionalSectionLists,
+    makeCalloutGrapherStateKey,
+    makeLinkedCalloutKey,
+    checkShouldDataCalloutRender,
+    getCalloutValue,
+} from "./profiles.js"
 
 export {
     type GridBounds,
@@ -240,7 +263,7 @@ export {
     deleteRuntimeAndUnchangedProps,
 } from "./persistable/Persistable.js"
 
-export { PointVector } from "./PointVector.js"
+export { PointVector, type Point } from "./PointVector.js"
 
 export { OwidVariableDisplayConfig } from "./OwidVariable.js"
 
@@ -262,7 +285,11 @@ export {
     removeDiacritics,
 } from "./string.js"
 
-export { serializeJSONForHTML, deserializeJSONFromHTML } from "./serializers.js"
+export {
+    serializeJSONForHTML,
+    deserializeJSONFromHTML,
+    escapeJSONStringForInlineScript,
+} from "./serializers.js"
 
 export { PromiseCache } from "./PromiseCache.js"
 
@@ -272,6 +299,7 @@ export {
     THUMBNAIL_WIDTH,
     LARGE_THUMBNAIL_WIDTH,
     LARGEST_IMAGE_WIDTH,
+    appendImageSizeSuffix,
     getSizes,
     generateSrcSet,
     getFilenameWithoutExtension,

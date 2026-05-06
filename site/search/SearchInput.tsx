@@ -1,4 +1,4 @@
-import { ReactNode, forwardRef, ForwardedRef } from "react"
+import { ReactNode, forwardRef, ForwardedRef, useRef } from "react"
 import { useMediaQuery } from "usehooks-ts"
 import { SMALL_BREAKPOINT_MEDIA_QUERY } from "../SiteConstants.js"
 import {
@@ -16,6 +16,7 @@ export const SearchInput = forwardRef(
             setLocalQuery,
             setGlobalQuery,
             onBackspaceEmpty,
+            autoFocus,
             children,
             resetButton,
         }: {
@@ -23,12 +24,14 @@ export const SearchInput = forwardRef(
             setLocalQuery: (query: string) => void
             setGlobalQuery: (query: string) => void
             onBackspaceEmpty: () => void
+            autoFocus: boolean
             children?: ReactNode
             resetButton?: React.ReactNode
         },
         inputRef: ForwardedRef<HTMLInputElement>
     ) => {
         const isSmallScreen = useMediaQuery(SMALL_BREAKPOINT_MEDIA_QUERY)
+        const hasUserInteracted = useRef(false)
         const {
             activeIndex,
             setActiveIndex,
@@ -56,7 +59,6 @@ export const SearchInput = forwardRef(
             if (e.key === "Backspace" && value === "") {
                 e.preventDefault()
                 onBackspaceEmpty()
-                setActiveIndex(-1)
                 return
             }
 
@@ -121,20 +123,21 @@ export const SearchInput = forwardRef(
                         type="text"
                         className="search-input body-3-regular"
                         ref={inputRef}
+                        data-testid="search-input"
                         placeholder={placeholder}
                         enterKeyHint="search"
                         value={value}
                         role="combobox"
-                        autoFocus
+                        autoFocus={autoFocus}
                         aria-expanded={showSuggestions}
                         aria-controls={autocompleteId}
                         aria-activedescendant={activeOptionId}
                         aria-autocomplete="list"
                         onChange={(e) => {
+                            hasUserInteracted.current = true
                             setLocalQuery(e.target.value)
                             if (e.target.value === "") {
                                 setGlobalQuery("")
-                                setActiveIndex(-1) // not highlighting the first default search
                             } else {
                                 setShowSuggestions(true)
                                 setActiveIndex(0)
@@ -142,8 +145,12 @@ export const SearchInput = forwardRef(
                         }}
                         onKeyDown={handleKeyDown}
                         onFocus={() => {
-                            setShowSuggestions(true)
-                            setActiveIndex(value ? 0 : -1)
+                            // Only show suggestions on focus if the user has actually interacted
+                            // This prevents showing suggestions on initial autofocus
+                            if (hasUserInteracted.current) {
+                                setShowSuggestions(true)
+                                setActiveIndex(0)
+                            }
                         }}
                         onBlur={() => {
                             setShowSuggestions(false)

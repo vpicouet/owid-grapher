@@ -1,10 +1,6 @@
 import * as _ from "lodash-es"
 import { GrapherState } from "@ourworldindata/grapher"
-import {
-    OwidTableSlugs,
-    OwidOrigin,
-    OwidColumnDef,
-} from "@ourworldindata/types"
+import { OwidTableSlugs, OwidOrigin } from "@ourworldindata/types"
 import {
     getLastUpdatedFromVariable,
     getNextUpdateFromVariable,
@@ -13,31 +9,30 @@ import {
     getCitationLong,
 } from "@ourworldindata/utils"
 import { getGrapherFilters } from "./urlTools.js"
-import { getGrapherTableWithRelevantColumns } from "./grapherTools.js"
 
 type MetadataColumn = {
     titleShort: string
     titleLong: string
-    descriptionShort: string
-    descriptionKey: string[]
-    descriptionProcessing: string
-    shortUnit: string
-    unit: string
-    timespan: string
-    tolerance: number
-    type: string
-    conversionFactor: number
-    owidVariableId: number
-    shortName: string
-    lastUpdated: string
-    nextUpdate: string
+    descriptionShort?: string
+    descriptionKey?: string[]
+    descriptionProcessing?: string
+    shortUnit?: string
+    unit?: string
+    timespan?: string
+    tolerance?: number
+    type?: string
+    conversionFactor?: number
+    owidVariableId?: number
+    shortName?: string
+    lastUpdated?: string
+    nextUpdate?: string
     citationShort: string
     citationLong: string
     fullMetadata: string
 }
 
 export const getColumnsForMetadata = (grapherState: GrapherState) => {
-    const table = getGrapherTableWithRelevantColumns(grapherState)
+    const table = grapherState.tableForDownload
 
     const columnsToIgnore = new Set(
         [
@@ -82,7 +77,7 @@ export function assembleMetadata(
             sourceName,
             owidVariableId,
             shortName,
-        } = col.def as OwidColumnDef
+        } = col.def
         const lastUpdated = getLastUpdatedFromVariable(col.def)
         const nextUpdate = getNextUpdateFromVariable(col.def)
 
@@ -127,7 +122,7 @@ export function assembleMetadata(
             ]
         }
 
-        const def = col.def as OwidColumnDef
+        const def = col.def
 
         const citationShort = getCitationShort(
             condensedOrigins,
@@ -158,7 +153,7 @@ export function assembleMetadata(
         const titleLong = `${col.titlePublicOrDisplayName.title}${titleModifier}`
 
         return [
-            useShortNames ? shortName : col.name,
+            useShortNames && shortName ? shortName : col.name,
             {
                 titleShort,
                 titleLong,

@@ -14,16 +14,8 @@ import {
     MapRegionDropdownManager,
 } from "../MapRegionDropdown"
 import { SettingsMenu, SettingsMenuManager } from "../SettingsMenu"
-import {
-    GRAPHER_FRAME_PADDING_HORIZONTAL,
-    GRAPHER_FRAME_PADDING_VERTICAL,
-} from "../../core/GrapherConstants"
-import {
-    MapCountryDropdown,
-    MapCountryDropdownManager,
-} from "../MapCountryDropdown"
-import { CloseGlobeViewButton } from "../CloseGlobeViewButton"
-import { GlobeSwitcher } from "../GlobeSwitcher"
+import { GRAPHER_FRAME_PADDING_HORIZONTAL } from "../../core/GrapherConstants"
+import { MapResetButton, MapResetButtonManager } from "../MapResetButton"
 import {
     DataTableFilterDropdown,
     DataTableFilterDropdownManager,
@@ -32,13 +24,21 @@ import {
     DataTableSearchField,
     DataTableSearchFieldManager,
 } from "../DataTableSearchField"
+import {
+    MapZoomToSelectionButton,
+    MapZoomToSelectionButtonManager,
+} from "../MapZoomToSelectionButton"
+import { MapZoomDropdown, MapZoomDropdownManager } from "../MapZoomDropdown"
 
 export interface ControlsRowManager
-    extends ContentSwitchersManager,
+    extends
+        ContentSwitchersManager,
         EntitySelectionManager,
-        MapRegionDropdownManager,
-        MapCountryDropdownManager,
         SettingsMenuManager,
+        MapRegionDropdownManager,
+        MapResetButtonManager,
+        MapZoomToSelectionButtonManager,
+        MapZoomDropdownManager,
         DataTableFilterDropdownManager,
         DataTableSearchFieldManager {
     sidePanelBounds?: Bounds
@@ -48,13 +48,13 @@ export interface ControlsRowManager
 interface ControlsRowProps {
     manager: ControlsRowManager
     maxWidth?: number
-    settingsMenuTop?: number
+    popoverMaxWidth?: number
+    popoverMaxHeight?: number
 }
 
 @observer
 export class ControlsRow extends Component<ControlsRowProps> {
-    private framePaddingHorizontal = GRAPHER_FRAME_PADDING_HORIZONTAL
-    private framePaddingVertical = GRAPHER_FRAME_PADDING_VERTICAL
+    private readonly framePaddingHorizontal = GRAPHER_FRAME_PADDING_HORIZONTAL
 
     constructor(props: ControlsRowProps) {
         super(props)
@@ -70,32 +70,21 @@ export class ControlsRow extends Component<ControlsRowProps> {
         return this.props.manager
     }
 
-    @computed private get sidePanelWidth(): number {
-        return this.manager.sidePanelBounds?.width ?? 0
-    }
-
     @computed private get showControlsRow(): boolean {
         return (
+            ContentSwitchers.shouldShow(this.manager) ||
             SettingsMenu.shouldShow(this.manager) ||
             EntitySelectionToggle.shouldShow(this.manager) ||
+            // Map controls
             MapRegionDropdown.shouldShow(this.manager) ||
-            MapCountryDropdown.shouldShow(this.manager) ||
-            CloseGlobeViewButton.shouldShow(this.manager) ||
-            ContentSwitchers.shouldShow(this.manager) ||
+            MapZoomDropdown.shouldShow(this.manager) ||
+            MapZoomToSelectionButton.shouldShow(this.manager) ||
+            MapResetButton.shouldShow(this.manager, "resetZoom") ||
+            MapResetButton.shouldShow(this.manager, "resetView") ||
+            // Table controls
             DataTableFilterDropdown.shouldShow(this.manager) ||
             DataTableSearchField.shouldShow(this.manager)
         )
-    }
-
-    @computed private get settingsMenuLayout(): React.CSSProperties {
-        const top = this.props.settingsMenuTop ?? 0
-        const bottom = this.framePaddingVertical
-        const right = this.sidePanelWidth + this.framePaddingHorizontal
-
-        const maxHeight = `calc(100% - ${top + bottom}px)`
-        const maxWidth = `calc(100% - ${2 * right}px)`
-
-        return { maxHeight, maxWidth, top, right }
     }
 
     private renderChartControls(): React.ReactElement {
@@ -104,7 +93,8 @@ export class ControlsRow extends Component<ControlsRowProps> {
                 <EntitySelectionToggle manager={this.manager} />
                 <SettingsMenu
                     manager={this.manager}
-                    popoverStyle={this.settingsMenuLayout}
+                    popoverMaxWidth={this.props.popoverMaxWidth}
+                    popoverMaxHeight={this.props.popoverMaxHeight}
                 />
             </div>
         )
@@ -122,19 +112,38 @@ export class ControlsRow extends Component<ControlsRowProps> {
     private renderMapControls(): React.ReactElement {
         return (
             <div className="controls map-controls">
-                {this.manager.isMapSelectionEnabled ? (
-                    <>
-                        <MapRegionDropdown manager={this.manager} />
-                        <GlobeSwitcher manager={this.manager} />
-                        <EntitySelectionToggle manager={this.manager} />
-                    </>
-                ) : (
-                    <>
-                        <MapCountryDropdown manager={this.manager} />
-                        <CloseGlobeViewButton manager={this.manager} />
-                    </>
-                )}
+                {this.manager.isMapSelectionEnabled
+                    ? this.renderMapControlsForDesktop()
+                    : this.renderMapControlsForMobile()}
             </div>
+        )
+    }
+
+    private renderMapControlsForDesktop(): React.ReactElement {
+        return (
+            <>
+                <MapResetButton manager={this.manager} action="resetZoom" />
+                <MapZoomToSelectionButton manager={this.manager} />
+                <MapResetButton manager={this.manager} action="resetView" />
+                <MapRegionDropdown manager={this.manager} />
+                <EntitySelectionToggle manager={this.manager} />
+            </>
+        )
+    }
+
+    private renderMapControlsForMobile(): React.ReactElement {
+        const shouldShowResetZoomButton = MapResetButton.shouldShow(
+            this.manager,
+            "resetZoom"
+        )
+
+        if (shouldShowResetZoomButton)
+            return <MapResetButton manager={this.manager} action="resetZoom" />
+
+        return this.manager.isFaceted ? (
+            <MapRegionDropdown manager={this.manager} />
+        ) : (
+            <MapZoomDropdown manager={this.manager} />
         )
     }
 

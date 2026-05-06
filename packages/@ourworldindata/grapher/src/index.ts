@@ -8,6 +8,7 @@ export { FetchingGrapher } from "./core/FetchingGrapher"
 export {
     fetchInputTableForConfig,
     getCachingInputTableFetcher,
+    type FetchInputTableForConfigFn,
 } from "./core/loadGrapherTableHelpers.js"
 export { loadVariableDataAndMetadata } from "./core/loadVariable.js"
 export {
@@ -20,6 +21,8 @@ export {
     DEFAULT_GRAPHER_HEIGHT,
     GRAPHER_THUMBNAIL_WIDTH,
     GRAPHER_THUMBNAIL_HEIGHT,
+    GRAPHER_IMAGE_WIDTH_1X,
+    GRAPHER_IMAGE_WIDTH_2X,
     GRAPHER_SQUARE_SIZE,
     STATIC_EXPORT_DETAIL_SPACING,
     DEFAULT_GRAPHER_ENTITY_TYPE,
@@ -30,10 +33,12 @@ export {
     Patterns,
     CONTINENTS_INDICATOR_ID,
     POPULATION_INDICATOR_ID_USED_IN_ADMIN,
+    GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ADMIN,
     latestGrapherConfigSchema,
     DEFAULT_GRAPHER_BOUNDS,
     DEFAULT_GRAPHER_BOUNDS_SQUARE,
-    CHART_TYPES_THAT_SWITCH_TO_DISCRETE_BAR_WHEN_SINGLE_TIME,
+    ADDITIONAL_REGION_DATA_PROVIDERS,
+    type AdditionalRegionDataProvider,
 } from "./core/GrapherConstants"
 export {
     getVariableDataRoute,
@@ -42,6 +47,7 @@ export {
 export { ColorScale } from "./color/ColorScale"
 export { ColorScaleConfig } from "./color/ColorScaleConfig"
 export { ColorScheme } from "./color/ColorScheme"
+export { GRAPHER_BACKGROUND } from "./color/ColorConstants"
 export {
     getColorNameOwidDistinctAndSemanticPalettes,
     getColorNameOwidDistinctLinesAndSemanticPalettes,
@@ -51,6 +57,7 @@ export { DimensionSlot } from "./chart/DimensionSlot"
 export { EntityPicker } from "./controls/entityPicker/EntityPicker"
 export type { EntityPickerManager } from "./controls/entityPicker/EntityPickerConstants"
 export { getColorSchemeForChartType } from "./color/ColorSchemes"
+export { OwidMapColors } from "./color/CustomSchemes"
 export {
     isCategoricalBin,
     isNumericBin,
@@ -58,19 +65,12 @@ export {
     isProjectedDataBin,
 } from "./color/ColorScaleBin"
 export {
-    GLOBAL_ENTITY_SELECTOR_DATA_ATTR,
-    GLOBAL_ENTITY_SELECTOR_ELEMENT,
-    GLOBAL_ENTITY_SELECTOR_DEFAULT_COUNTRY,
-} from "./controls/globalEntitySelector/GlobalEntitySelectorConstants"
-export { GlobalEntitySelector } from "./controls/globalEntitySelector/GlobalEntitySelector"
-export {
     Grapher,
     type GrapherProgrammaticInterface,
     type GrapherManager,
 } from "./core/Grapher"
 export { GrapherState } from "./core/GrapherState"
-export { GrapherAnalytics, EventCategory } from "./core/GrapherAnalytics"
-export { hydrateGlobalEntitySelectorIfAny } from "./controls/globalEntitySelector/GlobalEntitySelector"
+export { GrapherAnalytics, splitPathForGA4 } from "./core/GrapherAnalytics"
 export { legacyToCurrentGrapherUrl } from "./core/GrapherUrlMigrations"
 export {
     legacyToOwidTableAndDimensions,
@@ -112,7 +112,9 @@ export {
     useGuidedChartLinkHandler,
     GuidedChartContext,
     type GuidedChartContextValue,
-} from "./chart/GuidedChartUtils"
+    type ArchiveGuidedChartRegistration,
+    buildArchiveGuidedChartSrc,
+} from "./chart/guidedChartUtils"
 export {
     isChartTypeName,
     isValidTabQueryParam,
@@ -120,6 +122,7 @@ export {
     mapGrapherTabNameToQueryParam,
     mapGrapherTabNameToConfigOption,
     makeLabelForGrapherTab,
+    VALID_CHART_TYPE_COMBINATIONS,
 } from "./chart/ChartTabs"
 export {
     renderGrapherIntoContainer,
@@ -129,6 +132,7 @@ export { GeoFeatures } from "./mapCharts/GeoFeatures"
 export { isValidVerticalComparisonLineConfig } from "./comparisonLine/ComparisonLineHelpers"
 export { hasValidConfigForBinningStrategy } from "./color/BinningStrategies"
 export { Dropdown } from "./controls/Dropdown"
+export { EXTERNAL_SORT_INDICATOR_DEFINITIONS } from "./entitySelector/EntitySelector.js"
 
 export { makeChartState } from "./chart/ChartTypeMap"
 export type { ChartState } from "./chart/ChartInterface"
@@ -142,3 +146,37 @@ export type { StackedBarChartState } from "./stackedCharts/StackedBarChartState.
 export type { StackedDiscreteBarChartState } from "./stackedCharts/StackedDiscreteBarChartState"
 export type { ScatterPlotChartState } from "./scatterCharts/ScatterPlotChartState"
 export type { MarimekkoChartState } from "./stackedCharts/MarimekkoChartState"
+
+export {
+    selectPeerCountriesForGrapher,
+    selectPeerCountries,
+    isValidPeerCountryStrategyQueryParam,
+    prepareEntitiesForPeerSelection,
+} from "./core/PeerCountrySelection.js"
+
+export { loadCatalogData, getCatalogAssetKey } from "./core/loadCatalogData.js"
+
+export {
+    constructGrapherValuesJson,
+    prepareCalloutTable,
+    constructGrapherValuesJsonFromTable,
+    type PreparedCalloutTable,
+} from "./core/GrapherValuesJson"
+export {
+    CsvDownloadType,
+    createCsvBlobLocally,
+    getDataDownloadFilename,
+    getDownloadSearchParams,
+    getDownloadUrl,
+    getNonRedistributableInfo,
+} from "./download.js"
+export type {
+    DataDownloadContextBase,
+    DataDownloadContextClientSide,
+    DataDownloadContextServerSide,
+} from "./download.js"
+export {
+    useDataApiDownloadConfig,
+    useElementBounds,
+    useStateWithDebouncedClear,
+} from "./hooks.js"

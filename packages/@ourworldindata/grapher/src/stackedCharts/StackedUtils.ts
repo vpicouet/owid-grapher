@@ -6,16 +6,19 @@ import {
     findGreatestCommonDivisorOfArray,
     rollingMap,
     omitUndefinedValues,
-    checkHasMembers,
-    getCountryNamesForRegion,
-    Region,
-    EntityName,
-    excludeUndefined,
-    getRegionByName,
     AxisConfigInterface,
+    lastOfNonEmptyArray,
+    Point,
 } from "@ourworldindata/utils"
-import { StackedPointPositionType, StackedSeries } from "./StackedConstants"
-import { WORLD_ENTITY_NAME } from "../core/GrapherConstants.js"
+import {
+    PlacedStackedAreaSeries,
+    StackedPoint,
+    StackedPointPositionType,
+    StackedSeries,
+    PlacedStackedBarSeries,
+} from "./StackedConstants"
+import { DualAxis } from "../axis/Axis"
+import { Time } from "@ourworldindata/types"
 import { StackedBarChartState } from "./StackedBarChartState.js"
 
 // This method shift up the Y Values of a Series with Points in place.
@@ -100,66 +103,14 @@ export const withMissingValuesAsZeroes = <
                     position,
                     value,
                     valueOffset: 0,
+                    formattedTime: point?.formattedTime,
+                    missing: !point,
                     interpolated: point?.interpolated,
-                    fake: !point || !!point.interpolated,
                     color: point?.color,
                 })
             }),
         }
     })
-}
-
-/**
- * Checks if the given entities can be sensibly stacked on top of each other.
- *
- * For example, stacking countries on top of their continent or stacking
- * countries on top of the world doesn't make sense.
- */
-export function checkIsStackingEntitiesSensible(
-    entityNames: EntityName[]
-): boolean {
-    if (entityNames.length < 2) return true
-
-    // Stacking entities on top of World typically doesn't make sense
-    if (entityNames.includes(WORLD_ENTITY_NAME)) return false
-
-    // Grab region info where available
-    const regions = excludeUndefined(
-        entityNames.map((name) => getRegionByName(name))
-    )
-    if (regions.length < 2) return true
-
-    // If none of the regions have members, we don't need to check further
-    const someRegionHasMembers = regions.some((region) =>
-        checkHasMembers(region)
-    )
-    if (!someRegionHasMembers) return true
-
-    // Keep track of the stacked countries and check if the same country is
-    // stacked twice, e.g. by stacking Spain on top of Europe (Europe contains
-    // Spain) or by stacking Europe on top of World (both contain Spain)
-    const stackedCountryNames = new Set(getCountryNames(regions[0]))
-    for (const region of regions.slice(1)) {
-        const newCountryNames = getCountryNames(region)
-
-        // check if any new country is already part of the current stack
-        const someCountryIsAlreadyStacked = newCountryNames.some(
-            (countryName) => stackedCountryNames.has(countryName)
-        )
-        if (someCountryIsAlreadyStacked) return false
-
-        // add all new countries to the stack
-        newCountryNames.forEach((countryName) =>
-            stackedCountryNames.add(countryName)
-        )
-    }
-    return true
-}
-
-function getCountryNames(region: Region): string[] {
-    return checkHasMembers(region)
-        ? getCountryNamesForRegion(region)
-        : [region.name]
 }
 
 export function resolveCollision(
@@ -199,4 +150,122 @@ export function getXAxisConfigDefaultsForStackedBar(
         domainValues: chartState.xValues,
         ticks: chartState.xValues.map((value) => ({ value, priority: 2 })),
     }
+}
+
+function placeStackedAreaPoint(
+    point: StackedPoint<number>,
+    dualAxis: DualAxis
+): Point {
+    const { horizontalAxis, verticalAxis } = dualAxis
+    return {
+        x: horizontalAxis.place(point.position),
+        y: verticalAxis.place(point.value + point.valueOffset),
+    }
+}
+
+// This places a whole series, but the points only represent the top of the area.
+// Later steps are necessary to display them as a filled area.
+function placeStackedAreaSeries(
+    series: StackedSeries<number>,
+    dualAxis: DualAxis
+): Point[] {
+    const { horizontalAxis, verticalAxis } = dualAxis
+
+    if (series.points.length > 1) {
+        return series.points.map((point) =>
+            placeStackedAreaPoint(point, dualAxis)
+        )
+    } else if (series.points.length === 1) {
+        // We only have one point, so make it so it stretches out over the whole x axis range
+        // There are two cases here that we need to consider:
+        // (1) In unfaceted charts, the x domain will be a single year, so we need to ensure that the area stretches
+        //     out over the full range of the x axis.
+        // (2) In faceted charts, the x domain may span multiple years, so we need to ensure that the area stretches
+        //     out only over year - 0.5 to year + 0.5, additionally making sure we don't put points outside the x range.
+        //
+        // -@marcelgerber, 2023-04-24
+        const point = series.points[0]
+        const y = verticalAxis.place(point.value + point.valueOffset)
+        const singleValueXDomain =
+            horizontalAxis.domain[0] === horizontalAxis.domain[1]
+
+        if (singleValueXDomain) {
+            // Case (1)
+            return [
+                { x: horizontalAxis.range[0], y },
+                { x: horizontalAxis.range[1], y },
+            ]
+        } else {
+            // Case (2)
+            const leftX = Math.max(
+                horizontalAxis.place(point.position - 0.5),
+                horizontalAxis.range[0]
+            )
+            const rightX = Math.min(
+                horizontalAxis.place(point.position + 0.5),
+                horizontalAxis.range[1]
+            )
+
+            return [
+                { x: leftX, y },
+                { x: rightX, y },
+            ]
+        }
+    } else return []
+}
+
+/** Calculates the polygon points for a filled area polygon */
+function makeStackedAreaPolygon(
+    placedPoints: Point[],
+    prevPlacedPoints: Point[] | undefined,
+    dualAxis: DualAxis
+): Point[] {
+    const baselineY = dualAxis.verticalAxis.range[0]
+    const prevPoints: Point[] = prevPlacedPoints ?? [
+        { x: placedPoints[0].x, y: baselineY }, // left baseline point
+        { x: lastOfNonEmptyArray(placedPoints).x, y: baselineY }, // right baseline point
+    ]
+    return [...placedPoints, ...prevPoints.toReversed()]
+}
+
+export function toPlacedStackedAreaSeries(
+    series: readonly StackedSeries<Time>[],
+    dualAxis: DualAxis
+): PlacedStackedAreaSeries<Time>[] {
+    const validSeries = series.filter((series) => !series.isAllZeros)
+    const placedSeries: PlacedStackedAreaSeries<Time>[] = []
+
+    for (let index = 0; index < validSeries.length; index++) {
+        const series = validSeries[index]
+        const placedPoints = placeStackedAreaSeries(series, dualAxis)
+        const prevPlacedPoints = placedSeries[index - 1]?.placedPoints
+        const areaPoints = makeStackedAreaPolygon(
+            placedPoints,
+            prevPlacedPoints,
+            dualAxis
+        )
+        placedSeries.push({ ...series, placedPoints, areaPoints })
+    }
+
+    return placedSeries
+}
+
+export function toPlacedStackedBarSeries(
+    series: readonly StackedSeries<Time>[],
+    dualAxis: DualAxis
+): readonly PlacedStackedBarSeries<Time>[] {
+    const { horizontalAxis, verticalAxis } = dualAxis
+    const barWidth = (horizontalAxis.bandWidth ?? 0) * 0.8
+
+    return series.map((series) => ({
+        ...series,
+        placedPoints: series.points.map((bar) => {
+            const x = horizontalAxis.place(bar.position) - barWidth / 2
+            const y1 = verticalAxis.place(bar.valueOffset)
+            const y2 = verticalAxis.place(bar.value + bar.valueOffset)
+            const y = Math.min(y1, y2)
+            const barHeight = Math.abs(y2 - y1)
+            return { ...bar, x, y, barWidth, barHeight }
+        }),
+    }))
 }

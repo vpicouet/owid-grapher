@@ -53,7 +53,7 @@ interface GlobeControllerManager {
 }
 
 export class GlobeController {
-    private manager: GlobeControllerManager
+    private readonly manager: GlobeControllerManager
 
     constructor(manager: GlobeControllerManager) {
         this.manager = manager
@@ -75,7 +75,7 @@ export class GlobeController {
         this.globeConfig.isActive = !this.globeConfig.isActive
     }
 
-    @action.bound private resetGlobe(): void {
+    @action.bound resetGlobe(): void {
         this.globeConfig.rotation = DEFAULT_GLOBE_ROTATION
         this.globeConfig.zoom = 1
         this.globeConfig.focusCountry = undefined

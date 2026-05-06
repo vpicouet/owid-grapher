@@ -29,11 +29,9 @@ import {
     HorizontalAxisComponent,
     VerticalAxisZeroLine,
 } from "../axis/AxisViews"
-import {
-    InitialVerticalLabelsSeries,
-    VerticalLabelsState,
-} from "../verticalLabels/VerticalLabelsState"
-import { VerticalLabels } from "../verticalLabels/VerticalLabels"
+import { InitialSimpleLabelSeries } from "../verticalLabels/SimpleVerticalLabelsTypes"
+import { SimpleVerticalLabelsState } from "../verticalLabels/SimpleVerticalLabelsState"
+import { SimpleVerticalLabels } from "../verticalLabels/SimpleVerticalLabels"
 import { darkenColorForLine } from "../color/ColorUtils.js"
 import { NoDataModal } from "../noDataModal/NoDataModal"
 
@@ -121,6 +119,7 @@ export class LineChartThumbnail
     @computed private get renderSeries(): RenderLineChartSeries[] {
         return toRenderLineChartSeries(this.placedSeries, {
             isFocusModeActive: this.chartState.isFocusModeActive,
+            shouldElevateSingleSeries: false,
         })
     }
 
@@ -133,7 +132,9 @@ export class LineChartThumbnail
                     // Only show start points for historical series, not projected ones
                     !series.isProjection
             )
-            .map((series) => _.minBy(series.placedPoints, (point) => point.x))
+            .map((series) =>
+                _.minBy(series.placedPoints, (point) => point.time)
+            )
             .filter((point) => point !== undefined)
     }
 
@@ -147,7 +148,9 @@ export class LineChartThumbnail
                     // for the projected series. Otherwise, show end dots for all series
                     (!this.hasProjectedSeries || series.isProjection)
             )
-            .map((series) => _.maxBy(series.placedPoints, (point) => point.x))
+            .map((series) =>
+                _.maxBy(series.placedPoints, (point) => point.time)
+            )
             .filter((point) => point !== undefined)
     }
 
@@ -186,8 +189,10 @@ export class LineChartThumbnail
             .yRange()
     }
 
-    @computed private get endLabelsState(): VerticalLabelsState | undefined {
-        if (!this.manager.showLegend) return undefined
+    @computed private get endLabelsState():
+        | SimpleVerticalLabelsState
+        | undefined {
+        if (!this.manager.showSeriesLabels) return undefined
 
         let labelCandidateSeries = this.chartState.series
 
@@ -230,15 +235,15 @@ export class LineChartThumbnail
             return { ...labelSeries, point: endPoint }
         })
 
-        return new VerticalLabelsState(series, {
+        return new SimpleVerticalLabelsState(series, {
             fontSize: this.labelFontSize,
             fontWeight: 500,
             yRange: this.labelsRange,
             minSpacing: 2,
             resolveCollision: (
-                s1: InitialVerticalLabelsSeries,
-                s2: InitialVerticalLabelsSeries
-            ): InitialVerticalLabelsSeries => {
+                s1: InitialSimpleLabelSeries,
+                s2: InitialSimpleLabelSeries
+            ): InitialSimpleLabelSeries => {
                 const endPoint1 = endPointBySeriesName.get(s1.seriesName)
                 const endPoint2 = endPointBySeriesName.get(s2.seriesName)
 
@@ -254,11 +259,12 @@ export class LineChartThumbnail
         })
     }
 
-    @computed private get startLabelsState(): VerticalLabelsState | undefined {
-        if (!this.manager.showLegend) return undefined
+    @computed private get startLabelsState():
+        | SimpleVerticalLabelsState
+        | undefined {
+        if (!this.manager.showSeriesLabels) return undefined
 
-        const showEntityNames =
-            !this.manager.isDisplayedAlongsideComplementaryTable
+        const showValueLabelsOnly = this.manager.useMinimalLabeling
 
         let labelCandidateSeries = this.chartState.series
 
@@ -292,9 +298,9 @@ export class LineChartThumbnail
                 const value = startPoint?.y ?? 0
 
                 const yPosition = this.outerBoundsVerticalAxis.place(value)
-                const label = showEntityNames
-                    ? seriesName
-                    : this.formatLabel(value)
+                const label = showValueLabelsOnly
+                    ? this.formatLabel(value)
+                    : seriesName
 
                 const color = this.chartState.hasColorScale
                     ? darkenColorForLine(
@@ -315,16 +321,18 @@ export class LineChartThumbnail
             })
             .filter((series) => series !== undefined)
 
-        return new VerticalLabelsState(series, {
+        return new SimpleVerticalLabelsState(series, {
             fontSize: this.labelFontSize,
             fontWeight: 500,
-            maxWidth: showEntityNames ? 0.25 * this.bounds.width : undefined,
-            minSpacing: showEntityNames ? 5 : 2,
+            maxWidth: showValueLabelsOnly
+                ? undefined
+                : 0.25 * this.bounds.width,
+            minSpacing: showValueLabelsOnly ? 2 : 5,
             yRange: this.labelsRange,
             resolveCollision: (
-                s1: InitialVerticalLabelsSeries,
-                s2: InitialVerticalLabelsSeries
-            ): InitialVerticalLabelsSeries => {
+                s1: InitialSimpleLabelSeries,
+                s2: InitialSimpleLabelSeries
+            ): InitialSimpleLabelSeries => {
                 // Prefer to label series that have an end label
                 if (this.visibleEndLabels.has(s1.seriesName)) return s1
                 if (this.visibleEndLabels.has(s2.seriesName)) return s2
@@ -386,10 +394,12 @@ export class LineChartThumbnail
 
         return (
             <>
-                <VerticalAxisZeroLine
-                    verticalAxis={this.dualAxis.verticalAxis}
-                    bounds={this.dualAxis.innerBounds}
-                />
+                {!this.dualAxis.verticalAxis.isLogScale && (
+                    <VerticalAxisZeroLine
+                        verticalAxis={this.dualAxis.verticalAxis}
+                        bounds={this.dualAxis.innerBounds}
+                    />
+                )}
                 <HorizontalAxisComponent
                     axis={this.dualAxis.horizontalAxis}
                     bounds={this.dualAxis.bounds}
@@ -411,7 +421,7 @@ export class LineChartThumbnail
                     <Dot key={index} point={point} />
                 ))}
                 {this.startLabelsState && (
-                    <VerticalLabels
+                    <SimpleVerticalLabels
                         state={this.startLabelsState}
                         yAxis={this.dualAxis.verticalAxis}
                         x={this.innerBounds.left - LABEL_PADDING}
@@ -419,7 +429,7 @@ export class LineChartThumbnail
                     />
                 )}
                 {this.endLabelsState && (
-                    <VerticalLabels
+                    <SimpleVerticalLabels
                         state={this.endLabelsState}
                         yAxis={this.dualAxis.verticalAxis}
                         x={this.innerBounds.right + LABEL_PADDING}

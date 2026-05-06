@@ -15,17 +15,21 @@ import {
     spansToUnformattedPlainText,
     EnrichedBlockText,
     Span,
+    getEntitiesForProfile,
+    articulateEntity,
 } from "@ourworldindata/utils"
 import { getAlgoliaClient } from "../configureAlgolia.js"
 import {
     PageRecord,
-    SearchIndexName,
-} from "../../../site/search/searchTypes.js"
+    OwidGdocProfileInterface,
+    OwidGdoc,
+} from "@ourworldindata/types"
 import { getAnalyticsPageviewsByUrlObj } from "../../../db/model/Pageview.js"
-import { getIndexName } from "../../../site/search/searchClient.js"
+import { PAGES_INDEX } from "../../../site/search/searchUtils.js"
 import type { Hit, SearchClient } from "@algolia/client-search"
 import { match, P } from "ts-pattern"
 import { gdocFromJSON } from "../../../db/model/Gdoc/GdocFactory.js"
+import { GdocBase } from "../../../db/model/Gdoc/GdocBase.js"
 import {
     BAKED_BASE_URL,
     CLOUDFLARE_IMAGES_URL,
@@ -35,31 +39,49 @@ import {
     getFirstBlockOfType,
     takeConsecutiveBlocksOfType,
 } from "../../../site/gdocs/utils.js"
-import { getPrefixedGdocPath, toPlaintext } from "@ourworldindata/components"
-import { stripCustomMarkdownComponents } from "../../../db/model/Gdoc/enrichedToMarkdown.js"
+import { getPrefixedGdocPath } from "@ourworldindata/components"
+import { enrichedBlocksToIndexableText } from "../../../db/model/Gdoc/enrichedToIndexableText.js"
+import {
+    GdocProfile,
+    instantiateProfileForEntity,
+    getSlugForProfileEntity,
+} from "../../../db/model/Gdoc/GdocProfile.js"
+import {
+    prepareCalloutTablesForProfile,
+    checkShouldProfileRender,
+} from "../../../db/model/Gdoc/dataCallouts.js"
 
 const computePageScore = (record: Omit<PageRecord, "score">): number => {
     const { importance, views_7d } = record
     return importance * 1000 + views_7d
 }
 
-const getThumbnailUrl = (
-    gdoc: OwidGdocPostInterface | OwidGdocDataInsightInterface,
+export const getThumbnailUrl = (
+    gdoc: OwidGdoc,
     cloudflareImages: Record<string, DbEnrichedImage>
 ): string => {
     if (gdoc.content.type === OwidGdocType.DataInsight) {
-        const firstImage = getFirstBlockOfType(gdoc, "image")
+        const firstImage = getFirstBlockOfType(
+            gdoc as OwidGdocDataInsightInterface,
+            "image"
+        )
         const filename = firstImage?.smallFilename || firstImage?.filename
         return filename && cloudflareImages[filename]
             ? `${CLOUDFLARE_IMAGES_URL}/${cloudflareImages[filename].cloudflareId}/w=608`
             : `${BAKED_BASE_URL}/${DEFAULT_GDOC_FEATURED_IMAGE}`
     }
 
-    if (gdoc.content["deprecation-notice"]) {
+    if (
+        "deprecation-notice" in gdoc.content &&
+        gdoc.content["deprecation-notice"]
+    ) {
         return `${BAKED_BASE_URL}/${ARCHIVED_THUMBNAIL_FILENAME}`
     }
 
-    if (!gdoc.content["featured-image"]) {
+    if (
+        !("featured-image" in gdoc.content) ||
+        !gdoc.content["featured-image"]
+    ) {
         return `${BAKED_BASE_URL}/${DEFAULT_GDOC_FEATURED_IMAGE}`
     }
 
@@ -79,10 +101,11 @@ const getThumbnailUrl = (
     return `${CLOUDFLARE_IMAGES_URL}/${cloudflareId}/w=512`
 }
 
-function getExcerptFromGdoc(
-    gdoc: OwidGdocPostInterface | OwidGdocDataInsightInterface
-): string {
-    if (gdoc.content.type === OwidGdocType.DataInsight) {
+export function getExcerptFromGdoc(gdoc: OwidGdoc): string {
+    if (
+        gdoc.content.type === OwidGdocType.DataInsight ||
+        !("excerpt" in gdoc.content)
+    ) {
         return ""
     } else {
         return gdoc.content.excerpt ?? ""
@@ -170,24 +193,54 @@ function getExcerptLongFromGdoc(
     )
 }
 
-function formatGdocMarkdown(content: string): string {
-    const simplifiedMarkdown = stripCustomMarkdownComponents(content)
-    // We still have some markdown gore that MarkdownTextWrap can't handle. Easier to just remove all asterisks.
-    const withoutAsterisks = simplifiedMarkdown.replaceAll("*", "")
-    const withoutMarkdown = toPlaintext(withoutAsterisks)
-    const withoutNewlines = withoutMarkdown.replaceAll("\n", " ")
+/** Remove characters that shouldn't appear in search results but could
+ *  affect chunk boundaries (e.g. arrow symbols used in data insights). */
+function stripNonSearchableCharacters(content: string): string {
+    return content.replaceAll("→", "")
+}
 
-    // Doing this after removing markdown links because otherwise we need to handle
-    // - [word](link).1
-    // - [word.](link)1
-    // - word.1
-    const withoutFootnotes = withoutNewlines.replaceAll(
-        /([A-Za-z]\.)\d{1,2}/g,
-        "$1"
-    )
-    // This is used in many data insights but shouldn't be shown in search results
-    const withoutArrow = withoutFootnotes.replaceAll("→", "")
-    return withoutArrow
+/** Build indexable body text with linked-callout resolution and lightweight
+ *  cleanup (remove non-searchable symbols), while preserving paragraph breaks. */
+export function getPreprocessedIndexableText<
+    IndexableGdoc extends
+        | OwidGdocPostInterface
+        | OwidGdocDataInsightInterface
+        | OwidGdocProfileInterface,
+>(
+    body: IndexableGdoc["content"]["body"] | undefined,
+    linkedCallouts: IndexableGdoc["linkedCallouts"]
+): string {
+    const indexableText = enrichedBlocksToIndexableText(body, {
+        linkedCallouts,
+    })
+    return stripNonSearchableCharacters(indexableText ?? "")
+}
+
+/** Collapse paragraph separators so each chunk is a single line of text
+ *  suitable for an Algolia record. */
+function flattenToSingleLine(chunk: string): string {
+    return chunk.replace(/\n+/g, " ")
+}
+
+const getPostImportance = (
+    gdoc:
+        | OwidGdocAboutInterface
+        | OwidGdocDataInsightInterface
+        | OwidGdocPostInterface
+        | OwidGdocProfileInterface
+): number => {
+    return match(gdoc.content.type)
+        .with(OwidGdocType.Article, () =>
+            "deprecation-notice" in gdoc.content ? -0.5 : 0
+        )
+        .with(P.union(OwidGdocType.AboutPage, OwidGdocType.Profile), () => 1)
+        .with(
+            P.union(OwidGdocType.TopicPage, OwidGdocType.LinearTopicPage),
+            () => 3
+        )
+        .with(P.union(OwidGdocType.Fragment, undefined), () => 0)
+        .with(OwidGdocType.DataInsight, () => 0)
+        .exhaustive()
 }
 
 async function generateGdocRecords(
@@ -196,26 +249,6 @@ async function generateGdocRecords(
     cloudflareImagesByFilename: Record<string, DbEnrichedImage>,
     knex: db.KnexReadonlyTransaction
 ): Promise<PageRecord[]> {
-    const getPostImportance = (
-        gdoc:
-            | OwidGdocAboutInterface
-            | OwidGdocDataInsightInterface
-            | OwidGdocPostInterface
-    ): number => {
-        return match(gdoc.content.type)
-            .with(OwidGdocType.Article, () =>
-                "deprecation-notice" in gdoc.content ? -0.5 : 0
-            )
-            .with(OwidGdocType.AboutPage, () => 1)
-            .with(
-                P.union(OwidGdocType.TopicPage, OwidGdocType.LinearTopicPage),
-                () => 3
-            )
-            .with(P.union(OwidGdocType.Fragment, undefined), () => 0)
-            .with(OwidGdocType.DataInsight, () => 0)
-            .exhaustive()
-    }
-
     const topicHierarchiesByChildName =
         await db.getTopicHierarchiesByChildName(knex)
 
@@ -228,11 +261,16 @@ async function generateGdocRecords(
             continue
         }
 
-        // Only rendering the blocks - not the page nav, title, byline, etc
-        const plaintextContent = gdoc.markdown
-            ? formatGdocMarkdown(gdoc.markdown)
-            : ""
+        // Only rendering the main content - not the page nav, title, byline, etc
+        // Keep paragraph separators at this stage for semantic chunking and
+        // apply only pre-index cleanup (e.g. remove non-searchable symbols).
+        const plaintextContent = getPreprocessedIndexableText(
+            gdoc.content.body,
+            gdoc.linkedCallouts
+        )
 
+        // Chunk first while `\n\n` boundaries still exist. Flattening happens
+        // later per chunk to satisfy Algolia's single-line record content.
         const chunks = chunkParagraphs(plaintextContent, 1000)
         let i = 0
 
@@ -255,7 +293,7 @@ async function generateGdocRecords(
                 type: gdoc.content.type,
                 slug: gdoc.slug,
                 title: gdoc.content.title || "",
-                content: chunk,
+                content: flattenToSingleLine(chunk),
                 views_7d:
                     pageviews[getPrefixedGdocPath("", gdoc)]?.views_7d ?? 0,
                 excerpt: getExcerptFromGdoc(gdoc),
@@ -267,6 +305,7 @@ async function generateGdocRecords(
                 tags: [...topicTags],
                 authors: gdoc.content.authors,
                 thumbnailUrl,
+                availableEntities: [],
             }
             const score = computePageScore(record)
             records.push({ ...record, score })
@@ -276,20 +315,121 @@ async function generateGdocRecords(
     return records
 }
 
+/**
+ * Generate Algolia records for a profile template by instantiating it for each entity
+ * in its scope and creating chunked records for each instantiated profile.
+ */
+async function generateProfileRecords(
+    profileTemplate: GdocProfile,
+    pageviews: Record<string, RawPageview>,
+    cloudflareImagesByFilename: Record<string, DbEnrichedImage>,
+    knex: db.KnexReadonlyTransaction
+): Promise<PageRecord[]> {
+    const entities = getEntitiesForProfile(
+        profileTemplate.content.scope,
+        profileTemplate.content.exclude
+    )
+    const records: PageRecord[] = []
+
+    const topicHierarchiesByChildName =
+        await db.getTopicHierarchiesByChildName(knex)
+    const originalTagNames = profileTemplate.tags?.map((t) => t.name) ?? []
+    const topicTags = getUniqueNamesFromTagHierarchies(
+        originalTagNames,
+        topicHierarchiesByChildName
+    )
+
+    const preparedTables = await prepareCalloutTablesForProfile(
+        knex,
+        profileTemplate.content
+    )
+
+    for (const entity of entities) {
+        const instantiatedProfile = await instantiateProfileForEntity(
+            profileTemplate,
+            entity,
+            { preparedTables }
+        )
+
+        // Skip entities whose callouts all have no data (same as in SiteBaker)
+        if (!checkShouldProfileRender(instantiatedProfile.content)) {
+            continue
+        }
+
+        const plaintextContent = getPreprocessedIndexableText(
+            instantiatedProfile.content.body,
+            instantiatedProfile.linkedCallouts
+        )
+        const chunks = chunkParagraphs(plaintextContent, 1000)
+
+        const slug = getSlugForProfileEntity(profileTemplate, entity)
+        const thumbnailUrl = getThumbnailUrl(
+            instantiatedProfile,
+            cloudflareImagesByFilename
+        )
+
+        for (let i = 0; i < chunks.length; i++) {
+            const record = {
+                objectID: `${profileTemplate.id}-${entity.code}-c${i}`,
+                importance: getPostImportance(profileTemplate),
+                type: OwidGdocType.Profile,
+                slug,
+                title: instantiatedProfile.content.title
+                    ? `${instantiatedProfile.content.title} in ${articulateEntity(entity.name)}`
+                    : "",
+                content: chunks[i],
+                views_7d:
+                    pageviews[
+                        getPrefixedGdocPath("", {
+                            slug,
+                            content: { type: OwidGdocType.Profile },
+                        })
+                    ]?.views_7d ?? 0,
+                excerpt: instantiatedProfile.content.excerpt ?? "",
+                date: profileTemplate.publishedAt!.toISOString(),
+                modifiedDate: (
+                    profileTemplate.updatedAt ?? profileTemplate.publishedAt!
+                ).toISOString(),
+                tags: [...topicTags],
+                authors: instantiatedProfile.content.authors,
+                thumbnailUrl,
+                availableEntities: [entity.name],
+            }
+            const score = computePageScore(record)
+            records.push({ ...record, score })
+        }
+    }
+
+    return records
+}
+
 export const getPagesRecords = async (knex: db.KnexReadonlyTransaction) => {
     const pageviews = await getAnalyticsPageviewsByUrlObj(knex)
     const gdocs = (await db
-        .getPublishedGdocsWithTags(knex, [
-            OwidGdocType.Article,
-            OwidGdocType.LinearTopicPage,
-            OwidGdocType.TopicPage,
-            OwidGdocType.AboutPage,
-            OwidGdocType.DataInsight,
-        ])
+        .getPublishedGdocsWithTags(
+            knex,
+            [
+                OwidGdocType.Article,
+                OwidGdocType.LinearTopicPage,
+                OwidGdocType.TopicPage,
+                OwidGdocType.AboutPage,
+                OwidGdocType.DataInsight,
+            ],
+            { excludeDeprecated: true }
+        )
         .then((gdocs) => gdocs.map(gdocFromJSON))) as (
         | OwidGdocPostInterface
         | OwidGdocDataInsightInterface
     )[]
+
+    // Only load linkedCallouts — the sole attachment that affects indexed
+    // text (via span-callout resolution in enrichedBlocksToIndexableText).
+    // Full loadState is unnecessary here and adds ~90 s of overhead.
+    // If a new loadState step ever mutates content.body, update this too
+    // (see the corresponding note in GdocBase.loadState).
+    for (const gdoc of gdocs) {
+        await (gdoc as GdocBase).loadAndClearLinkedCallouts(knex)
+    }
 
     const cloudflareImagesByFilename = await db
         .getCloudflareImages(knex)
@@ -302,7 +442,23 @@ export const getPagesRecords = async (knex: db.KnexReadonlyTransaction) => {
         knex
     )
 
-    return gdocsRecords
+    // Fetch and generate records for profile templates
+    const profileTemplates = (await db
+        .getPublishedGdocsWithTags(knex, [OwidGdocType.Profile])
+        .then((gdocs) => gdocs.map(gdocFromJSON))) as GdocProfile[]
+
+    const profileRecords: PageRecord[] = []
+    for (const profileTemplate of profileTemplates) {
+        const records = await generateProfileRecords(
+            profileTemplate,
+            pageviews,
+            cloudflareImagesByFilename,
+            knex
+        )
+        profileRecords.push(...records)
+    }
+
+    return [...gdocsRecords, ...profileRecords]
 }
 
 async function getExistingRecordsForSlug(
@@ -373,34 +529,31 @@ export async function indexIndividualGdocPost(
         )
         return
     }
-    const indexName = getIndexName(SearchIndexName.Pages)
-    const pageviews = await getAnalyticsPageviewsByUrlObj(knex)
-    const cloudflareImagesByFilename = await db
-        .getCloudflareImages(knex)
-        .then((images) => _.keyBy(images, "filename"))
-    const existingPageviews = pageviews[`/${indexedSlug}`]
-    const pageviewsForGdoc = {
-        [gdoc.slug]: existingPageviews || {
-            views_7d: 0,
-            views_14d: 0,
-            views_365d: 0,
-            day: new Date(),
-            url: gdoc.slug,
-        },
-    }
-
-    const records = await generateGdocRecords(
-        [gdoc],
-        pageviewsForGdoc,
-        cloudflareImagesByFilename,
-        knex
-    )
+    const indexName = PAGES_INDEX
 
     const existingRecordsForPost: Hit[] = await getExistingRecordsForSlug(
         client,
         indexName,
         indexedSlug
     )
+
+    if (
+        "deprecation-notice" in gdoc.content &&
+        gdoc.content["deprecation-notice"]
+    ) {
+        console.log(
+            `Not indexing Gdoc post ${gdoc.id} because it's deprecated. Removing any existing records.`
+        )
+        if (existingRecordsForPost.length) {
+            await client.deleteObjects({
+                indexName,
+                objectIDs: existingRecordsForPost.map((r) => r.objectID),
+            })
+        }
+        return
+    }
+
+    const records = await getIndividualGdocRecords(gdoc, knex)
 
     try {
         if (
@@ -430,6 +583,39 @@ export async function indexIndividualGdocPost(
     }
 }
 
+/**
+ * Get Algolia records for a single gdoc
+ */
+export async function getIndividualGdocRecords(
+    gdoc: OwidGdocPostInterface | OwidGdocDataInsightInterface,
+    knex: db.KnexReadonlyTransaction,
+    indexedSlug?: string
+) {
+    const pageviews = await getAnalyticsPageviewsByUrlObj(knex)
+    const cloudflareImagesByFilename = await db
+        .getCloudflareImages(knex)
+        .then((images) => _.keyBy(images, "filename"))
+
+    // Use indexedSlug if provided (for slug changes), otherwise use gdoc.slug
+    const existingPageviews = pageviews[`/${indexedSlug ?? gdoc.slug}`]
+    const pageviewsForGdoc = {
+        [gdoc.slug]: existingPageviews || {
+            views_7d: 0,
+            views_14d: 0,
+            views_365d: 0,
+            day: new Date(),
+            url: gdoc.slug,
+        },
+    }
+
+    return generateGdocRecords(
+        [gdoc],
+        pageviewsForGdoc,
+        cloudflareImagesByFilename,
+        knex
+    )
+}
+
 export async function removeIndividualGdocPostFromIndex(
     gdoc: OwidGdocPostInterface
 ) {
@@ -441,7 +627,7 @@ export async function removeIndividualGdocPostFromIndex(
         )
         return
     }
-    const indexName = getIndexName(SearchIndexName.Pages)
+    const indexName = PAGES_INDEX
     const existingRecordsForPost: Hit[] = await getExistingRecordsForSlug(
         client,
         indexName,
@@ -457,5 +643,160 @@ export async function removeIndividualGdocPostFromIndex(
         console.log("Removed Gdoc post from Algolia index", gdoc.slug)
     } catch (e) {
         console.error("Error removing Gdoc post from Algolia index: ", e)
+    }
+}
+
+/**
+ * Get existing Algolia records for a profile template by browsing objects
+ * and filtering by objectID prefix.
+ */
+async function getExistingRecordsForProfileTemplate(
+    searchClient: SearchClient,
+    indexName: string,
+    templateId: string
+): Promise<Hit[]> {
+    const existingRecords: Hit[] = []
+    await searchClient.browseObjects({
+        indexName,
+        browseParams: {
+            attributesToRetrieve: ["objectID"],
+            filters: `type:${OwidGdocType.Profile}`,
+        },
+        aggregator: (batch) => {
+            // Filter by objectID prefix to get only records for this template
+            const matchingRecords = batch.hits.filter((hit) =>
+                hit.objectID.startsWith(`${templateId}-`)
+            )
+            existingRecords.push(...matchingRecords)
+        },
+    })
+    return existingRecords
+}
+
+/**
+ * Index a profile template to Algolia by instantiating it for each entity
+ * in its scope. This replaces all existing records for the template.
+ */
+export async function indexIndividualProfile(
+    profileTemplate: GdocProfile,
+    knex: db.KnexReadonlyTransaction
+) {
+    if (!ALGOLIA_INDEXING) return
+
+    const isScheduled = profileTemplate.publishedAt
+        ? profileTemplate.publishedAt.getTime() > Date.now()
+        : false
+
+    if (isScheduled) {
+        console.log(
+            `Not indexing profile ${profileTemplate.id} because it's scheduled for publishing`
+        )
+        return
+    }
+
+    if (typeof profileTemplate.slug === "undefined") {
+        console.error(`Failed indexing profile ${profileTemplate.id} (No slug)`)
+        return
+    }
+
+    const client = getAlgoliaClient()
+    if (!client) {
+        console.error(
+            `Failed indexing profile (Algolia client not initialized)`
+        )
+        return
+    }
+    const indexName = PAGES_INDEX
+
+    const existingRecords = await getExistingRecordsForProfileTemplate(
+        client,
+        indexName,
+        profileTemplate.id
+    )
+
+    if (existingRecords.length > 0) {
+        console.log(
+            `Deleting ${existingRecords.length} existing Algolia records for profile template`,
+            profileTemplate.slug
+        )
+        await client.deleteObjects({
+            indexName,
+            objectIDs: existingRecords.map((r) => r.objectID),
+        })
+    }
+
+    // Generate new records for all entities in scope
+    const pageviews = await getAnalyticsPageviewsByUrlObj(knex)
+    const cloudflareImagesByFilename = await db
+        .getCloudflareImages(knex)
+        .then((images) => _.keyBy(images, "filename"))
+
+    const records = await generateProfileRecords(
+        profileTemplate,
+        pageviews,
+        cloudflareImagesByFilename,
+        knex
+    )
+
+    try {
+        console.log(
+            `Updating Algolia index for profile template ${profileTemplate.slug} (${records.length} records)`
+        )
+        await client.saveObjects({
+            indexName,
+            objects: records as Array<Record<string, any>>,
+        })
+        console.log(
+            `Updated Algolia index for profile template ${profileTemplate.slug}`
+        )
+    } catch (e) {
+        console.error("Error indexing profile to Algolia: ", e)
+    }
+}
+
+/**
+ * Remove all Algolia records for a profile template.
+ */
+export async function removeIndividualProfileFromIndex(
+    profileTemplate: GdocProfile
+) {
+    if (!ALGOLIA_INDEXING) return
+
+    const client = getAlgoliaClient()
+    if (!client) {
+        console.error(
+            `Failed removing profile from index (Algolia client not initialized)`
+        )
+        return
+    }
+
+    const existingRecords = await getExistingRecordsForProfileTemplate(
+        client,
+        PAGES_INDEX,
+        profileTemplate.id
+    )
+
+    if (existingRecords.length === 0) {
+        console.log(
+            `No existing records found for profile template ${profileTemplate.slug}`
+        )
+        return
+    }
+
+    try {
+        console.log(
+            `Removing ${existingRecords.length} records for profile template from Algolia index`,
+            profileTemplate.slug
+        )
+        await client.deleteObjects({
+            indexName: PAGES_INDEX,
+            objectIDs: existingRecords.map((r) => r.objectID),
+        })
+        console.log(
+            `Removed profile template from Algolia index`,
+            profileTemplate.slug
+        )
+    } catch (e) {
+        console.error("Error removing profile template from Algolia index: ", e)
     }
 }

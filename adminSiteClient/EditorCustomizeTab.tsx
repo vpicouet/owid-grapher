@@ -26,7 +26,6 @@ import {
     SelectField,
 } from "./Forms.js"
 import {
-    trimObject,
     TimeBoundValue,
     SortOrder,
     SortBy,
@@ -41,7 +40,7 @@ import {
     ColorSchemeOption,
 } from "./ColorSchemeDropdown.js"
 import { EditorColorScaleSection } from "./EditorColorScaleSection.js"
-import Select from "react-select"
+import { Select } from "antd"
 import { AbstractChartEditor } from "./AbstractChartEditor.js"
 import { ErrorMessages } from "./ChartEditorTypes.js"
 import { match } from "ts-pattern"
@@ -213,6 +212,7 @@ export class ColorSchemeSelector extends React.Component<ColorSchemeSelectorProp
 }
 
 interface SortOrderDropdownOption {
+    key: string
     label: string
     value: Omit<SortConfig, "sortOrder">
     display?: { name: string; displayName: string }
@@ -242,6 +242,7 @@ class SortOrderSection<
         if (features.canSortByColumn) {
             dimensionSortOptions = this.grapherState.yColumnsFromDimensions.map(
                 (column): SortOrderDropdownOption => ({
+                    key: `column:${column.slug}`,
                     label: column.displayName,
                     display: {
                         name: column.name,
@@ -256,9 +257,18 @@ class SortOrderSection<
         }
 
         return [
-            { label: "Entity name", value: { sortBy: SortBy.entityName } },
-            { label: "Total value", value: { sortBy: SortBy.total } },
             {
+                key: "entityName",
+                label: "Entity name",
+                value: { sortBy: SortBy.entityName },
+            },
+            {
+                key: "total",
+                label: "Total value",
+                value: { sortBy: SortBy.total },
+            },
+            {
+                key: "custom",
                 label: "Custom order (use specified entity order)",
                 value: { sortBy: SortBy.custom },
             },
@@ -266,9 +276,21 @@ class SortOrderSection<
         ]
     }
 
-    @action.bound onSortByChange(selected: SortOrderDropdownOption | null) {
-        this.grapherState.sortBy = selected?.value.sortBy
-        this.grapherState.sortColumnSlug = selected?.value.sortColumnSlug
+    @computed get currentSortOptionKey(): string {
+        const { sortBy, sortColumnSlug } = this.sortConfig
+        if (sortBy === SortBy.column && sortColumnSlug)
+            return `column:${sortColumnSlug}`
+        if (sortBy === SortBy.entityName) return "entityName"
+        if (sortBy === SortBy.total) return "total"
+        if (sortBy === SortBy.custom) return "custom"
+        return this.sortOptions[0]?.key ?? "entityName"
+    }
+
+    @action.bound onSortByChange(selectedKey: string) {
+        const selected = this.sortOptions.find((opt) => opt.key === selectedKey)
+        if (!selected) return
+        this.grapherState.sortBy = selected.value.sortBy
+        this.grapherState.sortColumnSlug = selected.value.sortColumnSlug
     }
 
     @action.bound onSortOrderChange(sortOrder: string) {
@@ -278,36 +300,34 @@ class SortOrderSection<
     override render() {
         return (
             <Section name="Sort Order">
-                <small className="form-text text-muted">
-                    For line charts the sort order is only applied when it's
-                    collapsed to a bar chart.
-                </small>
                 <div className="form-group">
                     Sort by
                     <Select
-                        options={this.sortOptions}
                         onChange={this.onSortByChange}
-                        value={this.sortOptions.find((opt) =>
-                            _.isEqual(
-                                opt.value,
-                                trimObject(_.omit(this.sortConfig, "sortOrder"))
-                            )
-                        )}
-                        formatOptionLabel={(opt, { context }) =>
-                            opt.display && context === "menu" ? (
-                                <span>
-                                    {opt.display.displayName}
-                                    <br />
-                                    <small style={{ opacity: 0.8 }}>
-                                        {opt.display.name}
-                                    </small>
-                                </span>
-                            ) : (
-                                opt.label
-                            )
-                        }
-                        menuPlacement="auto"
-                    />
+                        value={this.currentSortOptionKey}
+                        optionLabelProp="label"
+                        style={{ width: "100%" }}
+                    >
+                        {this.sortOptions.map((opt) => (
+                            <Select.Option
+                                key={opt.key}
+                                value={opt.key}
+                                label={opt.label}
+                            >
+                                {opt.display ? (
+                                    <span>
+                                        {opt.display.displayName}
+                                        <br />
+                                        <small style={{ opacity: 0.8 }}>
+                                            {opt.display.name}
+                                        </small>
+                                    </span>
+                                ) : (
+                                    opt.label
+                                )}
+                            </Select.Option>
+                        ))}
+                    </Select>
                 </div>
                 <div className="form-group">
                     Sort order
@@ -342,31 +362,29 @@ class FacetSection<Editor extends AbstractChartEditor> extends React.Component<{
 
     @computed get facetOptions(): Array<{
         label: string
-        value?: FacetStrategy
+        value: FacetStrategy | "auto"
     }> {
-        return [{ label: "auto" }].concat(
-            this.grapherState.availableFacetStrategies.map((s) => {
-                return { label: s.toString(), value: s }
-            })
-        )
+        const options: Array<{
+            label: string
+            value: FacetStrategy | "auto"
+        }> = [{ label: "auto", value: "auto" }]
+
+        this.grapherState.availableFacetStrategies.forEach((strategy) => {
+            options.push({ label: strategy.toString(), value: strategy })
+        })
+
+        return options
     }
 
-    @computed get facetSelection(): { label: string; value?: FacetStrategy } {
-        const strategy = this.grapherState.selectedFacetStrategy
-        if (strategy) {
-            return { label: strategy.toString(), value: strategy }
-        }
-
-        return { label: "auto" }
+    @computed get facetSelectionValue(): FacetStrategy | "auto" {
+        return this.grapherState.selectedFacetStrategy ?? "auto"
     }
 
     @action.bound onFacetSelectionChange(
-        selected: {
-            label: string
-            value?: FacetStrategy
-        } | null
+        selectedValue: FacetStrategy | "auto"
     ) {
-        this.grapherState.selectedFacetStrategy = selected?.value
+        this.grapherState.selectedFacetStrategy =
+            selectedValue === "auto" ? undefined : selectedValue
     }
 
     override render() {
@@ -378,8 +396,9 @@ class FacetSection<Editor extends AbstractChartEditor> extends React.Component<{
                     Faceting strategy
                     <Select
                         options={this.facetOptions}
-                        value={this.facetSelection}
+                        value={this.facetSelectionValue}
                         onChange={this.onFacetSelectionChange}
+                        style={{ width: "100%" }}
                     />
                 </div>
                 <FieldsRow>
@@ -440,7 +459,7 @@ class TimelineSection<
         return (
             <Section name="Timeline selection">
                 <FieldsRow>
-                    {features.timeDomain && (
+                    {features.canSelectTimeRange && (
                         <TimeField
                             store={this.grapherState}
                             field="minTime"
@@ -459,7 +478,7 @@ class TimelineSection<
                         store={this.grapherState}
                         field="maxTime"
                         label={
-                            features.timeDomain
+                            features.canSelectTimeRange
                                 ? "Selection end"
                                 : "Selected year"
                         }
@@ -471,47 +490,45 @@ class TimelineSection<
                         allowLinking={editor.canPropertyBeInherited("maxTime")}
                     />
                 </FieldsRow>
-                {features.timelineRange && (
-                    <FieldsRow>
-                        <TimeField
-                            store={this.grapherState}
-                            field="timelineMinTime"
-                            label="Timeline min"
-                            defaultValue={TimeBoundValue.negativeInfinity}
-                            parentValue={minTimeBoundFromJSONOrNegativeInfinity(
-                                editor.activeParentConfig?.timelineMinTime
-                            )}
-                            isInherited={editor.isPropertyInherited(
-                                "timelineMinTime"
-                            )}
-                            allowLinking={editor.canPropertyBeInherited(
-                                "timelineMinTime"
-                            )}
-                        />
-                        <TimeField
-                            store={this.grapherState}
-                            field="timelineMaxTime"
-                            label="Timeline max"
-                            defaultValue={TimeBoundValue.positiveInfinity}
-                            parentValue={maxTimeBoundFromJSONOrPositiveInfinity(
-                                editor.activeParentConfig?.timelineMaxTime
-                            )}
-                            isInherited={editor.isPropertyInherited(
-                                "timelineMaxTime"
-                            )}
-                            allowLinking={editor.canPropertyBeInherited(
-                                "timelineMaxTime"
-                            )}
-                        />
-                    </FieldsRow>
-                )}
+                <FieldsRow>
+                    <TimeField
+                        store={this.grapherState}
+                        field="timelineMinTime"
+                        label="Timeline min"
+                        defaultValue={TimeBoundValue.negativeInfinity}
+                        parentValue={minTimeBoundFromJSONOrNegativeInfinity(
+                            editor.activeParentConfig?.timelineMinTime
+                        )}
+                        isInherited={editor.isPropertyInherited(
+                            "timelineMinTime"
+                        )}
+                        allowLinking={editor.canPropertyBeInherited(
+                            "timelineMinTime"
+                        )}
+                    />
+                    <TimeField
+                        store={this.grapherState}
+                        field="timelineMaxTime"
+                        label="Timeline max"
+                        defaultValue={TimeBoundValue.positiveInfinity}
+                        parentValue={maxTimeBoundFromJSONOrPositiveInfinity(
+                            editor.activeParentConfig?.timelineMaxTime
+                        )}
+                        isInherited={editor.isPropertyInherited(
+                            "timelineMaxTime"
+                        )}
+                        allowLinking={editor.canPropertyBeInherited(
+                            "timelineMaxTime"
+                        )}
+                    />
+                </FieldsRow>
                 <FieldsRow>
                     <Toggle
                         label="Hide timeline"
                         value={!!grapherState.hideTimeline}
                         onValue={this.onToggleHideTimeline}
                     />
-                    {features.showYearLabels && (
+                    {features.canToggleShowYearLabels && (
                         <Toggle
                             label="Always show year labels"
                             value={!!grapherState.showYearLabels}
@@ -544,11 +561,11 @@ class ComparisonLineSection<
 
         const options = []
 
-        if (features.customComparisonLine) {
+        if (features.canSpecifyCustomComparisonLines) {
             options.push({ label: "y", value: "yEquals" })
         }
 
-        if (features.verticalComparisonLine) {
+        if (features.canSpecifyVerticalComparisonLines) {
             options.push({ label: "x", value: "xEquals" })
         }
 
@@ -558,13 +575,17 @@ class ComparisonLineSection<
     @action.bound onAddComparisonLine() {
         const { grapherState } = this.props.editor
         if (!grapherState.comparisonLines) grapherState.comparisonLines = []
-        grapherState.comparisonLines.push({})
+
+        // Default to adding a custom comparison line
+        grapherState.comparisonLines.push({ yEquals: "x" })
     }
 
     @action.bound onRemoveComparisonLine(index: number) {
         const { grapherState } = this.props.editor
-        if (!grapherState.comparisonLines) grapherState.comparisonLines = []
+        if (!grapherState.comparisonLines) return
         grapherState.comparisonLines.splice(index, 1)
+        if (grapherState.comparisonLines.length === 0)
+            grapherState.comparisonLines = undefined
     }
 
     @action.bound onComparisonLineTypeChange(
@@ -775,6 +796,12 @@ export class EditorCustomizeTab<
                 </Section>
                 {features.canCustomizeXAxis && (
                     <Section name="X Axis">
+                        {/* If a scatter tab is present, then x-axis settings only apply to the scatter plot */}
+                        {!grapherState.isScatter && grapherState.hasScatter && (
+                            <small className="form-text text-muted mt-0 mb-2">
+                                X axis settings only apply to the scatter plot
+                            </small>
+                        )}
                         {features.canCustomizeXAxisScale && (
                             <React.Fragment>
                                 <FieldsRow>
@@ -890,13 +917,13 @@ export class EditorCustomizeTab<
                     />
                 )}
                 <Section name="Legend">
-                    {features.hideLegend && (
+                    {features.canHideSeriesLabels && (
                         <FieldsRow>
                             <Toggle
-                                label={`Hide legend`}
-                                value={!!grapherState.hideLegend}
+                                label={`Hide series labels`}
+                                value={!!grapherState.hideSeriesLabels}
                                 onValue={(value) =>
-                                    (grapherState.hideLegend =
+                                    (grapherState.hideSeriesLabels =
                                         value || undefined)
                                 }
                             />
@@ -950,7 +977,7 @@ export class EditorCustomizeTab<
                         </FieldsRow>
                     </Section>
                 )}
-                {features.comparisonLine && (
+                {features.canSpecifyComparisonLines && (
                     <ComparisonLineSection editor={this.props.editor} />
                 )}
             </div>

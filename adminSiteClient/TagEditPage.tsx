@@ -4,11 +4,12 @@ import { observable, computed, runInAction, makeObservable } from "mobx"
 import { Prompt, Redirect } from "react-router-dom"
 import { DbChartTagJoin } from "@ourworldindata/utils"
 import { AdminLayout } from "./AdminLayout.js"
-import { BindString, Timeago } from "./Forms.js"
+import { BindString, Timeago, Toggle } from "./Forms.js"
 import { DatasetList, DatasetListItem } from "./DatasetList.js"
 import { ChartList, ChartListItem } from "./ChartList.js"
 import { TagBadge } from "./TagBadge.js"
 import { AdminAppContext, AdminAppContextType } from "./AdminAppContext.js"
+import { AutoComplete } from "antd"
 
 interface TagPageData {
     id: number
@@ -19,16 +20,19 @@ interface TagPageData {
     charts: ChartListItem[]
     children: DbChartTagJoin[]
     slug: string | null
+    searchableInAlgolia: boolean
 }
 
 class TagEditable {
     name: string = ""
     slug: string | null = null
+    searchableInAlgolia: boolean = false
 
     constructor(json: TagPageData) {
         makeObservable(this, {
             name: observable,
             slug: observable,
+            searchableInAlgolia: observable,
         })
         for (const key in this) {
             this[key] = (json as any)[key]
@@ -37,14 +41,20 @@ class TagEditable {
 }
 
 @observer
-class TagEditor extends Component<{ tag: TagPageData }> {
+class TagEditor extends Component<{
+    tag: TagPageData
+    publishedGdocTopicSlugs: string[]
+}> {
     static override contextType = AdminAppContext
     declare context: AdminAppContextType
 
     newtag!: TagEditable
     isDeleted: boolean = false
 
-    constructor(props: { tag: TagPageData }) {
+    constructor(props: {
+        tag: TagPageData
+        publishedGdocTopicSlugs: string[]
+    }) {
         super(props)
 
         makeObservable(this, {
@@ -60,6 +70,13 @@ class TagEditor extends Component<{ tag: TagPageData }> {
     override UNSAFE_componentWillReceiveProps(nextProps: any) {
         this.newtag = new TagEditable(nextProps.tag)
         this.isDeleted = false
+    }
+
+    get slugMatchesPublishedTopicPage(): boolean {
+        return (
+            !!this.newtag.slug &&
+            this.props.publishedGdocTopicSlugs.includes(this.newtag.slug)
+        )
     }
 
     @computed get isModified(): boolean {
@@ -139,13 +156,54 @@ class TagEditor extends Component<{ tag: TagPageData }> {
                             label="Name"
                             helpText="Tag names must be unique and should be able to be understood without context"
                         />
-                        <BindString
-                            field="slug"
-                            store={newtag}
-                            label="Slug"
-                            helpText="The slug for this tag's topic page, e.g. trade-and-globalization. If specified, we assume this tag is a topic. Must be unique"
+                        <div className="form-group">
+                            <label>Slug</label>
+                            <AutoComplete
+                                style={{ width: "100%" }}
+                                value={newtag.slug ?? ""}
+                                onChange={(value) =>
+                                    runInAction(
+                                        () => (newtag.slug = value || null)
+                                    )
+                                }
+                                options={this.props.publishedGdocTopicSlugs.map(
+                                    (slug) => ({
+                                        value: slug,
+                                        label: slug,
+                                    })
+                                )}
+                                filterOption={(inputValue, option) =>
+                                    option?.value
+                                        .toLowerCase()
+                                        .includes(inputValue.toLowerCase()) ??
+                                    false
+                                }
+                                allowClear
+                            />
+                            <small className="form-text text-muted">
+                                The slug for this tag's topic page, e.g.
+                                trade-and-globalization.
+                            </small>
+                        </div>
+                        <Toggle
+                            label="Searchable in Algolia (must exist in tag graph)"
+                            value={
+                                newtag.searchableInAlgolia ||
+                                this.slugMatchesPublishedTopicPage
+                            }
+                            onValue={(value) =>
+                                runInAction(
+                                    () => (newtag.searchableInAlgolia = value)
+                                )
+                            }
+                            disabled={this.slugMatchesPublishedTopicPage}
+                            secondaryLabel={
+                                this.slugMatchesPublishedTopicPage
+                                    ? "This slug matches a published topic page, so charts with this tag will be indexed in Algolia"
+                                    : "When enabled, charts with this tag will be indexed in Algolia even without matching a published topic page"
+                            }
                         />
-                        <div>
+                        <div style={{ marginTop: 16 }}>
                             <input
                                 type="submit"
                                 disabled={!this.isModified || !newtag.name}
@@ -170,7 +228,7 @@ class TagEditor extends Component<{ tag: TagPageData }> {
                     <section>
                         <h3>Subcategories</h3>
                         {tag.children.map((c) => (
-                            <TagBadge tag={c as DbChartTagJoin} key={c.id} />
+                            <TagBadge tag={c} key={c.id} />
                         ))}
                     </section>
                 )}
@@ -195,27 +253,38 @@ export class TagEditPage extends Component<{ tagId: number }> {
     declare context: AdminAppContextType
 
     tag: TagPageData | undefined = undefined
+    publishedGdocTopicSlugs: string[] = []
 
     constructor(props: { tagId: number }) {
         super(props)
 
         makeObservable(this, {
             tag: observable,
+            publishedGdocTopicSlugs: observable,
         })
     }
 
     override render() {
         return (
             <AdminLayout title={this.tag && this.tag.name}>
-                {this.tag && <TagEditor tag={this.tag} />}
+                {this.tag && (
+                    <TagEditor
+                        tag={this.tag}
+                        publishedGdocTopicSlugs={this.publishedGdocTopicSlugs}
+                    />
+                )}
             </AdminLayout>
         )
     }
 
     async getData(tagId: number) {
-        const json = await this.context.admin.getJSON(`/api/tags/${tagId}.json`)
+        const [tagJson, slugsJson] = await Promise.all([
+            this.context.admin.getJSON(`/api/tags/${tagId}.json`),
+            this.context.admin.getJSON("/api/gdocs/publishedTopicSlugs"),
+        ])
         runInAction(() => {
-            this.tag = json.tag as TagPageData
+            this.tag = tagJson.tag as TagPageData
+            this.publishedGdocTopicSlugs = slugsJson.slugs as string[]
         })
     }
 

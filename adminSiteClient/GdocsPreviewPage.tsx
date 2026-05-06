@@ -8,6 +8,7 @@ import {
     GdocAuthorSettings,
     GdocAboutPageSettings,
     GdocAnnouncementSettings,
+    GdocProfileSettings,
 } from "./GdocsSettingsForms.js"
 import { AdminAppContext } from "./AdminAppContext.js"
 import { getCanonicalUrl } from "@ourworldindata/components"
@@ -23,8 +24,9 @@ import {
     OwidGdoc,
     Tippy,
     CreateTombstoneData,
+    Url,
 } from "@ourworldindata/utils"
-import { Button, Col, Drawer, Row, Space, Tag, Typography } from "antd"
+import { Button, Col, Drawer, Row, Space, Switch, Tag, Typography } from "antd"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import {
     faGear,
@@ -33,7 +35,11 @@ import {
 } from "@fortawesome/free-solid-svg-icons"
 import { match as tsMatch, P } from "ts-pattern"
 
-import { useGdocsChanged, useLightningUpdate } from "./gdocsHooks.js"
+import {
+    useCountryProfileSelection,
+    useGdocsChanged,
+    useLightningUpdate,
+} from "./gdocsHooks.js"
 import { getErrors } from "./gdocsValidation.js"
 import { GdocsSaveButtons } from "./GdocsSaveButtons.js"
 import { useGdocsStore } from "./GdocsStoreContext.js"
@@ -43,6 +49,11 @@ import { GdocsEditLink } from "./GdocsEditLink.js"
 import { openSuccessNotification } from "./gdocsNotifications.js"
 import { GdocsDiffButton } from "./GdocsDiffButton.js"
 import { GdocsDiff } from "./GdocsDiff.js"
+import {
+    GdocsRecordsPreview,
+    RecordsPreviewModeToggle,
+    RecordsPreviewMode,
+} from "./GdocsRecordsPreview.js"
 import {
     BAKED_BASE_URL,
     PUBLISHED_AT_FORMAT,
@@ -78,55 +89,123 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
         undefined | string
     >()
     const [isDiffOpen, setDiffOpen] = useState(false)
+    const [isRecordsOpen, setRecordsOpen] = useState(false)
+    const [recordsPreviewMode, setRecordsPreviewMode] =
+        useState<RecordsPreviewMode>("records")
     const [errors, setErrors] = React.useState<OwidGdocErrorMessage[]>()
     const { admin } = useContext(AdminAppContext)
     const store = useGdocsStore()
 
     const [isMobilePreviewActive, setIsMobilePreviewActive] = useState(false)
+    const [acceptSuggestions, setAcceptSuggestions] = useState(false)
+
+    // Only used when currentGdoc is a profile
+    const { entitiesInScope, selectedEntity, setSelectedEntity } =
+        useCountryProfileSelection(
+            currentGdoc as OwidGdoc & {
+                content: { type: OwidGdocType.Profile }
+            }
+        )
 
     const iframeRef = useRef<HTMLIFrameElement>(null)
+    const iframeSrc = Url.fromURL(
+        `/gdocs/${currentGdoc?.id}/preview#owid-document-root`
+    ).setQueryParams({
+        entity:
+            currentGdoc?.content.type === OwidGdocType.Profile
+                ? selectedEntity
+                : undefined,
+        acceptSuggestions: acceptSuggestions ? "true" : "false",
+    })
 
     const fetchGdoc = useCallback(
-        (contentSource: GdocsContentSource) =>
-            admin
-                .requestJSON<OwidGdocJSON>(
-                    `/api/gdocs/${id}?contentSource=${contentSource}`,
-                    {},
-                    "GET",
-                    { onFailure: "continue" }
-                )
-                .then(getOwidGdocFromJSON),
+        async (
+            contentSource: GdocsContentSource,
+            acceptSuggestions = false
+        ) => {
+            const queryParams = acceptSuggestions
+                ? { acceptSuggestions: "true", contentSource }
+                : { contentSource }
+            const url = Url.fromURL(`/api/gdocs/${id}`).setQueryParams(
+                queryParams
+            )
+            const json = await admin.requestJSON<OwidGdocJSON>(
+                url.fullUrl,
+                {},
+                "GET",
+                { onFailure: "continue" }
+            )
+            return getOwidGdocFromJSON(json)
+        },
         [id, admin]
     )
 
     const handleError = useCallback((error: unknown) => {
-        if (R.isPlainObject(error) && error.status === 500) {
+        if (R.isPlainObject(error)) {
             console.log("Critical error", error)
             setCriticalErrorMessage(error.message as string)
+        } else if (error instanceof Error) {
+            console.log("Critical error", error)
+            setCriticalErrorMessage(error.message)
+        } else {
+            console.log("Critical error", error)
+            setCriticalErrorMessage(String(error))
         }
     }, [])
 
-    // initialise
     useEffect(() => {
-        async function fetchGdocs() {
+        setAcceptSuggestions(false)
+        setGdoc((prev) =>
+            prev.original === undefined && prev.current === undefined
+                ? prev
+                : { original: undefined, current: undefined }
+        )
+        setRecordsOpen(false)
+    }, [id])
+
+    // initialize
+    useEffect(() => {
+        let isMounted = true
+        async function fetchLatestGdoc() {
             try {
+                admin.loadingIndicatorSetting = "loading"
                 const [original, current] = await Promise.all([
-                    fetchGdoc(GdocsContentSource.Internal),
-                    fetchGdoc(GdocsContentSource.Gdocs),
+                    originalGdoc ?? fetchGdoc(GdocsContentSource.Internal),
+                    fetchGdoc(GdocsContentSource.Gdocs, acceptSuggestions),
                 ])
+                if (!isMounted || !original || !current) return
                 if (!current.slug && current.content.title) {
                     current.slug = slugify(current.content.title)
                 }
-                admin.loadingIndicatorSetting = "off"
+                // Validate the gdoc type before setting it
+                // so that we don't get ts-pattern runtime crashes
+                const type = current.content.type
+                const validTypes = Object.values(OwidGdocType)
+                if (!type || !validTypes.includes(type)) {
+                    throw new Error(
+                        `Database record for Google Doc with id "${current.id}" has ${
+                            !type
+                                ? "no type"
+                                : `invalid type "${type}". Valid types are: ${validTypes.join(", ")}`
+                        }`
+                    )
+                }
                 setGdoc({ original, current })
             } catch (error) {
-                handleError(error)
+                if (isMounted) {
+                    handleError(error)
+                }
+            } finally {
+                if (isMounted) {
+                    admin.loadingIndicatorSetting = "off"
+                }
             }
         }
-        if (!originalGdoc) {
-            void fetchGdocs()
+        void fetchLatestGdoc()
+        return () => {
+            isMounted = false
         }
-    }, [originalGdoc, fetchGdoc, handleError, admin])
+    }, [admin, acceptSuggestions, fetchGdoc, handleError, originalGdoc])
 
     const isLightningUpdate = useLightningUpdate(
         originalGdoc,
@@ -187,6 +266,10 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
         setIsMobilePreviewActive(
             (isMobilePreviewActive) => !isMobilePreviewActive
         )
+
+    const onToggleAcceptSuggestions = (checked: boolean) => {
+        setAcceptSuggestions(checked)
+    }
 
     const onSettingsClose = () => {
         setSettingsOpen(false)
@@ -299,7 +382,33 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
                                 setDiffOpen={setDiffOpen}
                                 doPublish={doPublish}
                                 saveDraft={saveDraft}
+                                disableButtons={acceptSuggestions}
                             />
+                            <Space>
+                                <Switch
+                                    checked={acceptSuggestions}
+                                    onChange={onToggleAcceptSuggestions}
+                                    id="preview-suggestions"
+                                />
+                                <Tippy
+                                    content={
+                                        acceptSuggestions
+                                            ? "Previewing with suggested edits accepted"
+                                            : "Previewing without suggested edits"
+                                    }
+                                    placement="bottom"
+                                >
+                                    <label
+                                        htmlFor="preview-suggestions"
+                                        style={{
+                                            marginBottom: 0,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        Preview suggestions
+                                    </label>
+                                </Tippy>
+                            </Space>
                             <IconBadge
                                 status={
                                     hasErrors
@@ -320,6 +429,7 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
                                 onDelete={onDelete}
                                 isMobilePreviewActive={isMobilePreviewActive}
                                 toggleMobilePreview={toggleMobilePreview}
+                                onOpenRecords={() => setRecordsOpen(true)}
                             />
                         </Space>
                     </Col>
@@ -430,6 +540,25 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
                                 />
                             )
                         )
+                        .with(
+                            {
+                                content: {
+                                    type: OwidGdocType.Profile,
+                                },
+                            },
+                            (gdoc) => (
+                                <GdocProfileSettings
+                                    gdoc={gdoc}
+                                    setCurrentGdoc={(updatedGdoc) =>
+                                        setCurrentGdoc(() => updatedGdoc)
+                                    }
+                                    errors={errors}
+                                    selectedEntity={selectedEntity}
+                                    setSelectedEntity={setSelectedEntity}
+                                    entitiesInScope={entitiesInScope}
+                                />
+                            )
+                        )
                         .with(P.any, () => (
                             <div>
                                 Unknown gdoc type. Add a <strong>type</strong>{" "}
@@ -455,6 +584,25 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
                         currentGdoc={currentGdoc}
                     />
                 </Drawer>
+                <Drawer
+                    placement="bottom"
+                    size="large"
+                    title="Index preview"
+                    extra={
+                        <RecordsPreviewModeToggle
+                            mode={recordsPreviewMode}
+                            onChange={setRecordsPreviewMode}
+                        />
+                    }
+                    onClose={() => setRecordsOpen(false)}
+                    open={isRecordsOpen}
+                >
+                    <GdocsRecordsPreview
+                        gdocId={currentGdoc.id}
+                        open={isRecordsOpen}
+                        mode={recordsPreviewMode}
+                    />
+                </Drawer>
 
                 <div className="iframe-container">
                     {/*
@@ -465,14 +613,19 @@ export const GdocsPreviewPage = ({ match, history }: GdocsMatchProps) => {
                     */}
                     <iframe
                         ref={iframeRef}
-                        src={`/gdocs/${currentGdoc.id}/preview#owid-document-root`}
+                        src={iframeSrc.fullUrl}
                         style={{
                             width: "100%",
                             border: "none",
                             maxWidth: isMobilePreviewActive ? 375 : undefined,
                         }}
                         // use `updatedAt` as a proxy for when database-level settings such as breadcrumbs have changed
-                        key={`${currentGdoc.revisionId}-${originalGdoc?.updatedAt}`}
+                        // For profiles, also include selectedEntity so iframe reloads when entity changes
+                        key={
+                            currentGdoc.content.type === OwidGdocType.Profile
+                                ? `${currentGdoc.revisionId}-${originalGdoc?.updatedAt}-${acceptSuggestions}-${selectedEntity ?? "default"}`
+                                : `${currentGdoc.revisionId}-${originalGdoc?.updatedAt}-${acceptSuggestions}`
+                        }
                     />
                 </div>
 

@@ -1,22 +1,28 @@
 import * as React from "react"
-import { CoreColumn } from "@ourworldindata/core-table"
 import {
     GrapherTooltipAnchor,
-    TickFormattingOptions,
+    GrapherTrendArrowDirection,
 } from "@ourworldindata/utils"
 import { IObservableValue } from "mobx"
 
-// We can't pass the property directly because we need it to be observable.
 export interface TooltipManager {
+    // We can't pass the property directly because we need it to be observable
     tooltip?: IObservableValue<TooltipProps | undefined>
 }
 
+/**
+ * Controls the fade transition behavior for tooltips.
+ * - "delayed": Good for charts with gaps between targetable areas
+ * - "immediate": Better if the tooltip is displayed for all points in the chart's bounds
+ * - "none": Disables the fade transition altogether
+ */
 export type TooltipFadeMode = "delayed" | "immediate" | "none"
+
 export enum TooltipFooterIcon {
-    notice = "notice",
-    stripes = "stripes",
-    significance = "significance",
-    none = "none",
+    Notice = "notice",
+    Stripes = "stripes",
+    Significance = "significance",
+    None = "none",
 }
 
 export interface FooterItem {
@@ -39,38 +45,46 @@ export interface TooltipProps {
     footer?: FooterItem[]
     style?: React.CSSProperties // css overrides (particularly width/maxWidth)
     dissolve?: TooltipFadeMode // flag that the tooltip should begin fading out
-    tooltipManager: TooltipManager
     children?: React.ReactNode
     dismiss?: () => void
 }
 
 export interface TooltipValueProps {
-    column: CoreColumn
-    value?: number | string
+    label?: string
+    unit?: string
+    value?: React.ReactNode
     color?: string
     isProjection?: boolean
-    notice?: number | string // actual year data was drawn from (when ≠ target year)
+    originalTime?: string // actual year data was drawn from (when ≠ target year)
+    isRoundedToSignificantFigures?: boolean
     showSignificanceSuperscript?: boolean // show significance-s superscript if applicable
-    labelVariant?: "name+unit" | "unit-only"
+    labelVariant?: "label+unit" | "unit-only"
 }
 
 export interface TooltipValueRangeProps {
-    column: CoreColumn
-    values: number[]
-    color?: string
-    notice?: (number | string | undefined)[] // actual year data was drawn from (when ≠ target year)
+    label?: string
+    unit?: string
+    values: [string | undefined, string | undefined]
+    trend?: GrapherTrendArrowDirection
+    colors?: string[] // value colors, matched by indices
+    originalTimes?: (string | undefined)[] // actual year data was drawn from (when ≠ target year)
+    isRoundedToSignificantFigures?: boolean
     showSignificanceSuperscript?: boolean // show significance-s superscript if applicable
-    labelVariant?: "name+unit" | "unit-only"
+    labelVariant?: "label+unit" | "unit-only"
 }
 
 export interface TooltipTableProps {
-    columns: CoreColumn[]
+    columns: TooltipTableColumn[]
     rows: TooltipTableRow[]
     totals?: (number | undefined)[]
-    format?: TickFormattingOptions
 }
 
-export interface TooltipTableRow {
+interface TooltipTableColumn {
+    label: string
+    formatValue: (value: unknown) => string
+}
+
+interface TooltipTableRow {
     name: string
     annotation?: string
     swatch?: {
@@ -80,8 +94,18 @@ export interface TooltipTableRow {
     focused?: boolean // highlighted (based on hovered series in chart)
     blurred?: boolean // greyed out (typically due to missing data)
     striped?: boolean // use textured swatch (to show data is extrapolated)
-    notice?: string | number // actual year data was drawn (when ≠ target year)
+    originalTime?: string // actual year data was drawn (when ≠ target year)
     values: (string | number | undefined)[]
+}
+
+export interface TooltipVariableProps {
+    label?: string
+    unit?: string
+    color?: string
+    isProjection?: boolean
+    originalTimes?: (string | undefined)[]
+    labelVariant?: "label+unit" | "unit-only"
+    children?: React.ReactNode
 }
 
 export interface TooltipTableData {
@@ -89,6 +113,11 @@ export interface TooltipTableData {
     fake?: boolean
 }
 
-export const TooltipContext = React.createContext<{
+export interface TooltipContainerProps {
+    containerBounds?: { width: number; height: number }
     anchor?: GrapherTooltipAnchor
-}>({})
+}
+
+export const TooltipContext = React.createContext<
+    Pick<TooltipContainerProps, "anchor">
+>({})

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import * as _ from "lodash-es"
 import * as React from "react"
 import { observer } from "mobx-react"
@@ -16,7 +17,6 @@ import {
     GRAPHER_TAB_CONFIG_OPTIONS,
     SortOrder,
 } from "@ourworldindata/types"
-import { getFullReferencesCount } from "./ChartEditor.js"
 import { ChartRow } from "./ChartRow.js"
 import { References } from "./AbstractChartEditor.js"
 import {
@@ -26,7 +26,10 @@ import {
     highlightFunctionForSearchWords,
 } from "../adminShared/search.js"
 import { TextField } from "./Forms.js"
-import { ENV } from "../settings/clientSettings.js"
+import { Tooltip } from "antd"
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
+import { faInfoCircle } from "@fortawesome/free-solid-svg-icons"
+import { deleteChart } from "./ChartEditor.js"
 
 // These properties are coming from OldChart.ts
 export interface ChartListItem {
@@ -52,13 +55,13 @@ export interface ChartListItem {
     isInheritanceEnabled?: boolean
 
     tags: DbChartTagJoin[]
-    pageviewsPerDay: number
+    grapherViewsPerDay: number
     narrativeChartsCount: number
     referencesCount: number
 }
 
 export type SortConfig = {
-    field: "pageviewsPerDay" | "narrativeChartsCount" | "referencesCount"
+    field: "grapherViewsPerDay" | "narrativeChartsCount" | "referencesCount"
     direction: "asc" | "desc"
 } | null
 
@@ -102,42 +105,23 @@ export class ChartList extends React.Component<ChartListProps> {
 
     @bind async onDeleteChart(chart: ChartListItem) {
         const refs = await this.fetchRefs(chart.id)
-        if (getFullReferencesCount(refs) > 0) {
-            window.alert(
-                `Cannot delete chart ${
-                    chart.slug
-                } because it is used in ${getFullReferencesCount(
-                    refs
-                )} places. See the references tab in the chart editor for details.`
-            )
-            return
-        }
-        // Create the confirmation message with staging warning if applicable
-        let confirmMessage = `Delete the chart ${chart.slug}? This action cannot be undone!`
 
-        if (ENV === "staging") {
-            confirmMessage +=
-                "\n\n⚠️ WARNING: You are on a staging server. Deleted charts are NOT synced to production servers. If this chart exists on production, it will remain there even after deletion here."
-        }
-
-        if (!window.confirm(confirmMessage)) return
-
-        const json = await this.context.admin.requestJSON(
-            `/api/charts/${chart.id}`,
-            {},
-            "DELETE"
-        )
-
-        if (json.success) {
-            if (this.props.onDelete) this.props.onDelete(chart)
-            else
-                runInAction(() =>
-                    this.props.charts.splice(
-                        this.props.charts.indexOf(chart),
-                        1
+        await deleteChart({
+            admin: this.context.admin,
+            chartId: chart.id,
+            chartSlug: chart.slug,
+            references: refs,
+            onSuccess: () => {
+                if (this.props.onDelete) this.props.onDelete(chart)
+                else
+                    runInAction(() =>
+                        this.props.charts.splice(
+                            this.props.charts.indexOf(chart),
+                            1
+                        )
                     )
-                )
-        }
+            },
+        })
     }
 
     @bind async getTags() {
@@ -206,8 +190,8 @@ export class ChartList extends React.Component<ChartListProps> {
 
         const { direction, field } = this.sortConfig
         const getValue =
-            field === "pageviewsPerDay"
-                ? (chart: ChartListItem) => chart.pageviewsPerDay
+            field === "grapherViewsPerDay"
+                ? (chart: ChartListItem) => chart.grapherViewsPerDay
                 : field === "narrativeChartsCount"
                   ? (chart: ChartListItem) => chart.narrativeChartsCount
                   : (chart: ChartListItem) => chart.referencesCount
@@ -246,15 +230,16 @@ export class ChartList extends React.Component<ChartListProps> {
         const hasMoreCharts = this.chartsFiltered.length > this.maxVisibleCharts
 
         const getSortIndicator = () => {
-            if (!sortConfig || sortConfig.field !== "pageviewsPerDay") return ""
+            if (!sortConfig || sortConfig.field !== "grapherViewsPerDay")
+                return ""
             return sortConfig.direction === "desc" ? " ↓" : " ↑"
         }
 
         const handleSortClick = () => {
-            if (!sortConfig || sortConfig.field !== "pageviewsPerDay") {
-                onSort({ field: "pageviewsPerDay", direction: "desc" })
+            if (!sortConfig || sortConfig.field !== "grapherViewsPerDay") {
+                onSort({ field: "grapherViewsPerDay", direction: "desc" })
             } else if (sortConfig.direction === "desc") {
-                onSort({ field: "pageviewsPerDay", direction: "asc" })
+                onSort({ field: "grapherViewsPerDay", direction: "asc" })
             } else {
                 onSort(null)
             }
@@ -330,7 +315,7 @@ export class ChartList extends React.Component<ChartListProps> {
                                 style={{ cursor: "pointer" }}
                                 onClick={handleSortClick}
                             >
-                                views/day{getSortIndicator()}
+                                Grapher views/day{getSortIndicator()}
                             </th>
                             <th
                                 style={{ cursor: "pointer" }}
@@ -344,6 +329,9 @@ export class ChartList extends React.Component<ChartListProps> {
                                 onClick={handleReferencesCountSortClick}
                             >
                                 references{getReferencesCountSortIndicator()}
+                                <Tooltip title="Only considers published content. This number might differ from the chart editor count, which includes unpublished data insights.">
+                                    <FontAwesomeIcon icon={faInfoCircle} />
+                                </Tooltip>
                             </th>
                             <th></th>
                             <th></th>

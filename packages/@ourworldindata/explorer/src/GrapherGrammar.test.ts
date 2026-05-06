@@ -2,9 +2,10 @@ import { expect, it, describe } from "vitest"
 import {
     omitEmptyStringValues,
     omitEmptyObjectValues,
+    GrapherGrammar,
 } from "./GrapherGrammar.js"
 describe("GrapherGrammar helper functions", () => {
-    describe("omitEmptyStringValues", () => {
+    describe(omitEmptyStringValues, () => {
         it("should remove properties with empty string values", () => {
             const input = {
                 title: "Chart Title",
@@ -61,7 +62,7 @@ describe("GrapherGrammar helper functions", () => {
         })
     })
 
-    describe("omitEmptyObjectValues", () => {
+    describe(omitEmptyObjectValues, () => {
         it("should remove properties with empty plain object values", () => {
             const input = {
                 title: "Chart Title",
@@ -198,6 +199,26 @@ describe("GrapherGrammar helper functions", () => {
                 missingDataStrategy: validValue,
             })
             expect(result3).toEqual({ missingDataStrategy: "hide" }) // Non-empty string is preserved
+        })
+    })
+
+    describe("originUrl", () => {
+        it("should map absolute URL to grapher config", () => {
+            const originUrlDef = GrapherGrammar.originUrl
+            const testUrl = "https://ourworldindata.org/some-article"
+
+            const result = originUrlDef.toGrapherObject(testUrl)
+
+            expect(result).toEqual({ originUrl: testUrl })
+        })
+
+        it("should map relative URL to grapher config", () => {
+            const originUrlDef = GrapherGrammar.originUrl
+            const relativeUrl = "/life-expectancy"
+
+            const result = originUrlDef.toGrapherObject(relativeUrl)
+
+            expect(result).toEqual({ originUrl: relativeUrl })
         })
     })
 })

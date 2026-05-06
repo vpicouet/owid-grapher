@@ -23,7 +23,7 @@ import {
     EnrichedBlockList,
     EnrichedBlockNumberedList,
     EnrichedBlockProminentLink,
-    BlockImageSize,
+    BlockSize,
     detailOnDemandRegex,
     spansToUnformattedPlainText,
     EnrichedBlockCallout,
@@ -112,7 +112,7 @@ export function htmlToSimpleTextBlock(html: string): EnrichedBlockSimpleText {
     )
     const simpleText: SpanSimpleText = {
         spanType: "span-simple-text",
-        text: simpleTextSpans.map((s) => (s as SpanSimpleText).text).join(" "),
+        text: simpleTextSpans.map((s) => s.text).join(" "),
     }
     const parseErrors =
         otherSpans.length > 0
@@ -579,7 +579,7 @@ function cheerioToArchieML(
                                 originalWidth: undefined,
                                 hasOutline: false,
                                 caption: figcaptionElement?.value,
-                                size: BlockImageSize.Wide,
+                                size: BlockSize.Wide,
                             },
                         ],
                     }
@@ -639,6 +639,7 @@ function cheerioToArchieML(
                             {
                                 type: "chart",
                                 url: src,
+                                size: BlockSize.Wide,
                                 parseErrors: [],
                             },
                         ],
@@ -666,7 +667,7 @@ function cheerioToArchieML(
                                 parseErrors: [],
                                 hasOutline: false,
                                 originalWidth: undefined,
-                                size: BlockImageSize.Wide,
+                                size: BlockSize.Wide,
                             },
                         ],
                     }
@@ -889,7 +890,7 @@ function cheerioElementsToArchieML(
     elements: AnyNode[],
     context: ParseContext
 ): BlockParseResult<ArchieBlockOrWpComponent> {
-    if (!elements || !elements.length)
+    if (!elements?.length)
         return {
             errors: [],
             content: [],
@@ -1011,6 +1012,21 @@ function getEnrichedBlockTextFromBlockParseResult(
         errors: errors,
         content: textChildren,
     }
+}
+
+/**
+ * Convert an HTML fragment into enriched blocks by unwrapping the
+ * top-level element and converting its children.  Used by the indexing
+ * pipeline so that raw-HTML table cells go through the same
+ * enriched-block → plaintext path as regular table cells.
+ */
+export function htmlToEnrichedBlocks(html: string): OwidEnrichedGdocBlock[] {
+    const $ = cheerio.load(html)
+    const body = $("body")[0]
+    if (!body) return []
+    const context: ParseContext = { $, htmlTagCounts: {} }
+    const result = unwrapElement(body, context)
+    return result.content.filter(isArchieMlComponent)
 }
 
 //#endregion

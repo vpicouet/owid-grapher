@@ -1,6 +1,6 @@
 import * as _ from "lodash-es"
 import * as R from "remeda"
-import { type BaseType, type Selection, select } from "d3-selection"
+
 import { ScaleLinear } from "d3-scale"
 import { NoDataModal } from "../noDataModal/NoDataModal"
 import { SortOrder } from "@ourworldindata/types"
@@ -12,7 +12,7 @@ import {
     getRelativeMouse,
     intersection,
     guid,
-    makeIdForHumanConsumption,
+    makeFigmaId,
 } from "@ourworldindata/utils"
 import { computed, action, observable, makeObservable } from "mobx"
 import { observer } from "mobx-react"
@@ -39,10 +39,7 @@ import {
 } from "./ScatterUtils"
 import { Triangle } from "./Triangle"
 import { ColorScale } from "../color/ColorScale"
-import {
-    BASE_FONT_SIZE,
-    GRAPHER_TEXT_OUTLINE_FACTOR,
-} from "../core/GrapherConstants"
+import { BASE_FONT_SIZE } from "../core/GrapherConstants"
 
 // This is the component that actually renders the points. The higher level ScatterPlot class renders points, legends, comparison lines, etc.
 @observer
@@ -93,6 +90,7 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
         return (
             this.focusedSeriesNames.length > 0 ||
             this.hoveredSeriesNames.length > 0 ||
+            this.props.isHoverModeActive ||
             // if the user has selected entities that are not in the chart,
             // we want to move all entities into the background
             ((this.props.focusedSeriesNames ?? []).length > 0 &&
@@ -126,6 +124,10 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
 
     @computed private get hideScatterLabels(): boolean {
         return !!this.props.hideScatterLabels
+    }
+
+    @computed private get hideEntityLabels(): boolean {
+        return !!this.props.hideEntityLabels
     }
 
     private getPointRadius(value: number | undefined): number {
@@ -256,10 +258,14 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
             (l) => labelPriority(l),
             SortOrder.desc
         )
-        if (this.focusedSeriesNames.length > 0)
+        if (this.focusedSeriesNames.length > 0) {
             this.hideUnselectedLabels(labelsByPriority)
+        }
         if (this.hideScatterLabels) {
             this.hideLabels(labelsByPriority, this.hoveredSeriesNames.length)
+        }
+        if (this.hideEntityLabels) {
+            this.hideEndLabels(labelsByPriority)
         }
 
         this.hideCollidingLabelsByPriority(labelsByPriority)
@@ -273,6 +279,12 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
     ): void {
         labelsByPriority
             .filter((label) => !(label.series.isHover && nHoveredLabels === 1))
+            .forEach((label) => (label.isHidden = true))
+    }
+
+    private hideEndLabels(labelsByPriority: ScatterLabel[]): void {
+        labelsByPriority
+            .filter((label) => label.isEnd)
             .forEach((label) => (label.isHidden = true))
     }
 
@@ -421,7 +433,7 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
         if (hideConnectedScatterLines) return null
 
         return (
-            <g id={makeIdForHumanConsumption("points")}>
+            <g id={makeFigmaId("points")}>
                 {backgroundSeries.map((series) => (
                     <ScatterLine
                         key={series.seriesName}
@@ -439,7 +451,7 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
         const { isLayerMode } = this
         return (
             <g
-                id={makeIdForHumanConsumption("labels")}
+                id={makeFigmaId("labels")}
                 className="backgroundLabels"
                 fill={!isLayerMode ? "#333" : "#aaa"}
             >
@@ -449,20 +461,11 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
                         .map((label) => (
                             <Halo
                                 key={series.displayKey + "-endLabel"}
-                                id={makeIdForHumanConsumption(
-                                    "outline",
-                                    series.seriesName
-                                )}
-                                outlineWidth={
-                                    GRAPHER_TEXT_OUTLINE_FACTOR * label.fontSize
-                                }
-                                outlineColor={this.props.backgroundColor}
+                                id={makeFigmaId("outline", series.seriesName)}
+                                fontSize={label.fontSize}
                             >
                                 <text
-                                    id={makeIdForHumanConsumption(
-                                        "label",
-                                        label.text
-                                    )}
+                                    id={makeFigmaId("label", label.text)}
                                     x={label.bounds.x.toFixed(2)}
                                     y={(
                                         label.bounds.y + label.bounds.height
@@ -488,7 +491,7 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
     private renderForegroundSeries(): React.ReactElement {
         const { isSubtleForeground, hideConnectedScatterLines } = this
         return (
-            <g id={makeIdForHumanConsumption("points")}>
+            <g id={makeFigmaId("points")}>
                 {this.foregroundSeries.map((series) => {
                     const lastPoint = R.last(series.points)!
                     const strokeWidth =
@@ -524,10 +527,7 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
                     if (series.offsetVector.x < 0) rotation = -rotation
                     return (
                         <g
-                            id={makeIdForHumanConsumption(
-                                "time-scatter",
-                                series.displayKey
-                            )}
+                            id={makeFigmaId("time-scatter", series.displayKey)}
                             key={series.displayKey}
                             className={series.displayKey}
                         >
@@ -574,12 +574,10 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
                                     ))}
                             {!hideConnectedScatterLines && (
                                 <Triangle
-                                    transform={`rotate(${rotation}, ${lastPoint.position.x.toFixed(
-                                        2
-                                    )}, ${lastPoint.position.y.toFixed(2)})`}
                                     cx={lastPoint.position.x}
                                     cy={lastPoint.position.y}
                                     r={1.5 + strokeWidth}
+                                    rotation={rotation}
                                     fill={lastPoint.color}
                                     opacity={opacity}
                                 />
@@ -593,27 +591,18 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
 
     private renderForegroundLabels(): React.ReactElement {
         return (
-            <g id={makeIdForHumanConsumption("labels")}>
+            <g id={makeFigmaId("labels")}>
                 {this.foregroundSeries.map((series) => {
                     return series.allLabels
                         .filter((label) => !label.isHidden)
                         .map((label, index) => (
                             <Halo
-                                id={makeIdForHumanConsumption(
-                                    "outline",
-                                    series.seriesName
-                                )}
+                                id={makeFigmaId("outline", series.seriesName)}
                                 key={`${series.displayKey}-label-${index}`}
-                                outlineWidth={
-                                    GRAPHER_TEXT_OUTLINE_FACTOR * label.fontSize
-                                }
-                                outlineColor={this.props.backgroundColor}
+                                fontSize={label.fontSize}
                             >
                                 <text
-                                    id={makeIdForHumanConsumption(
-                                        "label",
-                                        series.seriesName
-                                    )}
+                                    id={makeFigmaId("label", series.seriesName)}
                                     x={label.bounds.x.toFixed(2)}
                                     y={(
                                         label.bounds.y + label.bounds.height
@@ -631,34 +620,6 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
         )
     }
 
-    animSelection?: Selection<BaseType, unknown, SVGGElement | null, unknown>
-
-    private runAnimation(): void {
-        const radiuses: string[] = []
-        this.animSelection = select(this.base.current).selectAll("circle")
-
-        this.animSelection
-            .each(function () {
-                const circle = this as SVGCircleElement
-                radiuses.push(circle.getAttribute("r") as string)
-                circle.setAttribute("r", "0")
-            })
-            .transition()
-            .duration(500)
-            .attr("r", (_, i) => radiuses[i])
-            .on("end", () => this.forceUpdate())
-    }
-
-    override componentDidMount(): void {
-        if (!this.props.disableIntroAnimation) {
-            this.runAnimation()
-        }
-    }
-
-    override componentWillUnmount(): void {
-        if (this.animSelection) this.animSelection.interrupt()
-    }
-
     override render(): React.ReactElement {
         const { bounds, renderSeries, renderUid } = this
         const clipBounds = bounds.pad(-10)
@@ -674,7 +635,7 @@ export class ScatterPointsWithLabels extends React.Component<ScatterPointsWithLa
         return (
             <g
                 ref={this.base}
-                id={makeIdForHumanConsumption("scatter-points")}
+                id={makeFigmaId("scatter-points")}
                 className="PointsWithLabels clickable"
                 clipPath={`url(#scatterBounds-${renderUid})`}
                 onMouseMove={this.onMouseMove}

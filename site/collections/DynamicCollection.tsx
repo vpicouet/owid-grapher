@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import cx from "classnames"
 import * as React from "react"
 import ReactDOM from "react-dom/client"
@@ -144,7 +145,7 @@ export class DynamicCollection extends React.Component<DynamicCollectionProps> {
                                 data-grapher-src={grapherUrl}
                                 data-grapher-index={index}
                             >
-                                <a href={grapherUrl} rel="noopener">
+                                <a href={grapherUrl}>
                                     <GrapherImage slug={chartSlug} />
                                 </a>
                             </figure>

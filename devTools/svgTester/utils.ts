@@ -1,15 +1,25 @@
 import {
+    ExplorerType,
     GRAPHER_CHART_TYPES,
     GrapherChartType,
     GrapherTabName,
-    ALL_GRAPHER_CHART_TYPES,
     GrapherInterface,
+    OwidChartDimensionInterface,
+    parseChartConfig,
+    GrapherVariant,
+    GRAPHER_TAB_NAMES,
+    GrapherChartOrMapType,
 } from "@ourworldindata/types"
 import {
+    Bounds,
+    mergeGrapherConfigs,
     MultipleOwidVariableDataDimensionsMap,
     OwidVariableMixedData,
     OwidVariableWithSourceAndDimension,
+    queryParamsToStr,
     TESTING_ONLY_disable_guid,
+    PromiseCache,
+    CoreTableInputOption,
 } from "@ourworldindata/utils"
 import fs, { stat } from "fs-extra"
 import path from "path"
@@ -26,18 +36,45 @@ import { getHeapStatistics } from "v8"
 import { queryStringsByChartType } from "./chart-configurations.js"
 import * as d3 from "d3-dsv"
 import {
+    DEFAULT_GRAPHER_HEIGHT,
+    DEFAULT_GRAPHER_WIDTH,
+    GrapherProgrammaticInterface,
     legacyToOwidTableAndDimensions,
+    legacyToOwidTableAndDimensionsWithMandatorySlug,
     migrateGrapherConfigToLatestVersion,
+    GrapherState,
+    GRAPHER_THUMBNAIL_WIDTH,
+    GRAPHER_THUMBNAIL_HEIGHT,
+    mapGrapherTabNameToQueryParam,
 } from "@ourworldindata/grapher"
-import prettier from "prettier"
+import { format, FormatOptions } from "oxfmt"
+import oxfmtConfig from "../../.oxfmtrc.json"
 import { hashMd5 } from "../../serverUtils/hash.js"
 import * as R from "remeda"
 import ReactDOMServer from "react-dom/server"
+import {
+    Explorer,
+    ExplorerChartCreationMode,
+    ExplorerChoiceParams,
+    ExplorerProgram,
+    ExplorerProps,
+    GrapherGrammar,
+} from "@ourworldindata/explorer"
+import { knexRaw, KnexReadonlyTransaction } from "../../db/db.js"
 
-// the owid-grapher-svgs repo is usually cloned as a sibling to the owid-grapher repo
-export const DEFAULT_CONFIGS_DIR = "../owid-grapher-svgs/configs"
-export const DEFAULT_REFERENCE_DIR = "../owid-grapher-svgs/svg"
-export const DEFAULT_DIFFERENCES_DIR = "../owid-grapher-svgs/differences"
+export const SVG_REPO_PATH = "../owid-grapher-svgs"
+
+export const TEST_SUITES = [
+    "graphers",
+    "grapher-views",
+    "mdims",
+    "explorers",
+    "thumbnails",
+] as const
+export type TestSuite = (typeof TEST_SUITES)[number]
+
+export const TEST_SUITE_DESCRIPTION =
+    "Test suite to run: 'graphers' for default Grapher views, 'grapher-views' for all views of a subset of Graphers. 'mdims' for all multi-dim views. 'explorers' for all Explorer views. 'thumbnails' for thumbnail versions (300x160) of all published graphers."
 
 const CONFIG_FILENAME = "config.json"
 const RESULTS_FILENAME = "results.csv"
@@ -45,9 +82,8 @@ const RESULTS_FILENAME = "results.csv"
 export const finished = util.promisify(stream.finished) // (A)
 
 export interface ChartWithQueryStr {
-    id: number
-    slug: string
-    type: GrapherChartType
+    viewId: string
+    chartType: GrapherChartOrMapType
     queryStr?: string
 }
 
@@ -62,7 +98,7 @@ export interface VerifyResultDifference {
 
 export interface VerifyResultError {
     kind: "error"
-    graphId: number
+    viewId: string
     error: Error
 }
 
@@ -75,10 +111,10 @@ const resultOk = (): VerifyResult => ({
     kind: "ok",
 })
 
-const resultError = (id: number, error: Error): VerifyResult => ({
+const resultError = (viewId: string, error: Error): VerifyResult => ({
     kind: "error",
-    graphId: id,
-    error: error,
+    viewId,
+    error,
 })
 
 const resultDifference = (difference: SvgDifference): VerifyResult => ({
@@ -94,24 +130,24 @@ export type SvgRenderPerformance = {
 }
 
 export type SvgRecord = {
-    chartId: number
-    slug: string
+    viewId: string
     chartType: GrapherTabName | undefined
     queryStr?: string
+    resolvedQueryStr?: string // The query string after resolving placeholders like <firstSeries>
     md5: string
     svgFilename: string
     performance?: SvgRenderPerformance
 }
 
 export interface SvgDifference {
-    chartId: number
+    viewId: string
     startIndex: number
     referenceSvgFragment: string
     newSvgFragment: string
 }
 
 export interface JobDirectory {
-    chartId: number
+    viewId: string
     pathToProcess: string
 }
 
@@ -144,7 +180,7 @@ export async function verifySvg(
     referenceSvgsPath: string,
     verbose: boolean
 ): Promise<VerifyResult> {
-    logIfVerbose(verbose, `verifying ${newSvgRecord.chartId}`)
+    logIfVerbose(verbose, `verifying ${newSvgRecord.viewId}`)
 
     if (newSvgRecord.md5 === referenceSvgRecord.md5) {
         // if the md5 hash is unchanged then there is no difference
@@ -168,9 +204,9 @@ export async function verifySvg(
     if (firstDiffIndex === -1) {
         return resultOk()
     }
-    logIfVerbose(verbose, `${newSvgRecord.chartId} had differences`)
+    logIfVerbose(verbose, `${newSvgRecord.viewId} had differences`)
     return resultDifference({
-        chartId: newSvgRecord.chartId,
+        viewId: newSvgRecord.viewId,
         startIndex: firstDiffIndex,
         referenceSvgFragment: preparedReferenceSvg.substring(
             firstDiffIndex - 20,
@@ -186,101 +222,120 @@ export async function verifySvg(
 export async function selectChartIdsToProcess(
     inDir: string,
     options: {
-        chartIdsFile?: string
-        grapherIds?: number[]
+        viewIds?: string[]
         chartTypes?: GrapherChartType[]
         randomCount?: number
     }
-): Promise<number[]> {
-    let validChartIds = await findValidChartIds(inDir, options)
+): Promise<string[]> {
+    let validViewIds = await findValidViewIds(inDir, options)
 
     if (options.randomCount !== undefined) {
-        validChartIds = R.sample(validChartIds, options.randomCount)
+        validViewIds = R.sample(validViewIds, options.randomCount)
     }
 
-    return _.sortBy(validChartIds)
+    return _.sortBy(validViewIds)
+}
+
+// Get available tabs from a grapher config
+// Returns tabs that should be tested (excludes table tab)
+export function getAvailableTabsFromConfig(
+    config: GrapherInterface
+): GrapherChartOrMapType[] {
+    const tabs: GrapherChartOrMapType[] = []
+
+    // Add map tab if available
+    if (config.hasMapTab) {
+        tabs.push(GRAPHER_TAB_NAMES.WorldMap)
+    }
+
+    // Add chart types (or default to LineChart and DiscreteBar if none specified)
+    const chartTypes =
+        config.chartTypes && config.chartTypes.length > 0
+            ? config.chartTypes
+            : [GRAPHER_CHART_TYPES.LineChart, GRAPHER_CHART_TYPES.DiscreteBar]
+
+    tabs.push(...chartTypes)
+
+    return tabs
 }
 
 export async function findChartViewsToGenerate(
     inDir: string,
-    chartIds: number[],
+    viewIds: string[],
     options: {
         queryStr?: string
         shouldTestAllViews?: boolean
+        shouldTestAllTabs?: boolean
     }
 ): Promise<ChartWithQueryStr[]> {
     const chartsToProcess: ChartWithQueryStr[] = []
 
-    for (const chartId of chartIds) {
-        const grapherConfig = await parseGrapherConfig(chartId, { inDir })
+    for (const viewId of viewIds) {
+        const grapherConfig = await parseGrapherConfig(viewId, { inDir })
 
-        const slug = grapherConfig.slug ?? chartId.toString()
         const chartType =
             grapherConfig.chartTypes?.[0] ?? GRAPHER_CHART_TYPES.LineChart
 
-        const queryStrings = options.shouldTestAllViews
-            ? queryStringsByChartType[chartType]
-            : options.queryStr
-              ? [options.queryStr]
-              : [undefined]
+        // If shouldTestAllTabs is true, generate entries for each available tab
+        if (options.shouldTestAllTabs) {
+            const availableTabs = getAvailableTabsFromConfig(grapherConfig)
+            for (const tab of availableTabs) {
+                const tabParam = mapGrapherTabNameToQueryParam(tab)
+                const queryStr = `tab=${tabParam}`
+                chartsToProcess.push({ viewId, chartType: tab, queryStr })
+            }
+        } else {
+            // Existing behavior for shouldTestAllViews and queryStr
+            const queryStrings = options.shouldTestAllViews
+                ? queryStringsByChartType[chartType]
+                : options.queryStr
+                  ? [options.queryStr]
+                  : [undefined]
 
-        for (const queryStr of queryStrings) {
-            chartsToProcess.push({
-                id: chartId,
-                slug: slug,
-                type: chartType,
-                queryStr,
-            })
+            for (const queryStr of queryStrings) {
+                chartsToProcess.push({ viewId, chartType, queryStr })
+            }
         }
     }
 
     return chartsToProcess
 }
 
-export async function findValidChartIds(
+export async function findValidViewIds(
     inDir: string,
     {
-        chartIdsFile,
-        grapherIds = [],
+        viewIds = [],
         chartTypes = [],
     }: {
-        chartIdsFile?: string
-        grapherIds?: number[]
+        viewIds?: string[]
         chartTypes?: GrapherChartType[]
     }
-): Promise<number[]> {
-    const validChartIds: number[] = []
+): Promise<string[]> {
+    const validChartIds: string[] = []
 
     // If nothing is specified, scan all directories in the inDir folder
-    if (grapherIds.length === 0 && chartTypes.length === 0 && !chartIdsFile) {
+    if (viewIds.length === 0 && chartTypes.length === 0) {
         const dir = await fs.opendir(inDir)
         for await (const entry of dir) {
             if (entry.isDirectory()) {
-                const grapherId = parseInt(entry.name)
-                validChartIds.push(grapherId)
+                const viewId = entry.name
+                validChartIds.push(viewId)
             }
         }
         return validChartIds
     }
 
-    if (chartIdsFile) {
-        const chartIdsFromFile = readLinesFromFile(chartIdsFile)
-            .map((line) => parseInt(line))
-            .filter((id) => !isNaN(id))
-        grapherIds.push(...chartIdsFromFile)
-    }
-
     // If grapher ids were given check which ones exist in inDir and filter to those
     // -> if by doing so we drop some, warn the user
-    if (grapherIds.length > 0) {
-        const validatedChartIds = grapherIds.filter((grapherId) =>
-            fs.existsSync(path.join(inDir, grapherId.toString()))
+    if (viewIds.length > 0) {
+        const validatedChartIds = viewIds.filter((viewId) =>
+            fs.existsSync(path.join(inDir, viewId))
         )
         validChartIds.push(...validatedChartIds)
-        if (validChartIds.length < grapherIds.length) {
-            const invalidChartIds = _.difference(grapherIds, validatedChartIds)
+        if (validChartIds.length < viewIds.length) {
+            const invalidChartIds = _.difference(viewIds, validatedChartIds)
             console.warn(
-                `${grapherIds.length} grapher ids were given but only ${validChartIds.length} existed as directories. Missing ids: ${invalidChartIds}`
+                `${viewIds.length} view ids were given but only ${validChartIds.length} existed as directories. Missing ids: ${invalidChartIds}`
             )
         }
     }
@@ -290,15 +345,15 @@ export async function findValidChartIds(
         const dir = await fs.opendir(inDir)
         for await (const entry of dir) {
             if (entry.isDirectory()) {
-                const grapherId = parseInt(entry.name)
-                const grapherConfig = await parseGrapherConfig(grapherId, {
+                const viewId = entry.name
+                const grapherConfig = await parseGrapherConfig(viewId, {
                     inDir,
                 })
                 const chartType =
                     grapherConfig.chartTypes?.[0] ??
                     GRAPHER_CHART_TYPES.LineChart
                 if (chartTypes.includes(chartType)) {
-                    validChartIds.push(grapherId)
+                    validChartIds.push(viewId)
                 }
             }
         }
@@ -307,57 +362,13 @@ export async function findValidChartIds(
     return validChartIds
 }
 
-export function validateChartTypes(chartTypes: string[]): GrapherChartType[] {
-    const validChartTypes = chartTypes.filter(
-        (chartType): chartType is GrapherChartType =>
-            ALL_GRAPHER_CHART_TYPES.includes(chartType as any)
-    )
-    const invalidChartTypes = chartTypes.filter(
-        (chartType) => !ALL_GRAPHER_CHART_TYPES.includes(chartType as any)
-    )
-    if (invalidChartTypes.length) {
-        console.warn(
-            `Invalid chart types given: ${invalidChartTypes}. Valid chart types are: ${ALL_GRAPHER_CHART_TYPES}`
-        )
-    }
-    return _.uniq(validChartTypes)
-}
-
 export async function parseGrapherConfig(
-    chartId: number,
+    chartId: string,
     { inDir }: { inDir: string }
 ): Promise<GrapherInterface> {
-    const grapherConfigPath = path.join(
-        inDir,
-        chartId.toString(),
-        "config.json"
-    )
+    const grapherConfigPath = path.join(inDir, chartId, "config.json")
     const grapherConfig = await fs.readJson(grapherConfigPath)
     return grapherConfig
-}
-
-/** Turn a list of comma separated numbers and ranges into an array of numbers */
-export function getGrapherIdListFromString(rawGrapherIds: string): number[] {
-    return rawGrapherIds.split(",").flatMap((item) => {
-        if (item.includes("-")) {
-            const subparts = item.split("-")
-            if (subparts.length !== 2) {
-                console.warn(`Invalid graphid range: ${item}`)
-                return []
-            } else {
-                const first = parseInt(subparts[0])
-                const second = parseInt(subparts[1])
-                return _.range(first, second + 1)
-            }
-        } else {
-            const parsed = parseInt(item)
-            if (isNaN(parsed)) {
-                return []
-            } else {
-                return [parsed]
-            }
-        }
-    })
 }
 
 export async function writeToFile(data: unknown, filename: string) {
@@ -365,8 +376,26 @@ export async function writeToFile(data: unknown, filename: string) {
     await fs.writeFile(filename, json)
 }
 
+export async function writeVariableDataAndMetadataFiles(
+    variableIds: number[],
+    outDir: string
+): Promise<void> {
+    const writeVariablePromises = variableIds.map(async (variableId) => {
+        const dataPath = path.join(outDir, `${variableId}.data.json`)
+        const metadataPath = path.join(outDir, `${variableId}.metadata.json`)
+
+        const variableData = await getVariableData(variableId)
+
+        await writeToFile(variableData.data, dataPath)
+        await writeToFile(variableData.metadata, metadataPath)
+    })
+
+    await Promise.allSettled(writeVariablePromises)
+}
+
 export interface SaveGrapherSchemaAndDataJob {
     config: GrapherInterface
+    id: string
     outDir: string
 }
 export async function saveGrapherSchemaAndData(
@@ -374,7 +403,7 @@ export async function saveGrapherSchemaAndData(
 ): Promise<void> {
     const config = jobDescription.config
     const outDir = jobDescription.outDir
-    const dataDir = path.join(outDir, config.id?.toString() ?? "")
+    const dataDir = path.join(outDir, jobDescription.id ?? "")
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir)
     const configPath = path.join(dataDir, CONFIG_FILENAME)
     const promise1 = writeToFile(config, configPath)
@@ -382,22 +411,51 @@ export async function saveGrapherSchemaAndData(
     const grapher = initGrapherForSvgExport(config)
     const variableIds = grapher.grapherState.dimensions.map((d) => d.variableId)
 
-    const writeVariablePromises = variableIds.map(async (variableId) => {
-        const dataPath = path.join(dataDir, `${variableId}.data.json`)
-        const metadataPath = path.join(dataDir, `${variableId}.metadata.json`)
-        const variableData = await getVariableData(variableId)
-        await writeToFile(variableData.data, dataPath)
-        await writeToFile(variableData.metadata, metadataPath)
-    })
-
-    await Promise.allSettled([promise1, ...writeVariablePromises])
+    await Promise.allSettled([
+        promise1,
+        writeVariableDataAndMetadataFiles(variableIds, dataDir),
+    ])
 }
 
-export async function renderSvg(
-    dir: string,
+function resolveFocusPlaceholderInQueryString(
+    queryStr: string | undefined,
+    grapherState: GrapherState
+): { focusedSeriesName?: string; resolvedQueryStr: string } {
+    if (!queryStr) return { resolvedQueryStr: "" }
+
+    const params = new URLSearchParams(queryStr)
+    const focus = params.get("focus")
+
+    // No focus param at all — nothing to resolve
+    if (!focus) return { resolvedQueryStr: queryStr }
+
+    // Explicit (non-placeholder) focus value — pass through as-is
+    if (!focus.startsWith("<"))
+        return { focusedSeriesName: focus, resolvedQueryStr: queryStr }
+
+    // Placeholder: resolve <firstSeries> to actual series name
+    const seriesName = grapherState.chartState.series[0]?.seriesName
+
+    if (focus === "<firstSeries>" && seriesName) {
+        const focusedSeriesName = seriesName
+        params.set("focus", focusedSeriesName)
+        return { focusedSeriesName, resolvedQueryStr: params.toString() }
+    } else {
+        params.delete("focus")
+        return { resolvedQueryStr: params.toString() }
+    }
+}
+
+export async function renderSvg({
+    dir,
+    queryStr,
+    variant = "default",
+}: {
+    dir: JobDirectory
     queryStr?: string
-): Promise<[string, SvgRecord]> {
-    const configAndData = await loadGrapherConfigAndData(dir)
+    variant?: "default" | "thumbnail"
+}): Promise<[string, SvgRecord]> {
+    const configAndData = await loadGrapherConfigAndData(dir.pathToProcess)
 
     // Graphers sometimes need to generate ids (incrementing numbers). For this
     // they keep a stateful variable in clientutils. To minimize differences
@@ -406,24 +464,33 @@ export async function renderSvg(
 
     const timeStart = Date.now()
 
+    // Drop the focus param because it may contain a placeholder value
+    // (the focused entity/column is manually added later)
+    const queryStrWithoutFocus = new URLSearchParams(queryStr)
+    queryStrWithoutFocus.delete("focus")
+
+    const config: GrapherProgrammaticInterface = {
+        ...configAndData.config,
+        adminBaseUrl: "https://ourworldindata.org",
+        bakedGrapherURL: "https://ourworldindata.org/grapher",
+    }
+
+    // Apply thumbnail settings if variant is thumbnail
+    if (variant === "thumbnail") {
+        const thumbnailBounds = new Bounds(
+            0,
+            0,
+            GRAPHER_THUMBNAIL_WIDTH,
+            GRAPHER_THUMBNAIL_HEIGHT
+        )
+        config.staticBounds = thumbnailBounds
+        config.variant = GrapherVariant.Thumbnail
+        config.baseFontSize = 14
+    }
+
     const grapher = initGrapherForSvgExport(
-        {
-            ...configAndData.config,
-            adminBaseUrl: "https://ourworldindata.org",
-            bakedGrapherURL: "https://ourworldindata.org/grapher",
-        },
-        queryStr
-    )
-    const { width, height } = grapher.grapherState.defaultBounds
-    const outFilename = buildSvgOutFilename(
-        {
-            slug: configAndData.config.slug!,
-            version: configAndData.config.version ?? 0,
-            width,
-            height,
-            queryStr,
-        },
-        { shouldHashQueryStr: false, separator: "?" }
+        config,
+        queryStrWithoutFocus.toString()
     )
 
     grapher.grapherState.inputTable = legacyToOwidTableAndDimensions(
@@ -431,18 +498,40 @@ export async function renderSvg(
         grapher.grapherState.dimensions,
         grapher.grapherState.selectedEntityColors
     )
+
+    // Resolve focus placeholders after the chart has data and series are available
+    const { focusedSeriesName, resolvedQueryStr } =
+        resolveFocusPlaceholderInQueryString(queryStr, grapher.grapherState)
+
+    // Set the focused series if applicable
+    if (focusedSeriesName !== undefined) {
+        grapher.grapherState.focusArray.clearAllAndAdd(focusedSeriesName)
+    }
+
+    const { width, height } = grapher.grapherState.staticBounds
+    const outFilename = buildSvgOutFilename(
+        {
+            slug: dir.viewId,
+            version: configAndData.config.version ?? 0,
+            width,
+            height,
+            queryStr: resolvedQueryStr,
+        },
+        { shouldHashQueryStr: true }
+    )
+
     const durationReceiveData = Date.now() - timeStart
 
-    const svg = grapher.grapherState.generateStaticSvg(
+    const svg = await grapher.grapherState.generateStaticSvg(
         ReactDOMServer.renderToStaticMarkup
     )
     const durationTotal = Date.now() - timeStart
 
-    const svgRecord = {
-        chartId: configAndData.config.id!,
-        slug: configAndData.config.slug!,
+    const svgRecord: SvgRecord = {
+        viewId: dir.viewId,
         chartType: grapher.grapherState.activeTab,
-        queryStr,
+        queryStr: queryStr ?? "",
+        resolvedQueryStr,
         md5: await processSvgAndCalculateHash(svg),
         svgFilename: outFilename,
         performance: {
@@ -463,16 +552,14 @@ const replaceRegexes = [/id="react-select-\d+-.+"/g]
 async function prepareSvgForComparison(svg: string): Promise<string> {
     let current = svg
     for (const replaceRegex of replaceRegexes) {
-        current = svg.replace(replaceRegex, "")
+        current = current.replace(replaceRegex, "")
     }
     return await formatSvg(current)
 }
 
 async function formatSvg(svg: string): Promise<string> {
-    return await prettier.format(svg, {
-        parser: "html",
-        tabWidth: 4,
-    })
+    const result = await format("input.html", svg, oxfmtConfig as FormatOptions)
+    return result.code
 }
 
 /** Remove all non-deterministic parts of the svg and then calculate an md5 hash */
@@ -481,15 +568,16 @@ export async function processSvgAndCalculateHash(svg: string): Promise<string> {
     return hashMd5(processed)
 }
 export interface RenderSvgAndSaveJobDescription {
-    dir: string
+    dir: JobDirectory
     outDir: string
     queryStr?: string
+    variant?: "default" | "thumbnail"
 }
 export async function renderSvgAndSave(
     jobDescription: RenderSvgAndSaveJobDescription
 ): Promise<SvgRecord> {
-    const { dir, outDir, queryStr } = jobDescription
-    const [svg, svgRecord] = await renderSvg(dir, queryStr)
+    const { dir, outDir, queryStr, variant = "default" } = jobDescription
+    const [svg, svgRecord] = await renderSvg({ dir, queryStr, variant })
     const outPath = path.join(outDir, svgRecord.svgFilename)
     const cleanedSvg = await prepareSvgForComparison(svg)
     await fs.writeFile(outPath, cleanedSvg)
@@ -556,7 +644,7 @@ export function logDifferencesToConsole(
     validationResult: VerifyResultDifference
 ): void {
     console.warn(
-        `Svg was different for ${svgRecord.chartId}. The difference starts at character ${validationResult.difference.startIndex}.
+        `Svg was different for ${svgRecord.viewId}. The difference starts at character ${validationResult.difference.startIndex}.
 Reference: ${validationResult.difference.referenceSvgFragment}
 Current  : ${validationResult.difference.newSvgFragment}`
     )
@@ -568,10 +656,10 @@ export async function parseReferenceCsv(
     const pathname = path.join(referenceDir, RESULTS_FILENAME)
     const rawContent = await fs.readFile(pathname, "utf-8")
     return d3.csvParse(rawContent, (d) => ({
-        chartId: parseInt(d.grapherId ?? ""),
-        slug: d.slug,
+        viewId: d.viewId,
         chartType: d.chartType,
         queryStr: d.queryStr,
+        resolvedQueryStr: d.resolvedQueryStr,
         md5: d.md5,
         svgFilename: d.svgFilename,
         performance: {
@@ -590,10 +678,10 @@ export async function writeReferenceCsv(
     const resultsPath = path.join(outDir, RESULTS_FILENAME)
     const csvAsString = d3.csvFormat(
         svgRecords.map((record) => ({
-            chartId: record.chartId,
-            slug: record.slug,
+            viewId: record.viewId,
             chartType: record.chartType,
             queryStr: record.queryStr,
+            resolvedQueryStr: record.resolvedQueryStr,
             md5: record.md5,
             svgFilename: record.svgFilename,
             durationReceiveData: record.performance?.durationReceiveData,
@@ -611,8 +699,8 @@ export interface RenderJobDescription {
     referenceDir: string
     outDir: string
     queryStr?: string
+    variant?: "default" | "thumbnail"
     verbose: boolean
-    suffix?: string
     rmOnError?: boolean
 }
 
@@ -622,8 +710,8 @@ export async function renderAndVerifySvg({
     referenceDir,
     outDir,
     queryStr,
+    variant = "default",
     verbose,
-    suffix,
     rmOnError,
 }: RenderJobDescription): Promise<VerifyResult> {
     try {
@@ -632,7 +720,7 @@ export async function renderAndVerifySvg({
         if (!referenceDir) throw "ReferenceDir was not defined"
         if (!outDir) throw "outdir was not defined"
 
-        const [svg, svgRecord] = await renderSvg(dir.pathToProcess, queryStr)
+        const [svg, svgRecord] = await renderSvg({ dir, queryStr, variant })
 
         const validationResult = await verifySvg(
             svg,
@@ -650,7 +738,7 @@ export async function renderAndVerifySvg({
                 const pathFragments = path.parse(svgRecord.svgFilename)
                 const outputPath = path.join(
                     outDir,
-                    pathFragments.name + suffix + pathFragments.ext
+                    pathFragments.name + pathFragments.ext
                 )
                 const cleanedSvg = await prepareSvgForComparison(svg)
                 await fs.writeFile(outputPath, cleanedSvg)
@@ -659,16 +747,14 @@ export async function renderAndVerifySvg({
         }
         return Promise.resolve(validationResult)
     } catch (err) {
-        console.error(`Threw error for ${referenceEntry.chartId}:`, err)
+        console.error(`Threw error for ${referenceEntry.viewId}:`, err)
         if (rmOnError) {
             const outPath = path.join(outDir, referenceEntry.svgFilename)
             await fs.unlink(outPath).catch(() => {
                 /* ignore ENOENT */
             })
         }
-        return Promise.resolve(
-            resultError(referenceEntry.chartId, err as Error)
-        )
+        return Promise.resolve(resultError(referenceEntry.viewId, err as Error))
     }
 }
 
@@ -680,11 +766,11 @@ export function displayVerifyResultsAndGetExitCode(
 
     const errorResults = validationResults.filter(
         (result) => result.kind === "error"
-    ) as VerifyResultError[]
+    )
 
     const differenceResults = validationResults.filter(
         (result) => result.kind === "difference"
-    ) as VerifyResultDifference[]
+    )
 
     if (errorResults.length === 0 && differenceResults.length === 0) {
         logIfVerbose(
@@ -696,11 +782,11 @@ export function displayVerifyResultsAndGetExitCode(
         if (errorResults.length) {
             console.warn(
                 `${errorResults.length} graphs threw errors: ${errorResults
-                    .map((err) => err.graphId)
+                    .map((err) => err.viewId)
                     .join()}`
             )
             for (const result of errorResults) {
-                console.log(result.graphId?.toString(), result.error) // write to stdout one grapher id per file for easy piping to other processes
+                console.log(result.viewId?.toString(), result.error) // write to stdout one grapher id per file for easy piping to other processes
             }
         }
         if (differenceResults.length) {
@@ -708,11 +794,11 @@ export function displayVerifyResultsAndGetExitCode(
                 `${
                     differenceResults.length
                 } graphs had differences: ${differenceResults
-                    .map((err) => err.difference.chartId)
+                    .map((err) => err.difference.viewId)
                     .join()}`
             )
             for (const result of differenceResults) {
-                console.log("", result.difference.chartId) // write to stdout one grapher id per file for easy piping to other processes
+                console.log("", result.difference.viewId) // write to stdout one grapher id per file for easy piping to other processes
             }
         }
         returnCode = errorResults.length + differenceResults.length
@@ -720,46 +806,569 @@ export function displayVerifyResultsAndGetExitCode(
     return returnCode
 }
 
-// minimist turns a single number into a JS number so we do toString to normalize (TS types are misleading)
-export function parseArgAsString(arg: unknown): string {
-    return (arg ?? "").toString()
-}
-
-export function parseArgAsList(arg: unknown): string[] {
-    return parseArgAsString(arg)
-        .split(",")
-        .filter((entry: string) => entry)
-}
-
-// parses a flag with an optional numeric argument:
-//   - if `arg` is not specified, `defaultIfFlagNotSpecified` is returned
-//   - if `arg` is specified without a value (`--arg`), `defaultIfFlagIsSpecified` is returned
-//   - if `arg` is specified with a value (`--arg 50`), the value is parsed as a number and returned
-export function parseArgAsOptionalNumber(
-    arg: unknown,
-    props?: {
-        defaultIfFlagNotSpecified?: number
-        defaultIfFlagIsSpecified?: number
-    }
-): number {
-    const { defaultIfFlagIsSpecified = 1, defaultIfFlagNotSpecified = 0 } =
-        props ?? {}
-    return arg === true
-        ? defaultIfFlagIsSpecified
-        : arg
-          ? parseInt(arg as string)
-          : defaultIfFlagNotSpecified
-}
-
-export function parseRandomCount(arg: unknown) {
-    return (
-        parseArgAsOptionalNumber(arg, {
-            defaultIfFlagIsSpecified: 10,
-        }) || undefined
-    )
-}
-
 export function readLinesFromFile(filename: string): string[] {
     const content = fs.readFileSync(filename, "utf-8")
     return content.split("\n")
+}
+
+export function getExplorerType(
+    explorerProgram: ExplorerProgram
+): ExplorerType {
+    const decisionMatrix = explorerProgram.decisionMatrix
+
+    // It's an indicator-based explorer if any row refers to yVariableIds
+    const yVariableIdsColumn = decisionMatrix.table.get(
+        GrapherGrammar.yVariableIds.keyword
+    )
+    if (yVariableIdsColumn.numValues > 0) return ExplorerType.Indicator
+
+    // If all rows refer to grapher IDs, it's a grapher-based explorer
+    const grapherIdsColumn = decisionMatrix.table.get(
+        GrapherGrammar.grapherId.keyword
+    )
+    if (grapherIdsColumn.numValues === decisionMatrix.numRows)
+        return ExplorerType.Grapher
+
+    // Otherwise, it's a CSV-based explorer
+    return ExplorerType.Csv
+}
+
+const loadInputTableForConfig = async (
+    dir: string,
+    args: {
+        dimensions?: OwidChartDimensionInterface[]
+        selectedEntityColors?: {
+            [entityName: string]: string | undefined
+        }
+    }
+) => {
+    if (!args.dimensions || args.dimensions.length === 0) return undefined
+
+    // Load variable data from disk for the requested dimensions
+    const variableIds = args.dimensions.map((d) => d.variableId)
+    const variableDataMap = new Map()
+
+    for (const variableId of variableIds) {
+        const dataPath = path.join(dir, `${variableId}.data.json`)
+        const metadataPath = path.join(dir, `${variableId}.metadata.json`)
+
+        if (!(await fs.pathExists(dataPath))) {
+            console.warn(
+                `Missing data file for variable ${variableId} (${dir})`
+            )
+            continue
+        }
+
+        const data = await fs.readJson(dataPath)
+        const metadata = await fs.readJson(metadataPath)
+        variableDataMap.set(variableId, { data, metadata })
+    }
+
+    // Convert to OwidTable
+    const inputTable = legacyToOwidTableAndDimensionsWithMandatorySlug(
+        variableDataMap,
+        args.dimensions,
+        args.selectedEntityColors
+    )
+
+    return inputTable
+}
+
+async function loadPartialGrapherConfigs(
+    dir: string
+): Promise<GrapherProgrammaticInterface[]> {
+    const partialGrapherConfigs: GrapherProgrammaticInterface[] = []
+
+    // Read all .config.json files in the directory
+    const files = await fs.readdir(dir)
+    const configFiles = files.filter((file) => file.endsWith(".config.json"))
+
+    for (const configFile of configFiles) {
+        const variableId = parseInt(configFile.replace(".config.json", ""))
+        if (isNaN(variableId)) continue
+
+        const configPath = path.join(dir, configFile)
+        const config = await fs.readJson(configPath)
+        partialGrapherConfigs.push(config)
+    }
+
+    return partialGrapherConfigs
+}
+
+// Patch ExplorerProgram's static tableDataLoader to support file:// URLs
+// This allows us to load CSV files from disk during testing without
+// modifying global fetch or requiring network access
+function patchExplorerTableLoader(): void {
+    ;(ExplorerProgram as any).tableDataLoader = new PromiseCache(
+        async (url: string): Promise<CoreTableInputOption> => {
+            if (url.startsWith("file://")) {
+                const filePath = url.replace("file://", "")
+                const content = await fs.readFile(filePath, "utf-8")
+                return content
+            }
+
+            const response = await fetch(url)
+            if (!response.ok) throw new Error(response.statusText)
+            const tableInput: CoreTableInputOption = url.endsWith(".json")
+                ? await response.json()
+                : await response.text()
+            return tableInput
+        }
+    )
+}
+
+export interface ExplorerViewManifest {
+    totalViews: number
+    selectedViews: number
+    viewsToTest: ExplorerChoiceParams[]
+}
+
+export interface GrapherViewsManifest {
+    slugs: string[]
+    dataDir: string // Relative path to the data directory (e.g., "../graphers/data")
+}
+
+async function loadViewsManifest(
+    explorerDir: string,
+    filename: string
+): Promise<ExplorerViewManifest | null> {
+    const manifestPath = path.join(explorerDir, filename)
+    if (!(await fs.pathExists(manifestPath))) {
+        return null
+    }
+    return await fs.readJson(manifestPath)
+}
+
+// Load manifest from a specific path
+export async function loadManifestFromPath(
+    manifestPath: string
+): Promise<GrapherViewsManifest | null> {
+    if (!fs.existsSync(manifestPath)) {
+        return null
+    }
+    const manifest: GrapherViewsManifest = await fs.readJson(manifestPath)
+    return manifest
+}
+
+// Load manifest with appropriate defaults for test suites that require it
+// Returns the manifest view IDs and the data directory to use
+export async function loadManifestViewIds(
+    testSuite: TestSuite,
+    options: {
+        targetViewIds?: string[]
+        manifestName?: string
+        verbose?: boolean
+    }
+): Promise<{ viewIds: string[] | null; dataDir: string }> {
+    const { verbose = false } = options
+
+    const testSuiteDir = path.join(SVG_REPO_PATH, testSuite)
+    const defaultDataDir = path.join(testSuiteDir, "data")
+
+    // For grapher-views and thumbnails, load the manifest to resolve dataDir
+    // (these suites don't have their own data/ directory)
+    if (testSuite === "grapher-views" || testSuite === "thumbnails") {
+        const defaultManifestName = "top.manifest.json"
+        const manifestName = options.manifestName ?? defaultManifestName
+        const manifestPath = path.join(testSuiteDir, manifestName)
+        const manifest = await loadManifestFromPath(manifestPath)
+
+        if (manifest) {
+            const dataDir = path.join(testSuiteDir, manifest.dataDir)
+
+            // viewIds are explicitly provided
+            if (options.targetViewIds) {
+                logIfVerbose(
+                    verbose,
+                    `Using data directory: ${manifest.dataDir}`
+                )
+                return { viewIds: null, dataDir }
+            }
+
+            logIfVerbose(
+                verbose,
+                `Read ${manifest.slugs.length} chart slugs from manifest: ${manifestName}`
+            )
+            logIfVerbose(verbose, `Using data directory: ${manifest.dataDir}`)
+
+            return { viewIds: manifest.slugs, dataDir }
+        } else {
+            throw new Error(
+                `No manifest found at ${manifestPath}. For ${testSuite}, you must either:\n` +
+                    `  1. Provide a manifest file (default: top.manifest.json), or\n` +
+                    `  2. Explicitly specify --viewIds to process specific charts`
+            )
+        }
+    }
+
+    // For other test suites, skip manifest if viewIds are explicitly provided
+    if (options.targetViewIds) {
+        return { viewIds: null, dataDir: defaultDataDir }
+    }
+
+    // For other test suites, only load manifest if explicitly provided
+    if (options.manifestName) {
+        const manifestPath = path.join(testSuiteDir, options.manifestName)
+        const manifest = await loadManifestFromPath(manifestPath)
+
+        if (manifest) {
+            const dataDir = path.join(testSuiteDir, manifest.dataDir)
+            logIfVerbose(
+                verbose,
+                `Read ${manifest.slugs.length} chart slugs from manifest: ${options.manifestName}`
+            )
+            logIfVerbose(verbose, `Using data directory: ${manifest.dataDir}`)
+            return { viewIds: manifest.slugs, dataDir }
+        } else {
+            console.warn(`Warning: Manifest not found at ${manifestPath}`)
+        }
+    }
+
+    // Default: no manifest, use default data directory
+    return { viewIds: null, dataDir: defaultDataDir }
+}
+
+async function getChoicesToTest(
+    explorerDir: string,
+    explorerProgram: ExplorerProgram,
+    manifestFilename?: string
+): Promise<Array<Record<string, string>>> {
+    // Use manifest to select which views to test
+    if (manifestFilename) {
+        const manifest = await loadViewsManifest(explorerDir, manifestFilename)
+        if (manifest) return manifest.viewsToTest
+    }
+
+    // No manifest - generate all possible choices
+    return explorerProgram.decisionMatrix.allDecisionsAsQueryParams()
+}
+
+export async function renderExplorerViewsToSVGsAndSave({
+    dir,
+    outDir,
+}: {
+    dir: string
+    outDir: string
+}): Promise<SvgRecord[]> {
+    // Set up file-aware table loader for local CSV files
+    patchExplorerTableLoader()
+
+    const configPath = path.join(dir, "config.tsv")
+    const tsvContent = await fs.readFile(configPath, "utf-8")
+
+    const explorerSlug = path.basename(dir)
+    const explorerProgram = new ExplorerProgram(explorerSlug, tsvContent)
+    const explorerType = getExplorerType(explorerProgram)
+
+    // Skip Grapher explorers
+    if (explorerType === ExplorerType.Grapher) return []
+
+    const width = DEFAULT_GRAPHER_WIDTH
+    const height = DEFAULT_GRAPHER_HEIGHT
+    const bounds = new Bounds(0, 0, width, height)
+
+    // Load partial grapher configs
+    const partialGrapherConfigs = await loadPartialGrapherConfigs(dir)
+
+    const explorerProps: ExplorerProps = {
+        slug: explorerSlug,
+        program: tsvContent,
+        isEmbeddedInAnOwidPage: true,
+        adminBaseUrl: "https://ourworldindata.org",
+        bakedBaseUrl: "https://ourworldindata.org",
+        bakedGrapherUrl: "https://ourworldindata.org/grapher",
+        dataApiUrl: "https://api.ourworldindata.org/v1/indicators", // Unused
+        catalogUrl: "https://catalog.ourworldindata.org", // Unused
+        partialGrapherConfigs,
+        bounds,
+        staticBounds: bounds,
+        loadInputTableForConfig: (args) => loadInputTableForConfig(dir, args),
+    }
+
+    const choicesToTest = await getChoicesToTest(dir, explorerProgram)
+
+    const svgRecords: SvgRecord[] = []
+
+    for (const choiceParams of choicesToTest) {
+        // Reset GUID for each view to ensure deterministic output
+        TESTING_ONLY_disable_guid()
+
+        // Create a fresh Explorer instance for each view
+        const explorer = new Explorer(explorerProps)
+
+        const oldRow = explorer.explorerProgram.currentlySelectedGrapherRow || 0
+
+        // Set the explorer to this specific choice combination
+        explorer.explorerProgram.decisionMatrix.setValuesFromChoiceParams(
+            choiceParams
+        )
+
+        // Skip if this is a grapher id based row
+        if (
+            explorer.explorerProgram.chartCreationMode ===
+            ExplorerChartCreationMode.FromGrapherId
+        )
+            continue
+
+        // Update the explorer
+        await explorer.reactToUserChangingSelection(oldRow)
+
+        // Generate SVG for this view
+        const svg = await explorer.grapherState.generateStaticSvg(
+            ReactDOMServer.renderToStaticMarkup
+        )
+        const cleanedSvg = await prepareSvgForComparison(svg)
+
+        const queryStr = queryParamsToStr(choiceParams).replace("?", "")
+        const viewId = `${explorerSlug}?${queryStr}`
+
+        const outFilename = buildSvgOutFilename(
+            {
+                slug: explorerSlug,
+                version: 0, // Explorers don't have versions
+                width,
+                height,
+                queryStr,
+            },
+            { shouldHashQueryStr: true }
+        )
+
+        await fs.writeFile(path.join(outDir, outFilename), cleanedSvg)
+
+        svgRecords.push({
+            viewId,
+            chartType: explorer.grapherState.activeTab,
+            md5: await processSvgAndCalculateHash(svg),
+            svgFilename: outFilename,
+        })
+    }
+
+    return svgRecords
+}
+
+export async function renderAndVerifyExplorerViews({
+    explorerDir,
+    explorerSlug,
+    referencesDir,
+    differencesDir,
+    verbose,
+    rmOnError,
+    manifest,
+}: {
+    explorerDir: string
+    explorerSlug: string
+    referencesDir: string
+    differencesDir: string
+    verbose: boolean
+    rmOnError: boolean
+    manifest?: string
+}): Promise<VerifyResult[]> {
+    // Set up file-aware table loader for local CSV files
+    patchExplorerTableLoader()
+
+    // Load reference CSV
+    const referenceData = await parseReferenceCsv(referencesDir)
+    const referenceDataByViewId = new Map(
+        referenceData.map((record) => [record.viewId, record])
+    )
+
+    // Load explorer config
+    const configPath = path.join(explorerDir, "config.tsv")
+    const tsvContent = await fs.readFile(configPath, "utf-8")
+    const explorerProgram = new ExplorerProgram(explorerSlug, tsvContent)
+    const explorerType = getExplorerType(explorerProgram)
+
+    // Skip Grapher explorers
+    if (explorerType === ExplorerType.Grapher) return []
+
+    const width = DEFAULT_GRAPHER_WIDTH
+    const height = DEFAULT_GRAPHER_HEIGHT
+    const bounds = new Bounds(0, 0, width, height)
+
+    // Load partial grapher configs
+    const partialGrapherConfigs = await loadPartialGrapherConfigs(explorerDir)
+
+    // Set up explorer props
+    const explorerProps: ExplorerProps = {
+        slug: explorerSlug,
+        program: tsvContent,
+        isEmbeddedInAnOwidPage: true,
+        adminBaseUrl: "https://ourworldindata.org",
+        bakedBaseUrl: "https://ourworldindata.org",
+        bakedGrapherUrl: "https://ourworldindata.org/grapher",
+        dataApiUrl: "https://api.ourworldindata.org/v1/indicators", // Unused
+        catalogUrl: "https://catalog.ourworldindata.org", // Unused
+        partialGrapherConfigs,
+        bounds,
+        staticBounds: bounds,
+        loadInputTableForConfig: (args) =>
+            loadInputTableForConfig(explorerDir, args),
+    }
+
+    const choicesToTest = await getChoicesToTest(
+        explorerDir,
+        explorerProgram,
+        manifest
+    )
+
+    const results: VerifyResult[] = []
+
+    // Process all views for this explorer sequentially
+    for (const choiceParams of choicesToTest) {
+        const queryStr = queryParamsToStr(choiceParams).replace("?", "")
+        const viewId = `${explorerSlug}?${queryStr}`
+
+        const referenceEntry = referenceDataByViewId.get(viewId)
+        if (!referenceEntry) {
+            console.warn(`No reference found for ${viewId}`)
+            continue
+        }
+
+        try {
+            logIfVerbose(verbose, `Verifying explorer view ${viewId}`)
+
+            // Reset GUID for deterministic output
+            TESTING_ONLY_disable_guid()
+
+            // Create a fresh Explorer instance for this view, reusing shared config
+            const explorer = new Explorer(explorerProps)
+
+            const oldRow =
+                explorer.explorerProgram.currentlySelectedGrapherRow || 0
+
+            // Set the explorer to this specific choice combination
+            explorer.explorerProgram.decisionMatrix.setValuesFromChoiceParams(
+                choiceParams
+            )
+
+            // Skip if this is a grapher id based row
+            if (
+                explorer.explorerProgram.chartCreationMode ===
+                ExplorerChartCreationMode.FromGrapherId
+            ) {
+                results.push({ kind: "ok" })
+                continue
+            }
+
+            // Update the explorer
+            await explorer.reactToUserChangingSelection(oldRow)
+
+            // Generate SVG for this view
+            const svg = await explorer.grapherState.generateStaticSvg(
+                ReactDOMServer.renderToStaticMarkup
+            )
+
+            const outFilename = buildSvgOutFilename(
+                {
+                    slug: explorerSlug,
+                    version: 0, // Explorers don't have versions
+                    width,
+                    height,
+                    queryStr,
+                },
+                { shouldHashQueryStr: true }
+            )
+
+            const svgRecord: SvgRecord = {
+                viewId,
+                chartType: explorer.grapherState.activeTab,
+                md5: await processSvgAndCalculateHash(svg),
+                svgFilename: outFilename,
+            }
+
+            // Verify against reference
+            const validationResult = await verifySvg(
+                svg,
+                svgRecord,
+                referenceEntry,
+                referencesDir,
+                verbose
+            )
+
+            // If there was a difference, write the SVG
+            if (validationResult.kind === "difference") {
+                if (verbose)
+                    logDifferencesToConsole(svgRecord, validationResult)
+                const pathFragments = path.parse(svgRecord.svgFilename)
+                const outputPath = path.join(
+                    differencesDir,
+                    pathFragments.name + pathFragments.ext
+                )
+                const cleanedSvg = await prepareSvgForComparison(svg)
+                await fs.writeFile(outputPath, cleanedSvg)
+            }
+
+            results.push(validationResult)
+        } catch (err) {
+            console.error(`Threw error for ${viewId}:`, err)
+            if (rmOnError) {
+                const outPath = path.join(
+                    differencesDir,
+                    referenceEntry.svgFilename
+                )
+                await fs.unlink(outPath).catch(() => {
+                    /* ignore ENOENT */
+                })
+            }
+            results.push(resultError(viewId, err as Error))
+        }
+    }
+
+    return results
+}
+
+export async function savePartialGrapherConfigs(
+    variableIds: number[],
+    outDir: string,
+    knex: KnexReadonlyTransaction
+): Promise<void> {
+    // Fetch partial grapher configs for each variable
+    type ChartRow = {
+        id: number
+        grapherConfigAdmin: string | null
+        grapherConfigETL: string | null
+    }
+    const partialGrapherConfigRows: ChartRow[] = await knexRaw(
+        knex,
+        `-- sql
+        SELECT
+            v.id,
+            cc_etl.patch AS grapherConfigETL,
+            cc_admin.patch AS grapherConfigAdmin
+        FROM variables v
+            LEFT JOIN chart_configs cc_admin ON cc_admin.id=v.grapherConfigIdAdmin
+            LEFT JOIN chart_configs cc_etl ON cc_etl.id=v.grapherConfigIdETL
+        WHERE v.id IN (?)`,
+        [variableIds]
+    )
+
+    const parseRow = (
+        row: ChartRow
+    ): { variableId: number; config: GrapherInterface } => {
+        const adminConfig: GrapherProgrammaticInterface = row.grapherConfigAdmin
+            ? parseChartConfig(row.grapherConfigAdmin)
+            : {}
+        const etlConfig: GrapherProgrammaticInterface = row.grapherConfigETL
+            ? parseChartConfig(row.grapherConfigETL)
+            : {}
+
+        const mergedConfig = mergeGrapherConfigs(etlConfig, adminConfig)
+
+        // Set the variable id as the config id
+        mergedConfig.id = row.id
+
+        // Explorers set their own dimensions, so we don't need to include them here
+        delete mergedConfig.dimensions
+
+        return { variableId: row.id, config: mergedConfig }
+    }
+
+    const partialGrapherConfigs = partialGrapherConfigRows
+        .filter((row) => row.grapherConfigAdmin || row.grapherConfigETL)
+        .map((row) => parseRow(row))
+
+    for (const { variableId, config } of partialGrapherConfigs) {
+        const configPath = path.join(outDir, `${variableId}.config.json`)
+        await fs.writeFile(configPath, JSON.stringify(config, null, 2))
+    }
 }

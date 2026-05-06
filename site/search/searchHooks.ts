@@ -1,39 +1,34 @@
-import { FilterType, SearchState } from "./searchTypes.js"
+import { FilterType, SearchState } from "@ourworldindata/types"
 import {
     getFilterNamesOfType,
     getSelectedTopic,
     getPaginationOffsetAndLength,
     getNbPaginatedItemsRequested,
 } from "./searchUtils.js"
+import { DEFAULT_SEARCH_STATE } from "./searchState.js"
 import { useSearchContext } from "./SearchContext.js"
-import { flattenNonTopicNodes, Url } from "@ourworldindata/utils"
+import { flattenNonTopicNodes } from "@ourworldindata/utils"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { LiteClient } from "algoliasearch/lite"
 import type { SearchResponse } from "instantsearch.js"
-import { useState, useEffect, useMemo, useCallback } from "react"
-import { urlToSearchState, searchStateToUrl } from "./searchState.js"
+import { useState, useEffect, useMemo, useRef } from "react"
 import type { TagGraphNode, TagGraphRoot } from "@ourworldindata/types"
 import { SiteAnalytics } from "../SiteAnalytics.js"
+import * as R from "remeda"
 
-export const useSelectedTopic = (
-    deferred: boolean = false
-): string | undefined => {
-    const { state, deferredState } = useSearchContext()
-    return getSelectedTopic(deferred ? deferredState.filters : state.filters)
+export const useSelectedTopic = (): string | undefined => {
+    const { state } = useSearchContext()
+    return getSelectedTopic(state.filters)
 }
 
-export const useSelectedRegionNames = (deferred: boolean = false): string[] => {
-    const { state, deferredState } = useSearchContext()
-    return Array.from(
-        getFilterNamesOfType(
-            deferred ? deferredState.filters : state.filters,
-            FilterType.COUNTRY
-        )
-    )
+export const useSelectedRegionNames = (): string[] => {
+    const { state } = useSearchContext()
+    return Array.from(getFilterNamesOfType(state.filters, FilterType.COUNTRY))
 }
 
 /**
- * Extracts and memoizes area names and all topics from the topic tag graph
+ * Extracts and memoizes area names and all searchable tags from the topic tag graph.
+ * Searchable tags include both topics (tags with a topic page) and tags with searchableInAlgolia set.
  */
 export function useTagGraphTopics(topicTagGraph: TagGraphRoot | null): {
     allAreas: string[]
@@ -47,107 +42,42 @@ export function useTagGraphTopics(topicTagGraph: TagGraphRoot | null): {
     const allTopics = useMemo(() => {
         if (!topicTagGraph) return []
 
-        function getAllTopics(node: TagGraphNode): Set<string> {
+        function getAllSearchableTopics(node: TagGraphNode): Set<string> {
             return node.children.reduce((acc, child) => {
-                if (child.isTopic) {
+                if (child.isSearchable) {
                     acc.add(child.name)
                 }
                 if (child.children.length) {
-                    const topics = getAllTopics(child)
+                    const topics = getAllSearchableTopics(child)
                     topics.forEach((topic) => acc.add(topic))
                 }
                 return acc
             }, new Set<string>())
         }
-        return [...getAllTopics(topicTagGraph)]
+        return [...getAllSearchableTopics(topicTagGraph)]
     }, [topicTagGraph])
 
     return { allAreas, allTopics }
 }
 
 /**
- * Handles analytics tracking for search state changes
+ * Handles analytics tracking for search state changes.
  */
-export function useSearchStateAnalytics(
+export function useSearchAnalytics(
     state: SearchState,
-    analytics: SiteAnalytics,
-    isInitialUrlStateLoaded: boolean
+    analytics: SiteAnalytics
 ): void {
-    const stateAsUrl = searchStateToUrl(state)
+    const lastLoggedStateRef = useRef<SearchState | null>(null)
 
     useEffect(() => {
-        // Do not log analytics until the initial URL state has been loaded.
-        if (!isInitialUrlStateLoaded) return
-        // Reconstructing state from the `stateAsUrl` serialization to avoid a
-        // `state` dependency in this effect, which would cause it to run on
-        // every state change (even no-ops)
-        const state = urlToSearchState(Url.fromURL(stateAsUrl))
+        // Skip analytics for default/empty search state
+        if (R.isDeepEqual(state, DEFAULT_SEARCH_STATE)) return
+        // Skip if we already logged this state
+        if (R.isDeepEqual(state, lastLoggedStateRef.current)) return
+
+        lastLoggedStateRef.current = state
         analytics.logSearch(state)
-    }, [stateAsUrl, isInitialUrlStateLoaded, analytics])
-}
-
-/**
- * Handles bidirectional synchronization between search state and browser URL.
- *
- * - Reads initial URL state on mount (URL → state)
- * - Syncs state changes to URL (state → URL)
- * - Handles browser back/forward navigation (URL → state)
- *
- * Returns true when the initial URL state has been loaded. This flag prevents
- * firing default search queries unnecessarily. These default queries would only
- * be used if the loaded template happened to exactly match the default state
- * (no topic, no country, no query - see getInitialSearchState()). In most
- * cases, the URL will correspond to a different template, requiring a different
- * set of queries.
- */
-export function useUrlSync(
-    state: SearchState,
-    setState: (state: SearchState) => void
-): boolean {
-    const [isInitialUrlStateLoaded, setIsInitialUrlStateLoaded] =
-        useState(false)
-
-    const getCurrentUrlData = useCallback(() => {
-        const currentUrl = window.location.href
-        const url = Url.fromURL(currentUrl)
-        return {
-            urlState: urlToSearchState(url),
-            currentUrl,
-        }
-    }, [])
-
-    // URL → State: Read initial URL state on mount
-    useEffect(() => {
-        const { urlState } = getCurrentUrlData()
-        setState(urlState)
-        setIsInitialUrlStateLoaded(true)
-    }, [setState, getCurrentUrlData])
-
-    // State → URL: Sync state changes to browser URL
-    useEffect(() => {
-        const stateAsUrl = searchStateToUrl(state)
-        const { currentUrl } = getCurrentUrlData()
-        // Do not push the transitory default state URL on page load. Also, only
-        // set the url if it's different from the current url. When the user
-        // navigates back, we derive the state from the url and set it so the
-        // url is already identical to the state - we don't need to push it
-        // again.
-        if (isInitialUrlStateLoaded && currentUrl !== stateAsUrl) {
-            window.history.pushState({}, "", stateAsUrl)
-        }
-    }, [state, getCurrentUrlData, isInitialUrlStateLoaded])
-
-    // URL → State: Handle browser back/forward navigation
-    useEffect(() => {
-        const handlePopState = () => {
-            const { urlState } = getCurrentUrlData()
-            setState(urlState)
-        }
-        window.addEventListener("popstate", handlePopState)
-        return () => window.removeEventListener("popstate", handlePopState)
-    }, [setState, getCurrentUrlData])
-
-    return isInitialUrlStateLoaded
+    }, [state, analytics])
 }
 
 type QueryKeyState = Pick<
@@ -248,7 +178,7 @@ export function useInfiniteSearch<T extends SearchResponse<U>, U>({
     ) => Promise<T>
     enabled?: boolean
 }) {
-    const { deferredState: state, liteSearchClient } = useSearchContext()
+    const { state, liteSearchClient } = useSearchContext()
 
     const query = useInfiniteQuery<T, Error>({
         // All paginated subqueries share the same query key
@@ -260,9 +190,7 @@ export function useInfiniteSearch<T extends SearchResponse<U>, U>({
             return queryFn(liteSearchClient, state, pageParam)
         },
         getNextPageParam: (lastPage) => {
-            let { page, nbPages } = lastPage
-            page = page ?? 0
-            nbPages = nbPages ?? 1
+            const { page = 0, nbPages = 1 } = lastPage
             return page < nbPages - 1 ? page + 1 : undefined
         },
         initialPageParam: 0,

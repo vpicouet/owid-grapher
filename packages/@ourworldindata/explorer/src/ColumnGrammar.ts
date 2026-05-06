@@ -1,8 +1,9 @@
-import { AvailableTransforms } from "@ourworldindata/core-table"
+import { availableTransformNames } from "@ourworldindata/core-table"
 import {
     automaticBinningStrategies,
     ColorSchemeName,
     ColumnTypeNames,
+    OwidVariableRoundingMode,
 } from "@ourworldindata/types"
 import { ToleranceStrategy } from "@ourworldindata/utils"
 import {
@@ -13,6 +14,7 @@ import {
     Grammar,
     IntegerCellDef,
     NumericCellDef,
+    PositiveIntegerCellDef,
     SlugDeclarationCellDef,
     StringCellDef,
     UrlCellDef,
@@ -38,6 +40,7 @@ export const ColumnGrammar: Grammar<ColumnCellDef> = {
         keyword: "name",
         description:
             "This is the name that may appear on the y or x axis of a chart",
+        isDisplayProperty: true,
     },
     type: {
         ...StringCellDef,
@@ -52,7 +55,7 @@ export const ColumnGrammar: Grammar<ColumnCellDef> = {
     transform: {
         ...StringCellDef,
         keyword: "transform",
-        description: `An advanced option. Available transforms are: ${AvailableTransforms.join(
+        description: `An advanced option. Available transforms are: ${availableTransformNames.join(
             ", "
         )}`,
     },
@@ -61,6 +64,7 @@ export const ColumnGrammar: Grammar<ColumnCellDef> = {
         keyword: "tolerance",
         description:
             "Set this to interpolate missing values as long as they are within this range of an actual value.",
+        isDisplayProperty: true,
     },
     toleranceStrategy: {
         ...EnumCellDef,
@@ -81,11 +85,39 @@ export const ColumnGrammar: Grammar<ColumnCellDef> = {
         ...StringCellDef,
         keyword: "unit",
         description: "Unit of measurement",
+        isDisplayProperty: true,
     },
     shortUnit: {
         ...StringCellDef,
         keyword: "shortUnit",
         description: "Short (axis) unit",
+        isDisplayProperty: true,
+    },
+    roundingMode: {
+        ...EnumCellDef,
+        keyword: "roundingMode",
+        terminalOptions: Object.values(OwidVariableRoundingMode).map(
+            (mode) => ({
+                keyword: mode,
+                description: "",
+                cssClass: "",
+            })
+        ),
+        description:
+            "How to round numbers: by decimal places or by significant figures",
+        isDisplayProperty: true,
+    },
+    numDecimalPlaces: {
+        ...PositiveIntegerCellDef,
+        keyword: "numDecimalPlaces",
+        description: "Number of decimal places to display",
+        isDisplayProperty: true,
+    },
+    numSignificantFigures: {
+        ...PositiveIntegerCellDef,
+        keyword: "numSignificantFigures",
+        description: "Number of significant figures to display",
+        isDisplayProperty: true,
     },
     notes: {
         ...StringCellDef,
@@ -142,6 +174,7 @@ export const ColumnGrammar: Grammar<ColumnCellDef> = {
         ...StringCellDef,
         keyword: "color",
         description: "Default color for column",
+        isDisplayProperty: true,
     },
     colorScaleScheme: {
         ...EnumCellDef,
@@ -206,12 +239,12 @@ export const ColumnGrammar: Grammar<ColumnCellDef> = {
         ...BooleanCellDef,
         keyword: "isProjection",
         description: "Is the time series a forward projection?",
-        display: true,
+        isDisplayProperty: true,
     },
     plotMarkersOnlyInLineChart: {
         ...BooleanCellDef,
         keyword: "plotMarkersOnlyInLineChart",
         description: "Should data points be connected by a line?",
-        display: true,
+        isDisplayProperty: true,
     },
 } as const

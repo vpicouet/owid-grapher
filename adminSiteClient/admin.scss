@@ -2,6 +2,16 @@
 
 @import "../public/fonts.css";
 @import "bootstrap/scss/bootstrap";
+
+@mixin draft-background {
+    background: repeating-linear-gradient(
+        135deg,
+        #f7f7f7,
+        #f7f7f7 10px,
+        #fff 10px,
+        #fff 20px
+    );
+}
 @import "styles/react-tag-autocomplete";
 
 @import "tippy.js/dist/tippy.css";
@@ -15,6 +25,8 @@
 @import "./TagGraphPage.scss";
 @import "./DodsIndexPage.scss";
 @import "./SortableList.scss";
+@import "./StaticViz.scss";
+@import "./MultiDimDetailPage.scss";
 
 html {
     font-size: 14px;
@@ -423,6 +435,59 @@ $nav-height: 45px;
         flex-direction: column;
         gap: 1em;
     }
+
+    .DimensionSlotHeader {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .chart-type-group {
+        margin-bottom: 12px;
+
+        .chart-type-group__label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+
+        .chart-type-group__description {
+            display: block;
+            font-size: 0.75rem;
+            font-style: italic;
+            margin-bottom: 7px;
+        }
+
+        .chart-type-group__grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+
+            .ant-tag-checkable {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                margin: 0;
+                padding: 5px 10px;
+                border: 1px solid #d9d9d9;
+                background: white;
+
+                &:hover {
+                    border-color: #396d8f;
+                    color: inherit;
+                }
+
+                &.ant-tag-checkable-checked {
+                    background: #e6f0f8;
+                    border-color: #396d8f;
+                    color: #2a4d65;
+                }
+            }
+        }
+    }
 }
 
 .EditorExportTab {
@@ -629,6 +694,78 @@ $nav-height: 45px;
     .btn-clear-selection {
         margin-bottom: 0.7rem;
     }
+
+    .QuickAddSection {
+        margin-bottom: 1rem;
+
+        .quick-add-label {
+            font-size: 0.85rem;
+            color: #666;
+            white-space: nowrap;
+            padding-top: 0.3rem; // align with button text
+
+            .quick-add-hint {
+                font-size: 0.8rem;
+                color: #999;
+            }
+        }
+
+        .quick-add-buttons {
+            margin-top: 0.3rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+
+            .btn {
+                font-size: 0.85rem;
+                padding: 0.25rem 0.5rem;
+            }
+        }
+    }
+
+    .AddPeersSection {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        background: #fdfdfd;
+        border-radius: 3px;
+        border: 1px solid #e9ecef;
+
+        .add-peers-header {
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+
+            .add-peers-country-select {
+                display: inline-block;
+                width: auto;
+                font-weight: 600;
+                padding: 0.1rem 0.4rem;
+                font-size: 0.9rem;
+            }
+        }
+
+        .add-peers-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+
+            .btn {
+                font-size: 0.85rem;
+                padding: 0.25rem 0.5rem;
+            }
+        }
+    }
+
+    .SelectionResetButtons {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+
+        .btn {
+            font-size: 0.85rem;
+            padding: 0.25rem 0.5rem;
+        }
+    }
 }
 
 /* Reusable utility classes */
@@ -762,7 +899,7 @@ $nav-height: 45px;
     }
 }
 
-main:not(.ChartEditorPage):not(.GdocsEditPage) {
+main:not(.ChartEditorPage):not(.GdocsEditPage):not(.MultiDimDetailPage) {
     padding: 2em;
 }
 
@@ -1029,6 +1166,14 @@ main:not(.ChartEditorPage):not(.GdocsEditPage) {
     }
 }
 
+.TagEditPage {
+    .form-check-label {
+        &:has(input:disabled) {
+            cursor: default;
+        }
+    }
+}
+
 .DeploysPage {
     .all-published-notice {
         font-size: 18px;
@@ -1081,18 +1226,6 @@ main:not(.ChartEditorPage):not(.GdocsEditPage) {
     .cell-time {
         font-weight: 400;
         color: #777;
-    }
-}
-
-.BulkDownloadPage {
-    section {
-        background-color: #f9f9f9;
-        padding: 1.2em;
-        border-radius: 0.4em;
-        margin: 0.4em 0;
-        box-shadow:
-            0 1px 3px rgba(0, 0, 0, 0.12),
-            0 1px 2px rgba(0, 0, 0, 0.24);
     }
 }
 
@@ -1176,13 +1309,7 @@ main:not(.ChartEditorPage):not(.GdocsEditPage) {
             rgba(0, 0, 0, 0.24) 0px 1px 2px;
         background: #fff;
         &.draft {
-            background: repeating-linear-gradient(
-                135deg,
-                #f7f7f7,
-                #f7f7f7 10px,
-                #fff 10px,
-                #fff 20px
-            );
+            @include draft-background;
         }
     }
 
@@ -1199,6 +1326,152 @@ main:not(.ChartEditorPage):not(.GdocsEditPage) {
         pre {
             white-space: pre-line;
         }
+    }
+}
+
+.GdocsCoverageMatrix {
+    padding: 24px;
+}
+
+.GdocsCoverageMatrix__loading,
+.GdocsCoverageMatrix__error,
+.GdocsCoverageMatrix__empty {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    color: #6b7280;
+}
+
+.GdocsCoverageMatrix__error {
+    color: #b91c1c;
+}
+
+.GdocsCoverageMatrix__table-wrapper {
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.GdocsCoverageMatrix__table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+
+    th,
+    td {
+        border: 1px solid #e5e7eb;
+        padding: 6px 8px;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    th {
+        background: #f9fafb;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        text-align: center;
+    }
+}
+
+.GdocsCoverageMatrix__label {
+    position: sticky;
+    left: 0;
+    background: #fff;
+    z-index: 2;
+    max-width: 360px;
+
+    div {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.GdocsCoverageMatrix__cell {
+    width: 14px;
+    height: 14px;
+}
+
+.GdocsCoverageMatrix__cell--present {
+    background: #16a34a;
+}
+
+.GdocsCoverageMatrix__cell--missing {
+    background: #dc2626;
+}
+
+.GdocsCoverageMatrix__legend {
+    display: flex;
+    gap: 16px;
+    padding: 12px 4px;
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.GdocsCoverageMatrix__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    .GdocsCoverageMatrix__cell {
+        border: 1px solid #e5e7eb;
+    }
+}
+
+.CalloutFunctionsPage {
+    padding: 24px;
+}
+
+.CalloutFunctionsPage__form {
+    margin-top: 16px;
+}
+
+.CalloutFunctionsPage__input-group {
+    display: flex;
+    gap: 8px;
+
+    input {
+        flex: 1;
+    }
+}
+
+.CalloutFunctionsPage__results {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 16px;
+}
+
+.CalloutFunctionsPage__function-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.CalloutFunctionsPage__column-functions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    ul {
+        width: 100%;
+        margin-top: 8px;
+        li {
+            margin-bottom: 4px;
+            list-style: none;
+        }
+    }
+
+    code {
+        flex: 1;
+        font-size: 14px;
+        color: #1f2937;
     }
 }
 
@@ -1564,4 +1837,13 @@ main:not(.ChartEditorPage):not(.GdocsEditPage) {
 
 .ImageReplaceConfirmModal__strong-text {
     font-weight: bold;
+}
+
+.table-preview-col {
+    min-width: 140px;
+    width: 12.5%;
+}
+
+.table-preview-col--centered {
+    text-align: center;
 }

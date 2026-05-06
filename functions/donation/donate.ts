@@ -10,7 +10,7 @@ import {
 import { Env } from "../_common/env.js"
 import { DEFAULT_HEADERS, CORS_HEADERS } from "./_utils/constants.js"
 import { logError } from "./_utils/error.js"
-import { z } from "zod"
+import * as z from "zod"
 
 const filePath = "donation/donate.ts"
 
@@ -63,7 +63,9 @@ export const onRequestPost: PagesFunction<Env> = async ({
             )
 
         const session = await createCheckoutSession(data, env.STRIPE_API_KEY)
-        const sessionResponse: DonateSessionResponse = { url: session.url }
+        const sessionResponse: DonateSessionResponse = {
+            url: session.url ?? undefined,
+        }
 
         return new Response(JSON.stringify(sessionResponse), {
             headers: DEFAULT_HEADERS,
@@ -73,7 +75,13 @@ export const onRequestPost: PagesFunction<Env> = async ({
         // Using "waitUntil" to make sure the worker doesn't exit before the
         // request to Slack is complete. Not using "await" to avoid delaying
         // sending the response to the client.
-        waitUntil(logError(error, filePath, env))
+        waitUntil(
+            logError(
+                stringifyUnknownError(error) ?? "Unknown error",
+                filePath,
+                env
+            )
+        )
         if (!(error instanceof JsonError) || error.status >= 500) {
             Sentry.captureException(error)
         }
@@ -81,7 +89,7 @@ export const onRequestPost: PagesFunction<Env> = async ({
             JSON.stringify({ error: stringifyUnknownError(error) }),
             {
                 headers: DEFAULT_HEADERS,
-                status: +error.status || 500,
+                status: error instanceof JsonError ? error.status : 500,
             }
         )
     }
@@ -94,6 +102,6 @@ async function isCaptchaValid(token: string, key: string): Promise<boolean> {
             method: "POST",
         }
     )
-    const json = (await response.json()) as { success: boolean }
+    const json: { success: boolean } = await response.json()
     return json.success
 }

@@ -15,7 +15,11 @@ import {
     SeriesPoint,
 } from "./ScatterPlotChartConstants"
 import { computed, makeObservable } from "mobx"
-import { autoDetectYColumnSlugs, makeSelectionArray } from "../chart/ChartUtils"
+import {
+    autoDetectYColumnSlugs,
+    getShortNameForEntity,
+    makeSelectionArray,
+} from "../chart/ChartUtils"
 import {
     ChartErrorInfo,
     ColorSchemeName,
@@ -225,6 +229,10 @@ export class ScatterPlotChartState implements ChartState, ColorScaleManager {
         return xColumnSlug ?? this.manager.table.timeColumn.slug
     }
 
+    @computed get isTimeScatter(): boolean {
+        return this.manager.xColumnSlug === undefined
+    }
+
     @computed get xColumn(): CoreColumn {
         return this.transformedTable.get(this.xColumnSlug)
     }
@@ -238,8 +246,7 @@ export class ScatterPlotChartState implements ChartState, ColorScaleManager {
     }
 
     @computed get colorColumnSlug(): string | undefined {
-        // Scatter plots only support categorical variables as color dimension
-        return this.manager.categoricalColorColumnSlug
+        return this.manager.colorColumnSlug
     }
 
     @computed get colorColumn(): CoreColumn {
@@ -378,6 +385,21 @@ export class ScatterPlotChartState implements ChartState, ColorScaleManager {
                             .valuesIncludingErrorValues[rowIndex] as number,
                         y: yColumn.originalTimeColumn
                             .valuesIncludingErrorValues[rowIndex] as number,
+                        // Technically, to be more correct, we should support distinct
+                        // start and end times for each axis, but for simplicity we use
+                        // a single span (see getAverageAnnualChangeIndicesByEntity)
+                        span: this.manager.isRelativeMode
+                            ? [
+                                  yColumn.originalStartTimeColumn
+                                      .valuesIncludingErrorValues[
+                                      rowIndex
+                                  ] as number,
+                                  yColumn.originalTimeColumn
+                                      .valuesIncludingErrorValues[
+                                      rowIndex
+                                  ] as number,
+                              ]
+                            : undefined,
                     },
                 }
             })
@@ -388,9 +410,10 @@ export class ScatterPlotChartState implements ChartState, ColorScaleManager {
         return Object.entries(
             _.groupBy(this.allPointsBeforeEndpointsFilter, (p) => p.entityName)
         ).map(([entityName, points]) => {
+            const shortEntityName = getShortNameForEntity(entityName)
             const series: ScatterSeries = {
                 seriesName: entityName,
-                label: entityName,
+                label: shortEntityName ?? entityName,
                 color: SCATTER_POINT_DEFAULT_COLOR,
                 points,
                 focus: this.focusArray.state(entityName),

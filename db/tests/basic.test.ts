@@ -1,7 +1,7 @@
 import { expect, beforeAll, test, afterAll } from "vitest"
 
 import { dbTestConfig } from "./dbTestConfig.js"
-import { knex, Knex } from "knex"
+import knex, { Knex } from "knex"
 import {
     knexRaw,
     knexReadWriteTransaction,
@@ -37,7 +37,6 @@ beforeAll(async () => {
                 id: 1,
                 email: "admin@example.com",
                 fullName: "Admin",
-                password: "admin",
                 createdAt: new Date(),
                 updatedAt: new Date(),
             },
@@ -87,7 +86,6 @@ test("createdAt timestamp is automatically created", async () => {
                 configId,
                 lastEditedAt: new Date(),
                 lastEditedByUserId: user.id,
-                isIndexable: false,
             }
             await trx.table(ChartConfigsTableName).insert(chartConfig)
             const res = await trx.table(ChartsTableName).insert(chart)

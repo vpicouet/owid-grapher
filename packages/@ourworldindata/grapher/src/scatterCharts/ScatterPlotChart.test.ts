@@ -57,7 +57,7 @@ it("shows error when X or Y columns are missing", () => {
 it("doesn't show 'No data' bin when there is no color column", () => {
     const manager: ScatterPlotManager = {
         table: SynthesizeGDPTable(),
-        categoricalColorColumnSlug: undefined,
+        colorColumnSlug: undefined,
     }
     const chartState = new ScatterPlotChartState({ manager })
     expect(chartState.errorInfo.reason).toBeFalsy()
@@ -246,7 +246,7 @@ describe("basic scatterplot", () => {
     it("plots correct series", () => {
         expect(chartState.series).toEqual([
             {
-                color: ContinentColors.Africa, // First "continents" color
+                color: ContinentColors.Europe,
                 isScaleColor: true,
                 label: "UK",
                 points: [
@@ -325,7 +325,7 @@ describe("label point strategies", () => {
     const manager: ScatterPlotManager = {
         xColumnSlug: "x",
         yColumnSlug: "y",
-        categoricalColorColumnSlug: "color",
+        colorColumnSlug: "color",
         sizeColumnSlug: "size",
         table,
     }
@@ -394,7 +394,7 @@ it("assigns entity colors to series, overriding colorScale color", () => {
     const manager: ScatterPlotManager = {
         xColumnSlug: "x",
         yColumnSlug: "y",
-        categoricalColorColumnSlug: "color",
+        colorColumnSlug: "color",
         sizeColumnSlug: "size",
         table,
     }
@@ -503,7 +503,7 @@ describe("colors & legend", () => {
     const manager: ScatterPlotManager = {
         xColumnSlug: "x",
         yColumnSlug: "y",
-        categoricalColorColumnSlug: "color",
+        colorColumnSlug: "color",
         sizeColumnSlug: "size",
         table,
         tableAfterAuthorTimelineAndActiveChartTransform: tableWithoutChina,
@@ -541,7 +541,9 @@ describe("colors & legend", () => {
     })
 
     it("legend contains every continent for which there is data (before timeline filter)", () => {
-        expect(chart.legendItems.map((item) => item.label).sort()).toEqual([
+        expect(
+            chart.categoricalLegendData.map((item) => item.label).sort()
+        ).toEqual([
             "Africa",
             "Europe",
             "North America",
@@ -607,7 +609,7 @@ describe("series transformations", () => {
     const manager: ScatterPlotManager = {
         xColumnSlug: "x",
         yColumnSlug: "y",
-        categoricalColorColumnSlug: "color",
+        colorColumnSlug: "color",
         sizeColumnSlug: "size",
         table,
     }
@@ -690,7 +692,7 @@ describe("average annual change", () => {
     const manager: ScatterPlotManager = {
         xColumnSlug: "x",
         yColumnSlug: "y",
-        categoricalColorColumnSlug: "color",
+        colorColumnSlug: "color",
         sizeColumnSlug: "size",
         isRelativeMode: true,
         // Setting log axes to make sure they're ignored in relative mode
@@ -726,6 +728,11 @@ describe("average annual change", () => {
             ScaleType.linear
         )
         expect(chart.dualAxis.verticalAxis.scaleType).toEqual(ScaleType.linear)
+    })
+
+    it("sets time.span correctly in relative mode", () => {
+        const point = chartState.series[0].points[0]
+        expect(point.time.span).toEqual([2000, 2002])
     })
 })
 
@@ -768,7 +775,7 @@ describe("scatter plot with xOverrideTime", () => {
     const manager: ScatterPlotManager = {
         xColumnSlug: "x",
         yColumnSlug: "y",
-        categoricalColorColumnSlug: "color",
+        colorColumnSlug: "color",
         sizeColumnSlug: "size",
         table,
     }
@@ -964,7 +971,7 @@ describe("correct bubble sizes", () => {
             sizeScale: chart["sizeScale"],
             fontScale: chart["fontScale"],
             baseFontSize: chart["fontSize"],
-            focusedSeriesNames: chart["focusedEntityNames"],
+            focusedSeriesNames: chart["selectedEntityNames"],
             hoveredSeriesNames: chart["hoveredSeriesNames"],
             onMouseEnter: chart["onScatterMouseEnter"],
             onMouseLeave: chart["onScatterMouseLeave"],
@@ -1029,7 +1036,7 @@ describe("correct bubble sizes", () => {
             sizeScale: chart["sizeScale"],
             fontScale: chart["fontScale"],
             baseFontSize: chart["fontSize"],
-            focusedSeriesNames: chart["focusedEntityNames"],
+            focusedSeriesNames: chart["selectedEntityNames"],
             hoveredSeriesNames: chart["hoveredSeriesNames"],
             onMouseEnter: chart["onScatterMouseEnter"],
             onMouseLeave: chart["onScatterMouseLeave"],
@@ -1096,4 +1103,40 @@ it("applies color tolerance before applying the author timeline filter", () => {
             chartState.transformedTable.get("color").valuesIncludingErrorValues
         )
     ).toEqual(["Europe"])
+})
+
+describe("continent colors remain consistent regardless of data", () => {
+    it("assigns correct colors even when some continents are missing", () => {
+        // Test with only Asia and Europe (missing Africa, which is first in palette)
+        const table1 = new OwidTable(
+            [
+                ["entityId", "entityName", "year", "x", "y", "color"],
+                [1, "China", 2000, 1, 1, "Asia"],
+                [2, "Germany", 2000, 2, 2, "Europe"],
+            ],
+            [
+                { slug: "x", type: ColumnTypeNames.Numeric },
+                { slug: "y", type: ColumnTypeNames.Numeric },
+                { slug: "color", type: ColumnTypeNames.String },
+            ]
+        )
+
+        const manager: ScatterPlotManager = {
+            xColumnSlug: "x",
+            yColumnSlug: "y",
+            colorColumnSlug: "color",
+            table: table1,
+        }
+
+        const chartState1 = new ScatterPlotChartState({ manager })
+
+        // Asia should get its designated color (Teal), not the first color (Africa's Mauve)
+        expect(chartState1.colorScale.getColor("Asia")).toEqual(
+            ContinentColors.Asia
+        )
+        // Europe should get its designated color (Denim), not the second color (Asia's Teal)
+        expect(chartState1.colorScale.getColor("Europe")).toEqual(
+            ContinentColors.Europe
+        )
+    })
 })

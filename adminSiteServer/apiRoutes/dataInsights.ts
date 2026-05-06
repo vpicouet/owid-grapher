@@ -1,24 +1,30 @@
-import e from "express"
 import { Request } from "../authentication.js"
+import { HandlerResponse } from "../FunctionalRouter.js"
 import {
     DbPlainNarrativeChart,
     DbRawChartConfig,
     DbRawImage,
     DbRawPostGdoc,
+    GdocsContentSource,
     GRAPHER_MAP_TYPE,
     GRAPHER_TAB_NAMES,
     GrapherChartOrMapType,
     GrapherInterface,
     MinimalTag,
+    OwidGdocBaseInterface,
     OwidGdocDataInsightContent,
     OwidGdocDataInsightIndexItem,
     parseChartConfig,
     parsePostGdocContent,
+    parsePostsGdocsRow,
+    PostsGdocsTableName,
 } from "@ourworldindata/types"
 import * as db from "../../db/db.js"
 import {
     createOrLoadGdocById,
     getTagsGroupedByGdocId,
+    loadGdocFromGdocBase,
+    updateGdocContentOnly,
 } from "../../db/model/Gdoc/GdocFactory.js"
 import {
     createGdocFromTemplate,
@@ -45,7 +51,7 @@ type DataInsightRow = Pick<
 
 export async function getAllDataInsightIndexItems(
     _req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     return getAllDataInsightIndexItemsOrderedByUpdatedAt(trx)
@@ -53,7 +59,7 @@ export async function getAllDataInsightIndexItems(
 
 export async function createDataInsightGDoc(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     // Find the user's data insight folder
@@ -156,7 +162,7 @@ async function getAllDataInsightIndexItemsOrderedByUpdatedAt(
     return rows.map((row) =>
         extractDataInsightIndexItem({
             ...row,
-            tags: groupedTags[row.gdocId] ? groupedTags[row.gdocId] : undefined,
+            tags: groupedTags.get(row.gdocId),
         })
     )
 }
@@ -272,4 +278,64 @@ export function getChartTypeFromConfigAndQueryParams(
         return GRAPHER_MAP_TYPE
 
     return undefined
+}
+
+export async function refreshDataInsights(
+    req: Request,
+    _res: HandlerResponse,
+    trx: db.KnexReadWriteTransaction
+): Promise<{
+    success: boolean
+    updated: number
+    errored: number
+    errors: Array<{ id: string; message: string }>
+}> {
+    const gdocIds: string[] = req.body.gdocIds
+
+    // No-op if no IDs were provided
+    if (gdocIds.length === 0)
+        return { success: true, updated: 0, errored: 0, errors: [] }
+
+    // Fetch the requested data insights from the database
+    const rows = await trx
+        .table<DbRawPostGdoc>(PostsGdocsTableName)
+        .where("type", "data-insight")
+        .where("published", 0) // Only refresh unpublished data insights
+        .whereIn("id", gdocIds)
+
+    const records: OwidGdocBaseInterface[] = rows.map((row) =>
+        parsePostsGdocsRow(row)
+    )
+
+    let updated = 0
+    const errors: Array<{ id: string; message: string }> = []
+
+    // Fetch fresh content from Google Docs for each data insight
+    await Promise.all(
+        records.map(async (record) => {
+            try {
+                const gdoc = await loadGdocFromGdocBase(
+                    trx,
+                    record,
+                    GdocsContentSource.Gdocs,
+                    false,
+                    { loadState: false }
+                )
+
+                // Only write to DB if the revision id changed
+                if (gdoc.revisionId !== record.revisionId) {
+                    await updateGdocContentOnly(trx, gdoc.id, gdoc)
+                    updated++
+                }
+            } catch (error) {
+                errors.push({
+                    id: record.id,
+                    message:
+                        error instanceof Error ? error.message : String(error),
+                })
+            }
+        })
+    )
+
+    return { success: true, updated, errored: errors.length, errors }
 }

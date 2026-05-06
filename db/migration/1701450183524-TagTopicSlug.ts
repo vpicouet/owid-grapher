@@ -182,8 +182,8 @@ async function writeToSlugMap(path: string, slug: string): Promise<void> {
     return
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function resolveSlugs(): Promise<void> {
+// @ts-expect-error unused but keep for reference
+async function _resolveSlugs(): Promise<void> {
     console.log("Resolving slugs 🚀")
     const slugMap = await readSlugMap()
     for (const topicTagName of topicTagNames) {
@@ -224,7 +224,7 @@ const topicsThatAreNoLongerTopics = [
     "Labor Supply & Employment",
 ].map((topic) => topic.replace(/'/g, "''"))
 
-// prettier-ignore
+// oxfmt-ignore
 const manualSlugMap: Record<string, string> = {
     "HIV/AIDS": "hiv-aids",
     "Suicides": "suicide",
@@ -252,7 +252,7 @@ const manualSlugMap: Record<string, string> = {
 // The result of running resolveSlugs() on 2023-12-01
 // Plus manualSlugMap resolutions
 // Minus topicsThatAreNoLongerTopics
-// prettier-ignore
+// oxfmt-ignore
 const tagNameSlugResolutions = {
    ...manualSlugMap,
   "Child & Infant Mortality": "child-and-infant-mortality",

@@ -37,19 +37,19 @@ $slide-content-height: $grapher-height;
 
         &.left {
             left: 0;
+            border-right: 1px solid $blue-10;
+            clip-path: inset(0 -2.5rem 0 0);
             @include lg-up {
                 left: -48px;
             }
-            border-right: 1px solid $blue-10;
-            clip-path: inset(0 -2.5rem 0 0);
         }
         &.right {
             right: 0;
+            border-left: 1px solid $blue-10;
+            clip-path: inset(0 0 0 -2.5rem);
             @include lg-up {
                 right: -48px;
             }
-            border-left: 1px solid $blue-10;
-            clip-path: inset(0 0 0 -2.5rem);
         }
     }
 
@@ -139,20 +139,32 @@ $slide-content-height: $grapher-height;
     }
 
     .slide {
-        display: none;
-        &[data-active="true"] {
-            display: block;
-        }
+        // Keep inactive slides in the layout tree, rather than using
+        // `display: none`. Interactive charts can render while their slide is
+        // inactive (especially once chart data is cached); if their container
+        // has no measurable width, Grapher briefly lays out its title in a
+        // one-letter-per-line column when the slide is shown.
+        height: 0;
+        overflow: hidden;
+        visibility: hidden;
+    }
+
+    .slide[data-active="true"] {
+        height: auto;
+        overflow: visible;
+        visibility: visible;
     }
 }
 
 .key-insights-title {
     @include h2-bold;
-    margin: 0 0 $vertical-spacing;
+    & {
+        margin: 0 0 $vertical-spacing;
+    }
 }
 
 .article-block__key-insights-content-column {
-    p {
+    @include text-block-override {
         @include body-2-regular;
     }
 }

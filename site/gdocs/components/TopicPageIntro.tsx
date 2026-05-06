@@ -2,9 +2,8 @@ import {
     EnrichedTopicPageIntroRelatedTopic,
     EnrichedBlockTopicPageIntro,
 } from "@ourworldindata/utils"
-import { useContext } from "react"
 import { useLinkedDocument } from "../utils.js"
-import { DocumentContext } from "../DocumentContext.js"
+import { useDocumentContext } from "../DocumentContext.js"
 import Paragraph from "./Paragraph.js"
 
 type TopicPageIntroProps = EnrichedBlockTopicPageIntro & {
@@ -16,7 +15,7 @@ function TopicPageRelatedTopic({
     url,
 }: EnrichedTopicPageIntroRelatedTopic) {
     const { linkedDocument, errorMessage } = useLinkedDocument(url)
-    const { isPreviewing } = useContext(DocumentContext)
+    const { isPreviewing } = useDocumentContext()
     if (errorMessage && isPreviewing) {
         return <li>{errorMessage}</li>
     }
@@ -40,7 +39,7 @@ export function TopicPageIntro(props: TopicPageIntroProps) {
             <div className="topic-page-intro__links col-start-9 span-cols-4 col-md-start-1 span-md-cols-12">
                 {props.downloadButton ? (
                     <div className="topic-page-intro__download-button">
-                        <a href={props.downloadButton.url} rel="noopener">
+                        <a href={props.downloadButton.url}>
                             {props.downloadButton.text}
                         </a>
                     </div>

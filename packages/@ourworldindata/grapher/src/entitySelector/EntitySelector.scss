@@ -18,6 +18,7 @@
         flex: 1 1 auto;
         overflow-y: auto;
         width: 100%;
+        position: relative;
     }
 
     .entity-selector__search-bar {
@@ -170,6 +171,10 @@
 
             &:hover {
                 background: rgba(219, 229, 240, 0.4);
+
+                .value {
+                    color: $gray-80;
+                }
             }
 
             &--muted {
@@ -181,7 +186,7 @@
             }
 
             .value {
-                color: $gray-60;
+                color: $gray-70;
                 white-space: nowrap;
                 margin-left: 12px;
                 padding-top: 9px;
@@ -197,13 +202,11 @@
                 z-index: -1;
             }
 
-            .label-with-location-icon {
-                &--no-line-break {
-                    white-space: nowrap;
-                }
+            .location-icon {
+                white-space: nowrap;
 
                 svg {
-                    margin-left: 6px;
+                    margin-left: 2px;
                     font-size: 0.9em;
                     color: $gray-60;
 
@@ -212,6 +215,10 @@
                         outline: none;
                     }
                 }
+            }
+
+            .suffix {
+                color: $light-text;
             }
         }
 

@@ -1,0 +1,89 @@
+.explore-data-section {
+    background-color: $blue-5;
+    padding: 40px 0;
+
+    > *:first-child {
+        margin-top: 0;
+    }
+
+    > *:last-child {
+        margin-bottom: 0;
+    }
+
+    h1 {
+        @include h1-semibold;
+        & {
+            margin: 0;
+        }
+    }
+
+    @include md-down {
+        @include column-block-override {
+            > .article-block__heading {
+                margin-top: 0;
+            }
+        }
+    }
+
+    .article-block__prominent-link {
+        background-color: $blue-20;
+    }
+}
+
+.explore-data-section__header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+
+    .icon {
+        display: flex;
+        padding: 8px;
+        background-color: $blue-20;
+        @include sm-only {
+            display: none;
+        }
+    }
+}
+
+.explore-data-section--left {
+    .explore-data-section__header {
+        margin-bottom: 40px;
+    }
+
+    // Use the margin bottom from the header 👆
+    > [class*="article-block__sticky"]:first-of-type {
+        margin-top: 0;
+    }
+
+    // Selects sticky article blocks (2nd onwards) that have an h2 as their first child element
+    > [class*="article-block__sticky"]:nth-of-type(n + 2):has(h2:first-child) {
+        margin-top: 32px;
+        padding-top: 32px;
+        border-top: 1px solid $blue-20;
+    }
+}
+
+.explore-data-section--center {
+    .explore-data-section__header {
+        gap: 16px;
+        margin-bottom: 24px;
+        justify-content: center;
+    }
+
+    .article-block__text {
+        @include body-2-regular;
+
+        &:has(+ .article-block__explorer) {
+            margin-bottom: 0;
+        }
+    }
+
+    .article-block__text,
+    .article-block__heading {
+        text-align: center;
+    }
+
+    .article-block__explorer {
+        margin-bottom: 24px;
+    }
+}

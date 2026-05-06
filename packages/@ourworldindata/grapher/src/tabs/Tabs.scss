@@ -1,35 +1,66 @@
+// Mixins for slim tab styling, shared with ContentSwitchers.scss
+@mixin slim-tab-item {
+    $visual-gap: 2px;
+
+    position: relative;
+    display: block;
+    text-transform: capitalize;
+    color: $light-text;
+    font-size: var(--tabs-font-size, 13px);
+    font-weight: 500;
+    height: $controlRowHeight - 2 * $visual-gap;
+    line-height: $controlRowHeight - 2 * $visual-gap;
+    border-radius: $visual-gap;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    user-select: none;
+    text-align: center;
+
+    &[data-hovered] {
+        background-color: $gray-10;
+    }
+}
+@mixin slim-tab-separator {
+    &::before {
+        content: "";
+        display: block;
+        width: 1px;
+        height: calc(100% - 12px);
+        position: absolute;
+        top: 6px;
+        background-color: $gray-20;
+        left: -0.5px;
+    }
+}
+
 .Tabs {
     position: relative;
-
-    &--horizontal-scroll {
-        overflow-x: auto;
-        white-space: nowrap;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-    }
 
     &::-webkit-scrollbar {
         display: none;
     }
 
     // Variant: default
-    &.Tabs--variant-default {
+    &.Tabs--variant-default,
+    &.Tabs--variant-scroll {
         margin: 16px 0;
+        display: flex;
 
         .Tabs__Tab {
             @include grapher_label-2-medium;
+            flex-shrink: 0;
             display: inline-block;
             margin: 0 8px 8px 0;
-            padding: 8px 16px;
+            padding: 8px;
             border: 1px solid $blue-10;
             background: #fff;
-            color: $light-text;
-            white-space: nowrap;
-            text-overflow: ellipsis;
-            overflow: hidden;
+            color: $dark-text;
+            white-space: normal;
             cursor: pointer;
+            text-wrap: balance;
 
-            &:hover {
+            &[data-hovered] {
                 background-color: $gray-10;
                 border-color: $gray-10;
             }
@@ -42,14 +73,32 @@
         }
     }
 
+    // Variant: horizontal scroll
+    &.Tabs--variant-scroll {
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+
+        $fade-out-width: 40px;
+        padding-right: $fade-out-width;
+        mask-image: linear-gradient(
+            to right,
+            black calc(100% - #{$fade-out-width}),
+            transparent 100%
+        );
+        -webkit-mask-image: linear-gradient(
+            to right,
+            black calc(100% - #{$fade-out-width}),
+            transparent 100%
+        );
+    }
+
     // Variant: slim
     &.Tabs--variant-slim {
-        $font-size: var(--tabs-font-size, 13px);
         --tab-padding: 16px;
 
         $light-stroke: $gray-20;
-
-        $hover-fill: $gray-10;
         $active-fill: $blue-20;
 
         $border-radius: 4px;
@@ -65,30 +114,10 @@
         border-radius: $border-radius;
 
         .Tabs__Tab {
-            position: relative;
-
-            $height: $controlRowHeight - 2 * $visual-gap;
-
-            display: block;
-            text-transform: capitalize;
-            color: $light-text;
-            font-size: $font-size;
-            font-weight: 500;
-            height: $height;
-            line-height: $height;
-            border-radius: $border-radius - $visual-gap;
+            @include slim-tab-item;
             padding: 0 var(--tab-padding);
-            cursor: pointer;
-            letter-spacing: 0.01em;
-            white-space: nowrap;
-            user-select: none;
-            text-align: center;
             text-overflow: ellipsis;
             overflow: hidden;
-
-            &:hover {
-                background-color: $hover-fill;
-            }
 
             &[data-selected] {
                 color: $active-text;
@@ -97,23 +126,50 @@
         }
 
         // separators between tabs
-        .Tabs__Tab + .Tabs__Tab::before {
-            content: "";
-            display: block;
-            width: 1px;
-            height: calc(100% - 12px);
-            position: absolute;
-            top: 6px;
-            background-color: $light-stroke;
-            left: -0.5px;
+        .Tabs__Tab + .Tabs__Tab {
+            @include slim-tab-separator;
         }
 
         // hide separators when a tab is hovered over or when a tab is active
         .Tabs__Tab[data-selected]::before,
-        .Tabs__Tab:hover::before,
+        .Tabs__Tab[data-hovered]::before,
         .Tabs__Tab[data-selected] + .Tabs__Tab::before,
-        .Tabs__Tab:hover + .Tabs__Tab::before {
+        .Tabs__Tab[data-hovered] + .Tabs__Tab::before {
             display: none;
+        }
+    }
+
+    // Variant: stretch
+    &.Tabs--variant-stretch {
+        display: flex;
+        gap: 8px;
+
+        $hover-fill: $gray-10;
+        $active-fill: $accent-pale-blue;
+
+        .Tabs__Tab {
+            flex-grow: 1;
+            flex-shrink: 1;
+
+            @include grapher_label-2-medium;
+            display: inline-block;
+            padding: 8px;
+            border: 1px solid $blue-10;
+            background: #fff;
+            color: $dark-text;
+            cursor: pointer;
+            text-wrap: balance;
+
+            &[data-hovered] {
+                background-color: $hover-fill;
+                border-color: $hover-fill;
+            }
+
+            &[data-selected] {
+                background: $active-fill;
+                border-color: $active-fill;
+                color: $blue-90;
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 import * as _ from "lodash-es"
+import * as R from "remeda"
 import {
     Bounds,
     getAttributionFragmentsFromVariable,
@@ -25,7 +26,7 @@ import {
 } from "@ourworldindata/components"
 import * as React from "react"
 import cx from "classnames"
-import { action, computed, makeObservable } from "mobx"
+import { action, computed, makeObservable, observable } from "mobx"
 import { observer } from "mobx-react"
 import { faPencilAlt } from "@fortawesome/free-solid-svg-icons"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
@@ -35,25 +36,24 @@ import { Modal } from "./Modal"
 import { SourcesKeyDataTable } from "./SourcesKeyDataTable"
 import { SourcesDescriptions } from "./SourcesDescriptions"
 import { TabItem, Tabs } from "../tabs/Tabs"
-import { ExpandableTabs } from "../tabs/ExpandableTabs"
+import { TabsWithDropdown } from "../tabs/TabsWithDropdown"
 import {
     DEFAULT_GRAPHER_BOUNDS,
     GrapherModal,
     isContinentsVariableId,
 } from "../core/GrapherConstants"
-import * as R from "remeda"
 
 // keep in sync with variables in SourcesModal.scss
 const MAX_CONTENT_WIDTH = 640
-const TAB_PADDING = 16
+const TAB_PADDING = 8
 const TAB_FONT_SIZE = 13
 const TAB_GAP = 8
-const TAB_TITLE_SPACING = 8
+const TAB_TITLE_SPACING = 6
 
 export interface SourcesModalManager {
     isReady?: boolean
     adminBaseUrl?: string
-    columnsWithSourcesExtensive: CoreColumn[]
+    inputColumnsWithSources: CoreColumn[]
     showAdminControls?: boolean
     activeModal?: GrapherModal
     frameBounds?: Bounds
@@ -66,19 +66,25 @@ interface SourcesModalProps {
     manager: SourcesModalManager
 }
 
-interface SourcesModalState {
-    activeTabKey: string
-}
-
 @observer
-export class SourcesModal extends React.Component<
-    SourcesModalProps,
-    SourcesModalState
-> {
+export class SourcesModal extends React.Component<SourcesModalProps> {
+    private readonly container = React.createRef<HTMLDivElement>()
+
+    private activeTabKey = ""
+
     constructor(props: SourcesModalProps) {
         super(props)
-        makeObservable(this)
-        this.state = { activeTabKey: this.tabs[0].label.key }
+        makeObservable<SourcesModal, "activeTabKey">(this, {
+            activeTabKey: observable,
+        })
+    }
+
+    @action override componentDidMount(): void {
+        this.activeTabKey = this.tabs[0]?.label.key ?? ""
+    }
+
+    @action.bound private setActiveTabKey(key: string): void {
+        this.activeTabKey = key
     }
 
     @computed private get manager(): SourcesModalManager {
@@ -111,7 +117,7 @@ export class SourcesModal extends React.Component<
     }
 
     @computed private get columns(): CoreColumn[] {
-        return this.manager.columnsWithSourcesExtensive
+        return this.manager.inputColumnsWithSources
     }
 
     private makeTabLabelString(title: string, attribution?: string): string {
@@ -134,16 +140,31 @@ export class SourcesModal extends React.Component<
 
     @computed private get tabs(): {
         column: CoreColumn
+        title: string
         label: TabItem
     }[] {
         return _.uniqBy(
             this.columns.map((column) => {
-                const title = column.titlePublicOrDisplayName.title
+                let title = column.titlePublicOrDisplayName.title
+
+                // Historical and projected columns may have the same name,
+                // so we add "(projection)" to the title of projected columns
+                // to distinguish them
+                if (
+                    column.isProjection &&
+                    this.columns.some(
+                        (c) => title === c.titlePublicOrDisplayName.title
+                    )
+                )
+                    title += " (projection)"
+
                 const attribution = joinTitleFragments(
                     column.titlePublicOrDisplayName.attributionShort,
                     column.titlePublicOrDisplayName.titleVariant
                 )
+
                 return {
+                    title,
                     column,
                     label: {
                         key: this.makeTabLabelString(title, attribution),
@@ -167,16 +188,20 @@ export class SourcesModal extends React.Component<
                 column.titlePublicOrDisplayName.attributionShort,
                 column.titlePublicOrDisplayName.titleVariant
             )
-            return measureTabWidth(title, fragments) + TAB_GAP
+            return measureTabWidth(title, fragments)
         })
     }
 
-    private renderSource(
-        column: CoreColumn | undefined
-    ): React.ReactElement | null {
-        if (!column) return null
+    private renderSource({
+        column,
+        title,
+    }: {
+        column: CoreColumn
+        title?: string
+    }): React.ReactElement {
         return (
             <Source
+                title={title}
                 column={column}
                 editBaseUrl={this.editBaseUrl}
                 isEmbeddedInADataPage={
@@ -187,110 +212,91 @@ export class SourcesModal extends React.Component<
     }
 
     private renderTabs(): React.ReactElement {
-        const activeTabKey = this.state.activeTabKey
-        const onChange = (key: string) => {
-            this.setState({ activeTabKey: key })
-        }
-
-        // tabs are clipped to this width
-        const maxTabWidth = 240
-
-        // on mobile, we show a horizontally scrolling tabs
+        // Display horizontally scrolling tabs on mobile
         if (this.manager.isNarrow) {
             return (
                 <Tabs
+                    className="sources-modal-tabs"
                     items={this.tabLabels}
-                    selectedKey={activeTabKey}
-                    onChange={onChange}
-                    horizontalScroll={true}
-                    maxTabWidth={maxTabWidth}
+                    selectedKey={this.activeTabKey}
+                    onChange={this.setActiveTabKey}
+                    variant="scroll"
                 />
             )
         }
 
-        // maximum width available for tabs
-        const maxWidth = Math.min(
-            MAX_CONTENT_WIDTH,
-            this.modalBounds.width - 2 * this.modalPadding - 10 // wiggle room
-        )
-
-        // check if all tab labels fit into a single line
-        if (_.sum(this.tabLabelWidths) <= maxWidth) {
+        // Show all tabs if there are 4 or fewer
+        if (this.tabs.length <= 4) {
             return (
                 <Tabs
+                    className="sources-modal-tabs"
                     items={this.tabLabels}
-                    selectedKey={activeTabKey}
-                    onChange={onChange}
+                    selectedKey={this.activeTabKey}
+                    onChange={this.setActiveTabKey}
+                    variant="scroll"
                 />
             )
         }
 
-        const clippedLabelWidths = this.tabLabelWidths.map((labelWidth) =>
-            Math.min(labelWidth, maxTabWidth + TAB_GAP)
-        )
-
-        // check if all tab labels fit into a single line when they are clipped
-        if (_.sum(clippedLabelWidths) <= maxWidth) {
-            return (
-                <Tabs
-                    items={this.tabLabels}
-                    selectedKey={activeTabKey}
-                    onChange={onChange}
-                    maxTabWidth={maxTabWidth}
-                />
-            )
-        }
-
-        // compute the subset of tabs that fit into a single line
+        // Find the subset of tabs that fit into a single line
         const getVisibleLabels = (labels: TabItem[]): TabItem[] => {
-            // take width of the "Show more" button into account
-            let width =
-                measureTabWidth("Show more") +
-                13 + // icon width
-                6 // icon padding
+            // Maximum width available for tabs
+            const maxWidth = Math.min(
+                MAX_CONTENT_WIDTH,
+                this.modalBounds.width - 2 * this.modalPadding
+            )
+
+            // Hardcoded width of the "More" button
+            const moreButtonWidth = 74
 
             const visibleLabels: TabItem[] = []
+            let currentWidth = moreButtonWidth
             for (const [label, labelWidth] of R.zip(
                 labels,
-                clippedLabelWidths
+                this.tabLabelWidths
             )) {
-                width += labelWidth as number
-                if (width > maxWidth) break
-                visibleLabels.push(label!)
+                currentWidth += labelWidth + TAB_GAP
+                if (currentWidth > maxWidth) break
+                visibleLabels.push(label)
             }
 
             return visibleLabels
         }
 
-        // if only a single label would be visible, we prefer tabs with horizontal scrolling
         const visibleLabels = getVisibleLabels(this.tabLabels)
-        if (visibleLabels.length <= 1) {
+
+        // No need for a dropdown if all tabs are visible
+        if (visibleLabels.length === this.tabLabels.length) {
             return (
                 <Tabs
+                    className="sources-modal-tabs"
                     items={this.tabLabels}
-                    selectedKey={activeTabKey}
-                    onChange={onChange}
-                    horizontalScroll={true}
-                    maxTabWidth={maxTabWidth}
+                    selectedKey={this.activeTabKey}
+                    onChange={this.setActiveTabKey}
+                    variant="scroll"
                 />
             )
         }
 
+        // Ensure at least 3 tabs are visible
+        const numVisibleTabs = Math.max(3, visibleLabels.length)
+
         return (
-            <ExpandableTabs
+            <TabsWithDropdown
+                className="sources-modal-tabs"
                 items={this.tabLabels}
-                selectedKey={activeTabKey}
-                onChange={onChange}
-                getVisibleItems={getVisibleLabels}
-                maxTabWidth={maxTabWidth}
+                selectedKey={this.activeTabKey}
+                onChange={this.setActiveTabKey}
+                numVisibleTabs={numVisibleTabs}
+                portalContainer={this.container.current ?? undefined}
             />
         )
     }
 
     private renderMultipleSources(): React.ReactElement {
-        const activeColumn = this.tabs.find(
-            (tab) => tab.label.key === this.state.activeTabKey
-        )?.column
+        const activeTab = this.tabs.find(
+            (tab) => tab.label.key === this.activeTabKey
+        )
 
         return (
             <>
@@ -299,14 +305,14 @@ export class SourcesModal extends React.Component<
                     indicator for more information.
                 </p>
                 {this.renderTabs()}
-                {this.renderSource(activeColumn)}
+                {activeTab && this.renderSource(activeTab)}
             </>
         )
     }
 
     private renderModalContent(): React.ReactElement | null {
         return this.tabs.length === 1
-            ? this.renderSource(this.tabs[0].column)
+            ? this.renderSource({ column: this.tabs[0].column })
             : this.renderMultipleSources()
     }
 
@@ -321,7 +327,7 @@ export class SourcesModal extends React.Component<
                 isHeightFixed={true}
                 onDismiss={this.onDismiss}
             >
-                <div className="sources-modal-content">
+                <div className="sources-modal-content" ref={this.container}>
                     {this.showStickyHeader ? (
                         <OverlayHeader title="" onDismiss={this.onDismiss} />
                     ) : (
@@ -351,6 +357,7 @@ export class SourcesModal extends React.Component<
 
 interface SourceProps {
     column: CoreColumn
+    title?: string
     editBaseUrl?: string
     isEmbeddedInADataPage?: boolean
 }
@@ -380,7 +387,7 @@ export class Source extends React.Component<SourceProps> {
 
     @computed get citationLong(): string {
         return getCitationLong(
-            this.title,
+            this.titleWithFragments,
             this.def.origins ?? [],
             this.source,
             getAttributionFragmentsFromVariable(this.def),
@@ -396,8 +403,12 @@ export class Source extends React.Component<SourceProps> {
         return this.def.source ?? {}
     }
 
-    @computed private get title(): IndicatorTitleWithFragments {
+    @computed private get titleWithFragments(): IndicatorTitleWithFragments {
         return this.column.titlePublicOrDisplayName
+    }
+
+    @computed private get title(): string {
+        return this.props.title ?? this.titleWithFragments.title
     }
 
     @computed private get editUrl(): string | undefined {
@@ -478,19 +489,20 @@ export class Source extends React.Component<SourceProps> {
     protected renderTitle(): React.ReactElement {
         return (
             <h2>
-                <span className="title">{this.title.title}</span>{" "}
-                {(this.title.attributionShort || this.title.titleVariant) && (
+                <span className="title">{this.title}</span>{" "}
+                {(this.titleWithFragments.attributionShort ||
+                    this.titleWithFragments.titleVariant) && (
                     <>
                         <span className="title-fragments">
                             {joinTitleFragments(
-                                this.title.attributionShort,
-                                this.title.titleVariant
+                                this.titleWithFragments.attributionShort,
+                                this.titleWithFragments.titleVariant
                             )}
                         </span>{" "}
                     </>
                 )}
                 {this.editUrl && (
-                    <a href={this.editUrl} rel="noopener">
+                    <a href={this.editUrl}>
                         <FontAwesomeIcon icon={faPencilAlt} />
                     </a>
                 )}

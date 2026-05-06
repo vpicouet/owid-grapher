@@ -58,6 +58,10 @@ export interface SeriesPoint {
     time: {
         x: number
         y: number
+        // Time span in relative mode for both axes
+        // Technically, to be more correct, we should support distinct
+        // start and end times for each axis, but for simplicity we use
+        // a single span (see getAverageAnnualChangeIndicesByEntity)
         span?: [number, number]
     }
 }
@@ -123,6 +127,7 @@ export interface ScatterPointsWithLabelsProps {
     seriesArray: ScatterSeries[]
     hoveredSeriesNames?: SeriesName[]
     focusedSeriesNames?: SeriesName[]
+    isHoverModeActive?: boolean
     tooltipSeriesName?: SeriesName
     dualAxis: DualAxis
     colorScale?: ColorScale
@@ -135,10 +140,9 @@ export interface ScatterPointsWithLabelsProps {
     isConnected: boolean
     hideConnectedScatterLines: boolean
     noDataModalManager: NoDataModalManager
-    disableIntroAnimation?: boolean
     hideScatterLabels?: boolean
+    hideEntityLabels?: boolean
     quadtree?: Quadtree<ScatterPointQuadtreeNode>
-    backgroundColor?: Color
     hideFocusRing?: boolean
 }
 

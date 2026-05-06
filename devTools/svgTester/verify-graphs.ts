@@ -1,84 +1,189 @@
 #! /usr/bin/env node
 
-import parseArgs from "minimist"
+import yargs from "yargs"
+import { hideBin } from "yargs/helpers"
 import fs from "fs-extra"
 import path from "path"
 import workerpool from "workerpool"
 import * as _ from "lodash-es"
+import { match } from "ts-pattern"
 
 import * as utils from "./utils.js"
 import { grapherSlugToExportFileKey } from "../../baker/GrapherBakingUtils.js"
+import { ALL_GRAPHER_CHART_TYPES } from "@ourworldindata/types"
 
-async function main(args: parseArgs.ParsedArgs) {
+async function verifyExplorers(args: ReturnType<typeof parseArguments>) {
+    const testSuite = args.testSuite as utils.TestSuite
+    const verbose = args.verbose
+    const manifest = args.manifest
+
+    // Input and output directories
+    const dataDir = path.join(utils.SVG_REPO_PATH, testSuite, "data")
+    const referencesDir = path.join(
+        utils.SVG_REPO_PATH,
+        testSuite,
+        "references"
+    )
+    const differencesDir = path.join(
+        utils.SVG_REPO_PATH,
+        testSuite,
+        "differences"
+    )
+
+    if (!fs.existsSync(dataDir))
+        throw `Input directory does not exist ${dataDir}`
+    if (!fs.existsSync(referencesDir))
+        throw `Reference directory does not exist ${referencesDir}`
+    if (!fs.existsSync(differencesDir))
+        fs.mkdirSync(differencesDir, { recursive: true })
+
+    // Collect all explorer directories
+    const explorerJobs: {
+        explorerDir: string
+        explorerSlug: string
+        referencesDir: string
+        differencesDir: string
+        verbose: boolean
+        rmOnError: boolean
+        manifest?: string
+    }[] = []
+
+    const dir = await fs.opendir(dataDir)
+    for await (const entry of dir) {
+        if (!entry.isDirectory()) continue
+
+        const explorerDir = path.join(dataDir, entry.name)
+        const explorerSlug = entry.name
+
+        explorerJobs.push({
+            explorerDir,
+            explorerSlug,
+            referencesDir,
+            differencesDir,
+            manifest,
+            verbose: args.verbose,
+            rmOnError: args.rmOnError,
+        })
+    }
+
+    const jobCount = explorerJobs.length
+    if (jobCount === 0) {
+        utils.logIfVerbose(verbose, "No explorer directories found")
+        process.exit(0)
+    } else {
+        utils.logIfVerbose(
+            verbose,
+            `Verifying ${jobCount} explorer${jobCount > 1 ? "s" : ""}...`
+        )
+    }
+
+    const pool = workerpool.pool(__dirname + "/worker.ts", {
+        minWorkers: 2,
+        maxWorkers: 12,
+        workerThreadOpts: {
+            execArgv: ["--require", "tsx"],
+        },
+    })
+
+    const validationResultsArrays: utils.VerifyResult[][] = await Promise.all(
+        explorerJobs.map((job) =>
+            pool.exec("renderAndVerifyExplorerViews", [job])
+        )
+    )
+
+    await pool.terminate()
+
+    // Flatten the array of arrays
+    const validationResults = validationResultsArrays.flat()
+
+    utils.logIfVerbose(verbose, "Verifications completed")
+
+    const exitCode = utils.displayVerifyResultsAndGetExitCode(
+        validationResults,
+        verbose
+    )
+    process.exit(exitCode)
+}
+
+async function verifyGraphers(args: ReturnType<typeof parseArguments>) {
     try {
-        // input and output directories
-        const inDir: string = args["i"] ?? utils.DEFAULT_CONFIGS_DIR
-        const referenceDir: string = args["r"] ?? utils.DEFAULT_REFERENCE_DIR
-        const outDir: string = args["o"] ?? utils.DEFAULT_DIFFERENCES_DIR
+        // Test suite
+        const testSuite = args.testSuite as utils.TestSuite
+
+        // Input and output directories
+        const testSuiteDir = path.join(utils.SVG_REPO_PATH, testSuite)
+        const referencesDir = path.join(testSuiteDir, "references")
+        const differencesDir = path.join(testSuiteDir, "differences")
 
         // charts to process
-        const targetGrapherIds = utils.getGrapherIdListFromString(
-            utils.parseArgAsString(args["ids"] ?? args["c"])
-        )
-        const targetChartTypes = utils.validateChartTypes(
-            utils.parseArgAsList(args["chart-types"] ?? args["t"])
-        )
-        const randomCount = utils.parseRandomCount(args["random"] ?? args["d"])
-        const chartIdsFile: string = args["ids-from-file"] ?? args["f"]
+        const targetViewIds = args.viewIds
+        const targetChartTypes = args.chartTypes
+        const randomCount = args.random
 
-        // chart configurations to test
-        const grapherQueryString: string = args["query-str"] ?? args["q"]
-        const shouldTestAllChartViews: boolean = args["all-views"] ?? false
+        // Load manifest and determine data directory
+        const { viewIds: manifestViewIds, dataDir } =
+            await utils.loadManifestViewIds(testSuite, {
+                targetViewIds,
+                manifestName: args.manifest,
+                verbose: args.verbose,
+            })
 
-        // other options
-        const suffix: string = args["suffix"] ?? ""
-        const rmOnError: boolean = args["rm-on-error"] ?? false
-        const verbose: boolean = args["verbose"] ?? false
+        // Chart configurations to test
+        const grapherQueryString = args.queryStr
+        const shouldTestAllChartViews =
+            args.allViews ?? testSuite === "grapher-views"
+        const shouldTestAllTabs = args.allTabs ?? testSuite === "thumbnails"
 
-        if (!fs.existsSync(inDir))
-            throw `Input directory does not exist ${inDir}`
-        if (!fs.existsSync(referenceDir))
-            throw `Reference directory does not exist ${inDir}`
-        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir)
+        // Other options
+        const rmOnError = args.rmOnError
+        const verbose = args.verbose
 
-        const chartIdsToProcess = await utils.selectChartIdsToProcess(inDir, {
-            chartIdsFile,
-            grapherIds: targetGrapherIds,
+        if (!fs.existsSync(dataDir))
+            throw `Input directory does not exist ${dataDir}`
+        if (!fs.existsSync(referencesDir))
+            throw `Reference directory does not exist ${dataDir}`
+        if (!fs.existsSync(differencesDir)) fs.mkdirSync(differencesDir)
+
+        const chartIdsToProcess = await utils.selectChartIdsToProcess(dataDir, {
+            viewIds: targetViewIds ?? manifestViewIds ?? undefined,
             chartTypes: targetChartTypes,
             randomCount,
         })
 
         const chartViewsToGenerate = await utils.findChartViewsToGenerate(
-            inDir,
+            dataDir,
             chartIdsToProcess,
             {
                 queryStr: grapherQueryString,
                 shouldTestAllViews: shouldTestAllChartViews,
+                shouldTestAllTabs,
             }
         )
 
-        const referenceData = await utils.parseReferenceCsv(referenceDir)
+        const referenceData = await utils.parseReferenceCsv(referencesDir)
         const referenceDataByChartKey = new Map(
             referenceData.map((record) => [
-                grapherSlugToExportFileKey(record.slug, record.queryStr),
+                grapherSlugToExportFileKey(record.viewId, record.queryStr),
                 record,
             ])
         )
 
+        const variant = testSuite === "thumbnails" ? "thumbnail" : "default"
+
         const verifyJobs: utils.RenderJobDescription[] =
             chartViewsToGenerate.map((chart) => {
-                const { id, slug, queryStr } = chart
-                const key = grapherSlugToExportFileKey(slug, queryStr)
+                const { viewId, queryStr } = chart
+                const key = grapherSlugToExportFileKey(viewId, queryStr)
                 const referenceEntry = referenceDataByChartKey.get(key)!
-                const pathToProcess = path.join(inDir, id.toString())
+                const pathToProcess = path.join(dataDir, viewId)
                 return {
-                    dir: { chartId: chart.id, pathToProcess },
+                    dir: { viewId: chart.viewId, pathToProcess },
                     referenceEntry,
-                    referenceDir,
-                    outDir,
+                    referenceDir: referencesDir,
+                    outDir: differencesDir,
                     queryStr,
+                    variant,
                     verbose,
-                    suffix,
                     rmOnError,
                 }
             })
@@ -133,35 +238,90 @@ async function main(args: parseArgs.ParsedArgs) {
     }
 }
 
-const parsedArgs = parseArgs(process.argv.slice(2))
-if (parsedArgs["h"] || parsedArgs["help"]) {
-    console.log(`Check if grapher SVG renderings have changed vs the reference export
+async function main(args: ReturnType<typeof parseArguments>) {
+    const testSuite = args.testSuite as utils.TestSuite
 
-Usage:
-    verify-graphs.js [-i] [-r] [-o] [-c | --ids] [-t | --chart-types] [-d | --random] [-f | --ids-from-file] [-q | --query-str] [--all-views] [-s | --suffix] [--rm-on-error] [--verbose] [--help | -h]
-
-Inputs and outputs:
-    -i      Input directory containing Grapher configs and data. [default: ${utils.DEFAULT_CONFIGS_DIR}]
-    -r      Input directory containing the results.csv file to check against [default: ${utils.DEFAULT_REFERENCE_DIR}]
-    -o      Output directory that will contain the SVGs that were different [default: ${utils.DEFAULT_DIFFERENCES_DIR}]
-
-Charts to process:
-    --ids, -c               A comma-separated list of config IDs and config ID ranges, e.g. 2,4-8,10
-    --chart-types, -t       A comma-separated list of chart types, e.g. LineChart,ScatterPlot
-    --random, -d            Verify SVGs for a random set of configs, optionally specify a count
-    --ids-from-file, -f     Verify SVGs for a set of configs read from a file with one config ID per line
-
-Chart configurations to test:
-    --query-str, -q     Grapher query string to verify charts with a specific configuration, e.g. tab=chart&stackMode=relative
-    --all-views         For each Grapher, verify SVGs for all possible chart configurations
-
-Other options:
-    --suffix, -s    Suffix for different SVG files to create <NAME><SUFFIX>.svg files - useful if you want to set output to the same as reference
-    --rm-on-error   Remove output files where we encounter errors, so errors are apparent in diffs
-    --verbose       Verbose mode
-    -h, --help      Display this help and exit
-    `)
-    process.exit(0)
-} else {
-    void main(parsedArgs)
+    await match(testSuite)
+        .with("graphers", () => verifyGraphers(args))
+        .with("grapher-views", () => verifyGraphers(args))
+        .with("mdims", () => verifyGraphers(args))
+        .with("thumbnails", () => verifyGraphers(args))
+        .with("explorers", () => verifyExplorers(args))
+        .exhaustive()
 }
+
+function parseArguments() {
+    return yargs(hideBin(process.argv))
+        .usage(
+            "Check if grapher SVG renderings have changed vs the reference export"
+        )
+        .command("$0 [testSuite]", false)
+        .positional("testSuite", {
+            type: "string",
+            description: utils.TEST_SUITE_DESCRIPTION,
+            default: "graphers",
+            choices: utils.TEST_SUITES,
+        })
+        .parserConfiguration({ "camel-case-expansion": true })
+        .options({
+            viewIds: {
+                alias: "c",
+                type: "string",
+                array: true,
+                description:
+                    "A space-separated list of grapher slugs or mdim view ids, e.g. 'life-expectancy population'",
+            },
+            chartTypes: {
+                alias: "t",
+                type: "string",
+                array: true,
+                choices: ALL_GRAPHER_CHART_TYPES,
+                description:
+                    "A space-separated list of chart types, e.g. 'LineChart ScatterPlot'",
+            },
+            random: {
+                alias: "r",
+                type: "number",
+                description: "Generate SVGs for a random set of configs",
+            },
+            queryStr: {
+                alias: "q",
+                type: "string",
+                description:
+                    "Grapher query string to verify charts with a specific configuration, e.g. tab=chart&stackMode=relative",
+            },
+            allViews: {
+                type: "boolean",
+                description:
+                    "For each Grapher, verify SVGs for all possible chart configurations. Default depends on the test suite.",
+            },
+            allTabs: {
+                type: "boolean",
+                description:
+                    "For each Grapher, verify thumbnail SVGs for all available tabs. Default depends on the test suite.",
+            },
+            manifest: {
+                type: "string",
+                description:
+                    "Manifest filename (e.g. 'top.manifest.json') specifying which charts to test. For grapher-views and thumbnails, defaults to 'top.manifest.json' if --viewIds is not provided. For other test suites, all charts in the data directory are tested if neither manifest nor --viewIds is provided.",
+            },
+            rmOnError: {
+                type: "boolean",
+                description:
+                    "Remove output files where we encounter errors, so errors are apparent in diffs",
+                default: false,
+            },
+            verbose: {
+                type: "boolean",
+                description: "Verbose mode",
+                default: false,
+            },
+        })
+        .help()
+        .alias("help", "h")
+        .version(false)
+        .parseSync()
+}
+
+const argv = parseArguments()
+void main(argv)

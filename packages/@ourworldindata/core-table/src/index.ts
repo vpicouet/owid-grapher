@@ -17,7 +17,7 @@ export {
     TimeColumn,
 } from "./CoreTableColumns.js"
 
-export { OwidTable, BlankOwidTable } from "./OwidTable.js"
+export { OwidTable, BlankOwidTable, type OwidColumn } from "./OwidTable.js"
 
 export {
     DroppedForTesting,
@@ -69,6 +69,7 @@ export {
     timeColumnSlugFromColumnDef,
     makeOriginalTimeSlugFromColumnSlug,
     makeOriginalValueSlugFromColumnSlug,
+    makeAnnotationsSlug,
     getOriginalTimeColumnSlug,
     toPercentageColumnDef,
 } from "./OwidTableUtil.js"
@@ -76,7 +77,7 @@ export {
 export {
     insertMissingValuePlaceholders,
     computeRollingAverage,
-    AvailableTransforms,
+    availableTransformNames,
     applyTransforms,
-    extractPotentialDataSlugsFromTransform,
+    parseTransformString,
 } from "./Transforms.js"

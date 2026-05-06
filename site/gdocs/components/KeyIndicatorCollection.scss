@@ -141,7 +141,7 @@
     .key-indicator-header__title {
         @include body-2-semibold;
         color: $blue-90;
-        margin-right: 8px;
+        margin-right: 4px;
 
         @include sm-only-or-no-js {
             line-height: 1.2;
@@ -163,7 +163,7 @@
     .key-indicator-header__source {
         @include body-3-medium;
         display: inline-block;
-        color: $blue-50;
+        color: $blue-60;
     }
 
     .accordion-item--closed .key-indicator-header__source {

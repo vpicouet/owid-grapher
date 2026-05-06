@@ -1,5 +1,7 @@
+import { runInAction } from "mobx"
 import {
     EnrichedBlockGuidedChart,
+    GrapherQueryParams,
     MultiDimDimensionChoices,
 } from "@ourworldindata/types"
 import { Container } from "./layout.js"
@@ -10,7 +12,12 @@ import {
     extractMultiDimChoicesFromSearchParams,
 } from "@ourworldindata/utils"
 import { ArticleBlocks } from "./ArticleBlocks.js"
-import { GuidedChartContext, GrapherState } from "@ourworldindata/grapher"
+import {
+    GuidedChartContext,
+    GrapherState,
+    buildArchiveGuidedChartSrc,
+} from "@ourworldindata/grapher"
+import type { ArchiveGuidedChartRegistration } from "@ourworldindata/grapher"
 import { SiteAnalytics } from "../../SiteAnalytics.js"
 import { useAriaAnnouncer } from "../../AriaAnnouncerUtils.js"
 
@@ -28,54 +35,105 @@ export default function GuidedChart({
     const chartRef = useRef<HTMLDivElement | null>(null)
     const [multiDimData, setMultiDimData] = useState<{
         config: MultiDimDataPageConfig
-        onSettingsChange: (newSettings: MultiDimDimensionChoices) => void
+        onSettingsChange: (
+            newSettings: MultiDimDimensionChoices,
+            queryParams: GrapherQueryParams
+        ) => void
         grapherContainerRef: React.RefObject<HTMLDivElement | null>
     } | null>(null)
     const { announce } = useAriaAnnouncer()
+    const archiveChartRegistrationRef =
+        useRef<ArchiveGuidedChartRegistration | null>(null)
+
+    const registerArchiveChart = useCallback(
+        (registration: ArchiveGuidedChartRegistration) => {
+            archiveChartRegistrationRef.current = registration
+            return () => {
+                if (archiveChartRegistrationRef.current === registration) {
+                    archiveChartRegistrationRef.current = null
+                }
+            }
+        },
+        []
+    )
+
+    const applyGuidedChartLinkToArchive = useCallback((url: Url): boolean => {
+        const registration = archiveChartRegistrationRef.current
+        const iframeEl = registration?.iframeRef.current
+        if (!registration || !iframeEl) return false
+
+        const nextSrc = buildArchiveGuidedChartSrc(registration, url)
+        if (iframeEl.src === nextSrc) return true
+        iframeEl.src = nextSrc
+        return true
+    }, [])
 
     const handleGuidedChartLinkClick = useCallback(
         (href: string) => {
-            if (!stateRef.current) return
-
             const url = Url.fromURL(href)
+            const handledArchiveIframe = applyGuidedChartLinkToArchive(url)
 
-            // If the chart is a MultiDim, we have to update its settings directly
-            if (multiDimData) {
-                const searchParams = new URLSearchParams()
-                Object.entries(url.queryParams).forEach(([key, value]) => {
-                    if (value !== undefined) {
-                        searchParams.set(key, value)
-                    }
-                })
+            let didUpdateChart = handledArchiveIframe
 
-                // Extract MultiDim choices from the guided chart link and update the MultiDim component
-                const choices = extractMultiDimChoicesFromSearchParams(
-                    searchParams,
-                    multiDimData.config
-                )
-                multiDimData.onSettingsChange(choices)
+            if (!handledArchiveIframe) {
+                const grapherState = stateRef.current
+                if (!grapherState) return
+
+                // If the chart is a MultiDim, we have to update its settings directly
+                if (multiDimData) {
+                    const searchParams = new URLSearchParams()
+                    Object.entries(url.queryParams).forEach(([key, value]) => {
+                        if (value !== undefined) {
+                            searchParams.set(key, value)
+                        }
+                    })
+                    const choices = extractMultiDimChoicesFromSearchParams(
+                        searchParams,
+                        multiDimData.config
+                    )
+                    // MultiDim must set the query params itself only after it
+                    // sets the config of the selected view.
+                    multiDimData.onSettingsChange(choices, url.queryParams)
+                } else {
+                    // Update the grapher state with the new params (e.g. countries, tab, etc)
+                    runInAction(() => {
+                        grapherState.clearQueryParams()
+                        grapherState.populateFromQueryParams(url.queryParams)
+                    })
+                }
+                didUpdateChart = true
             }
 
-            // Update the grapher state with the new params (e.g. countries, tab, etc)
-            stateRef.current.clearQueryParams()
-            stateRef.current.populateFromQueryParams(url.queryParams)
+            if (!didUpdateChart) return
+
             analytics.logGuidedChartLinkClick(url.fullUrl)
             announce("Chart updated to reflect the selected view.")
 
-            // Scroll to chart on small screens
-            if (window.innerWidth <= 768) {
-                const target =
-                    multiDimData?.grapherContainerRef.current ||
-                    chartRef.current
-                // Small delay to allow chart updates to complete
-                setTimeout(() => {
-                    target?.scrollIntoView({
-                        behavior: "smooth",
-                    })
-                }, 100)
+            // Scroll to chart if it's not already visible.
+            // Skip if the chart is sticky-positioned (it's already
+            // pinned in view by CSS).
+            // For multi-dim, scroll to the full container (including
+            // dropdowns), not just the grapher area inside it.
+            const chartElement =
+                multiDimData?.grapherContainerRef.current || chartRef.current
+            const target =
+                chartElement?.closest(".multi-dim-container") ?? chartElement
+            if (target) {
+                const isSticky = getComputedStyle(target).position === "sticky"
+                const rect = target.getBoundingClientRect()
+                const isFullyVisible =
+                    rect.top >= 0 && rect.bottom <= window.innerHeight
+                if (!isSticky && !isFullyVisible) {
+                    setTimeout(() => {
+                        target.scrollIntoView({
+                            behavior: "smooth",
+                            block: "nearest",
+                        })
+                    }, 100)
+                }
             }
         },
-        [announce, multiDimData]
+        [announce, applyGuidedChartLinkToArchive, multiDimData]
     )
 
     return (
@@ -84,10 +142,12 @@ export default function GuidedChart({
                 grapherStateRef: stateRef as React.RefObject<GrapherState>,
                 chartRef: chartRef as React.RefObject<HTMLDivElement>,
                 onGuidedChartLinkClick: handleGuidedChartLinkClick,
+                registerArchiveChart,
                 registerMultiDim: (registrationData: {
                     config: MultiDimDataPageConfig
                     onSettingsChange: (
-                        newSettings: MultiDimDimensionChoices
+                        newSettings: MultiDimDimensionChoices,
+                        queryParams: GrapherQueryParams
                     ) => void
                     grapherContainerRef: React.RefObject<HTMLDivElement | null>
                 }) => {

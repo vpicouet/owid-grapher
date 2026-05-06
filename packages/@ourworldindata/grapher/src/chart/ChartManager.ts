@@ -11,7 +11,6 @@ import {
     ColorSchemeName,
     EntityName,
     DetailsMarker,
-    Color,
     GrapherVariant,
 } from "@ourworldindata/types"
 import { TooltipManager } from "../tooltip/TooltipProps"
@@ -33,13 +32,14 @@ export interface ChartManager {
     transformedTable?: OwidTable
 
     variant?: GrapherVariant
-    isDisplayedAlongsideComplementaryTable?: boolean
+    useMinimalLabeling?: boolean
     chartAreaPadding?: number
 
     isExportingToSvgOrPng?: boolean
     isRelativeMode?: boolean
     comparisonLines?: ComparisonLineConfig[]
     showLegend?: boolean
+    showSeriesLabels?: boolean
     tooltip?: TooltipManager["tooltip"]
     baseColorScheme?: ColorSchemeName
     invertColorScheme?: boolean
@@ -69,10 +69,6 @@ export interface ChartManager {
     sizeColumnSlug?: ColumnSlug
     colorColumnSlug?: ColumnSlug
 
-    // if colorColumnSlug is given, either one of these is set
-    categoricalColorColumnSlug?: ColumnSlug
-    numericColorColumnSlug?: ColumnSlug
-
     selection?: SelectionArray | EntityName[]
     entityType?: string
     entityTypePlural?: string
@@ -95,7 +91,6 @@ export interface ChartManager {
     showNoDataArea?: boolean // No data area in Marimekko charts
 
     externalLegendHoverBin?: ColorScaleBin | undefined
-    disableIntroAnimation?: boolean
 
     missingDataStrategy?: MissingDataStrategy
 
@@ -103,9 +98,7 @@ export interface ChartManager {
     isStatic?: boolean
     isSemiNarrow?: boolean
     isStaticAndSmall?: boolean
-    isExportingForSocialMedia?: boolean
     isExportingForWikimedia?: boolean
-    backgroundColor?: Color
     shouldPinTooltipToBottom?: boolean
 
     detailsOrderedByReference?: string[]

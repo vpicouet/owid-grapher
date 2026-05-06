@@ -4,6 +4,7 @@ export const ImagesTableName = "images"
 export interface DbInsertImage {
     googleId: string | null
     defaultAlt: string
+    extractedText?: string | null
     filename: string
     id?: number
     originalWidth: number
@@ -32,6 +33,13 @@ export type DbEnrichedImage = Omit<DbRawImage, "updatedAt"> & {
 
 export type DbEnrichedImageWithUserId = DbEnrichedImage & {
     userId: DbPlainUser["id"]
+}
+
+export type DbEnrichedImageWithPageviews = DbEnrichedImageWithUserId & {
+    views_365d: number
+    isFeaturedImage: number
+    isBodyContent: number
+    isInResearchAndWriting: number
 }
 
 export function parseImageRow(row: DbRawImage): DbEnrichedImage {

@@ -10,8 +10,9 @@ import {
     ALGOLIA_SECRET_KEY,
 } from "../../settings/serverSettings.js"
 import { countries, excludeUndefined } from "@ourworldindata/utils"
-import { SearchIndexName } from "../../site/search/searchTypes.js"
 import { getIndexName } from "../../site/search/searchClient.js"
+import { PAGES_INDEX, CHARTS_INDEX } from "../../site/search/searchUtils.js"
+import { SearchIndexName } from "@ourworldindata/types"
 import { synonyms } from "../../site/search/synonymUtils.js"
 
 export const CONTENT_GRAPH_ALGOLIA_INDEX = getIndexName("graph")
@@ -42,7 +43,15 @@ export const configureAlgolia = async () => {
         indexLanguages: ["en"],
 
         // see https://www.algolia.com/doc/guides/managing-results/relevance-overview/in-depth/ranking-criteria/
-        ranking: ["typo", "words", "exact", "proximity", "attribute", "custom"],
+        ranking: [
+            "typo",
+            "words",
+            "filters",
+            "exact",
+            "proximity",
+            "attribute",
+            "custom",
+        ],
         alternativesAsExact: [
             "ignorePlurals",
             "singleWordSynonym",
@@ -58,55 +67,7 @@ export const configureAlgolia = async () => {
         unretrievableAttributes: ["views_7d", "score"],
     }
 
-    const chartsIndexName = getIndexName(SearchIndexName.Charts)
-
-    await client.setSettings({
-        indexName: chartsIndexName,
-        indexSettings: {
-            ...baseSettings,
-            searchableAttributes: [
-                /**
-                 * It may seem unintuitive that we're ranking `keyChartForTags` higher than `title`.
-                 * However, many of the search queries we get are for "topics", like `migration` or
-                 * `tourism`. If for this topic we have a key chart, we want to show that first,
-                 * since that's hand-picked to be super relevant for the topic.
-                 */
-                "unordered(keyChartForTags)",
-                "unordered(title)",
-                "unordered(slug)",
-                "unordered(variantName)",
-                "unordered(subtitle)",
-                "unordered(tags)",
-                "unordered(availableEntities)",
-            ],
-            ranking: [
-                "typo",
-                "words",
-                "exact",
-                "attribute",
-                "custom",
-                "proximity",
-            ],
-            customRanking: [
-                "desc(score)",
-                "desc(numRelatedArticles)",
-                "asc(numDimensions)",
-                "asc(titleLength)",
-            ],
-            attributesToSnippet: ["subtitle:24"],
-            attributeForDistinct: "id",
-            optionalWords: ["vs"],
-
-            // These lines below essentially demote matches in the `subtitle` and `availableEntities` fields:
-            // If we find a match (only) there, then it doesn't count towards `exact`, and is therefore ranked lower.
-            // We also disable prefix matching and typo tolerance on these.
-            disableExactOnAttributes: ["tags", "subtitle", "availableEntities"],
-            disableTypoToleranceOnAttributes: ["subtitle", "availableEntities"],
-            disablePrefixOnAttributes: ["subtitle"],
-        },
-    })
-
-    const pagesIndexName = getIndexName(SearchIndexName.Pages)
+    const pagesIndexName = PAGES_INDEX
 
     await client.setSettings({
         indexName: pagesIndexName,
@@ -127,6 +88,7 @@ export const configureAlgolia = async () => {
                 "afterDistinct(type)",
                 "afterDistinct(searchable(tags))",
                 "afterDistinct(searchable(authors))",
+                "afterDistinct(availableEntities)",
             ],
 
             // These lines below essentially demote matches in the `content` (i.e. fulltext) field:
@@ -138,9 +100,21 @@ export const configureAlgolia = async () => {
         },
     })
 
-    const explorerViewsAndChartsIndexName = getIndexName(
-        SearchIndexName.ExplorerViewsMdimViewsAndCharts
+    // Lightweight chronological index — one record per page, no chunked
+    // content. Sorted by date (newest first) for the dynamic Atom feed.
+    const pagesChronologicalIndexName = getIndexName(
+        SearchIndexName.PagesChronological
     )
+    await client.setSettings({
+        indexName: pagesChronologicalIndexName,
+        indexSettings: {
+            ranking: ["custom"],
+            customRanking: ["desc(date)"],
+            attributesForFaceting: ["type", "searchable(tags)"],
+        },
+    })
+
+    const explorerViewsAndChartsIndexName = CHARTS_INDEX
 
     await client.setSettings({
         indexName: explorerViewsAndChartsIndexName,
@@ -148,12 +122,14 @@ export const configureAlgolia = async () => {
             ...baseSettings,
             searchableAttributes: [
                 "unordered(title)",
+                "unordered(containerTitle)",
                 "unordered(slug)",
                 "unordered(variantName)",
                 "unordered(subtitle)",
                 "unordered(tags)",
                 "unordered(availableEntities)",
                 "unordered(originalAvailableEntities)",
+                "unordered(datasetProducers)",
             ],
             ranking: [
                 "typo",
@@ -177,14 +153,28 @@ export const configureAlgolia = async () => {
             // These lines below essentially demote matches in the `subtitle` and `availableEntities` fields:
             // If we find a match (only) there, then it doesn't count towards `exact`, and is therefore ranked lower.
             // We also disable prefix matching and typo tolerance on these.
-            disableExactOnAttributes: ["tags", "subtitle", "availableEntities"],
-            disableTypoToleranceOnAttributes: ["subtitle", "availableEntities"],
+            disableExactOnAttributes: [
+                "tags",
+                "subtitle",
+                "availableEntities",
+                "originalAvailableEntities",
+            ],
+            disableTypoToleranceOnAttributes: [
+                "subtitle",
+                "availableEntities",
+                "originalAvailableEntities",
+            ],
             disablePrefixOnAttributes: ["subtitle"],
             attributesForFaceting: [
                 "tags",
                 "availableEntities",
                 "type",
                 "isIncomeGroupSpecificFM",
+                "isFM",
+                "datasetNamespaces",
+                "datasetVersions",
+                "datasetProducts",
+                "datasetProducers",
             ],
         },
     })
@@ -213,11 +203,7 @@ export const configureAlgolia = async () => {
     }
 
     // Save synonyms for all indices
-    for (const indexName of [
-        chartsIndexName,
-        pagesIndexName,
-        explorerViewsAndChartsIndexName,
-    ]) {
+    for (const indexName of [pagesIndexName, explorerViewsAndChartsIndexName]) {
         await client.saveSynonyms({
             indexName,
             synonymHit: algoliaSynonyms,

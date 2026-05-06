@@ -38,7 +38,7 @@ function AtomArticleBlock({
     containerType?: Container
 }) {
     block.type = block.type.toLowerCase() as any // this comes from the user and may not be all lowercase, enforce it here
-    if (block.parseErrors.filter(({ isWarning }) => !isWarning).length > 0) {
+    if (block.parseErrors.some(({ isWarning }) => !isWarning)) {
         return (
             <BlockErrorFallback
                 className={getLayout("default", containerType)}
@@ -50,13 +50,17 @@ function AtomArticleBlock({
         )
     }
     return match(block)
-        .with({ type: "image" }, (block) => (
-            <Image
-                filename={block.filename}
-                smallFilename={block.smallFilename}
-                alt={block.alt}
-            />
-        ))
+        .with({ type: "image" }, (block) => {
+            // Skip mobile-only blocks in Atom feeds (assuming a desktop image will also be specified)
+            if (block.visibility === "mobile") return null
+            return (
+                <Image
+                    filename={block.filename}
+                    smallFilename={block.smallFilename}
+                    alt={block.alt}
+                />
+            )
+        })
         .otherwise(() => (
             <ArticleBlock b={block} containerType={containerType} />
         ))

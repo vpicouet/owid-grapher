@@ -6,16 +6,19 @@ import {
     FacetStrategy,
     DimensionProperty,
     GRAPHER_CHART_TYPES,
+    PeerCountryStrategy,
 } from "@ourworldindata/types"
 import {
     GrapherState,
     GrapherProgrammaticInterface,
+    WORLD_ENTITY_NAME,
 } from "@ourworldindata/grapher"
 import {
     SampleColumnSlugs,
     SynthesizeGDPTable,
 } from "@ourworldindata/core-table"
 import {
+    selectRegionGroupByPriority,
     getSortedGrapherTabsForChartHit,
     pickDisplayEntities,
 } from "./constructSearchResultJson.js"
@@ -27,6 +30,8 @@ describe(getSortedGrapherTabsForChartHit, () => {
         WorldMap,
         SlopeChart,
         StackedArea,
+        StackedBar,
+        StackedDiscreteBar,
         DiscreteBar,
         Marimekko,
     } = GRAPHER_TAB_NAMES
@@ -88,6 +93,19 @@ describe(getSortedGrapherTabsForChartHit, () => {
         const result = getSortedGrapherTabsForChartHit(grapherState)
         expect(result).toEqual([StackedArea, Table, WorldMap])
     })
+
+    it("should work for stacked chart combinations", () => {
+        const grapherState = new GrapherState({
+            chartTypes: [StackedArea, StackedBar, StackedDiscreteBar],
+        })
+        const result = getSortedGrapherTabsForChartHit(grapherState)
+        expect(result).toEqual([
+            StackedArea,
+            Table,
+            StackedBar,
+            StackedDiscreteBar,
+        ])
+    })
 })
 
 describe(pickDisplayEntities, () => {
@@ -97,6 +115,7 @@ describe(pickDisplayEntities, () => {
         "Mexico",
         "Brazil",
         "Argentina",
+        "World",
     ]
 
     function createSingleIndicatorGrapherState(
@@ -165,6 +184,7 @@ describe(pickDisplayEntities, () => {
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities,
+                catalogUrl: "",
             })
 
             expect(displayEntities).toEqual(defaultEntities)
@@ -183,7 +203,7 @@ describe(pickDisplayEntities, () => {
 
                 const displayEntities = await pickDisplayEntities(
                     grapherState,
-                    { pickedEntities }
+                    { pickedEntities, catalogUrl: "" }
                 )
 
                 pickedEntities.forEach((pickedEntity) =>
@@ -202,6 +222,7 @@ describe(pickDisplayEntities, () => {
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities,
+                catalogUrl: "",
             })
 
             expect(displayEntities).toEqual([pickedEntities[0]])
@@ -215,6 +236,7 @@ describe(pickDisplayEntities, () => {
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities: [],
+                catalogUrl: "",
             })
 
             expect(displayEntities).toEqual([defaultEntities[0]])
@@ -231,6 +253,7 @@ describe(pickDisplayEntities, () => {
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities,
+                catalogUrl: "",
             })
 
             expect(displayEntities).toEqual(pickedEntities)
@@ -245,6 +268,7 @@ describe(pickDisplayEntities, () => {
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities: [],
+                catalogUrl: "",
             })
 
             expect(displayEntities).toEqual([defaultEntities[0]])
@@ -263,41 +287,93 @@ describe(pickDisplayEntities, () => {
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities,
+                catalogUrl: "",
             })
 
             expect(displayEntities).toEqual(pickedEntities)
-        })
-
-        it("should combine picked and default entities", async () => {
-            const grapherState = createSingleIndicatorGrapherState({
-                selectedEntityNames: defaultEntities,
-                addCountryMode: EntitySelectionMode.MultipleEntities,
-            })
-
-            const displayEntities = await pickDisplayEntities(grapherState, {
-                pickedEntities,
-            })
-
-            expect(displayEntities).toEqual([
-                ...pickedEntities,
-                ...defaultEntities,
-            ])
         })
 
         it("should return a unique list of entities, with picked entities first", async () => {
             const grapherState = createSingleIndicatorGrapherState({
                 selectedEntityNames: [...defaultEntities, ...pickedEntities],
                 addCountryMode: EntitySelectionMode.MultipleEntities,
+                peerCountryStrategy: PeerCountryStrategy.ParentRegions,
             })
 
             const displayEntities = await pickDisplayEntities(grapherState, {
                 pickedEntities,
+                catalogUrl: "",
             })
 
-            expect(displayEntities).toEqual([
-                ...pickedEntities,
-                ...defaultEntities,
-            ])
+            expect(displayEntities).toEqual([...pickedEntities, "World"])
         })
+    })
+})
+
+describe(selectRegionGroupByPriority, () => {
+    it("prefers OWID continents over income groups", () => {
+        const availableEntities = [
+            "Italy",
+            "Europe",
+            "Asia",
+            "High-income countries",
+            "Low-income countries",
+        ]
+
+        const selectedRegions = selectRegionGroupByPriority(availableEntities)
+
+        expect(selectedRegions).toEqual(["Asia", "Europe"])
+    })
+
+    it("selects income groups when no continents are available", () => {
+        const availableEntities = [
+            "High-income countries",
+            "Spain",
+            "Low-income countries",
+            "Africa (WHO)",
+            "Upper-middle-income countries",
+        ]
+
+        const selectedRegions = selectRegionGroupByPriority(availableEntities)
+
+        expect(selectedRegions).toEqual([
+            "High-income countries",
+            "Low-income countries",
+            "Upper-middle-income countries",
+        ])
+    })
+
+    it("selects aggregate regions when neither continents nor income groups are available", () => {
+        const availableEntities = [
+            "Africa (WHO)",
+            "United States",
+            "Germany",
+            "Europe (WHO)",
+            "France",
+        ]
+
+        const selectedRegions = selectRegionGroupByPriority(availableEntities)
+
+        expect(selectedRegions).toEqual(["Africa (WHO)", "Europe (WHO)"])
+    })
+
+    it("selects aggregate regions of a single source", () => {
+        const availableEntities = [
+            "Africa (WHO)",
+            "Africa (WB)",
+            "Europe (WHO)",
+        ]
+
+        const selectedRegions = selectRegionGroupByPriority(availableEntities)
+
+        expect(selectedRegions).toEqual(["Africa (WHO)", "Europe (WHO)"])
+    })
+
+    it("excludes World by default", () => {
+        const availableEntities = [WORLD_ENTITY_NAME, "Europe", "Asia"]
+
+        const selectedRegions = selectRegionGroupByPriority(availableEntities)
+
+        expect(selectedRegions).not.toContain(WORLD_ENTITY_NAME)
     })
 })

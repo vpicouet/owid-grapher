@@ -5,7 +5,7 @@ import a from "indefinite"
 import { DataTableConfig } from "../dataTable/DataTableConstants"
 import { SearchField } from "./SearchField"
 import { DEFAULT_GRAPHER_ENTITY_TYPE } from "../core/GrapherConstants"
-import { isAggregateSource } from "../core/EntitiesByRegionType"
+import { isAnyRegionDataProviderKey } from "../core/RegionGroups"
 import { match } from "ts-pattern"
 
 export interface DataTableSearchFieldManager {
@@ -45,7 +45,7 @@ export class DataTableSearchField extends React.Component<{
     }
 
     @computed private get placeholderEntityType(): string {
-        if (isAggregateSource(this.config.filter)) return "region"
+        if (isAnyRegionDataProviderKey(this.config.filter)) return "region"
 
         return match(this.config.filter)
             .with("all", () => this.entityType)
@@ -64,9 +64,17 @@ export class DataTableSearchField extends React.Component<{
             <SearchField
                 className="data-table-search-field"
                 value={this.manager.dataTableConfig.search}
-                onChange={(value) =>
-                    (this.manager.dataTableConfig.search = value)
-                }
+                onChange={(value) => {
+                    // Reset filter to "all" when user starts typing
+                    // to allow searching across all entities
+                    if (
+                        value &&
+                        this.manager.dataTableConfig.filter !== "all"
+                    ) {
+                        this.manager.dataTableConfig.filter = "all"
+                    }
+                    this.manager.dataTableConfig.search = value
+                }}
                 onClear={() => (this.manager.dataTableConfig.search = "")}
                 trackNote="data_table_search"
                 placeholder={`Search for ${a(this.placeholderEntityType)}`}

@@ -2,10 +2,18 @@ import * as _ from "lodash-es"
 import * as React from "react"
 import {
     LogoOption,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     Bounds,
+    FontFamily,
 } from "@ourworldindata/utils"
-import { MarkdownTextWrap, TextWrap } from "@ourworldindata/components"
+import {
+    MarkdownTextWrap,
+    MarkdownTextWrapHtml,
+    MarkdownTextWrapSvg,
+    TextWrap,
+    TextWrapSvg,
+    TextWrapHtml,
+} from "@ourworldindata/components"
 import { computed, makeObservable } from "mobx"
 import { observer } from "mobx-react"
 import { Logo } from "../captionedChart/Logos"
@@ -18,7 +26,7 @@ import {
     GRAPHER_FRAME_PADDING_VERTICAL,
     GRAPHER_HEADER_CLASS,
 } from "../core/GrapherConstants"
-import { GRAPHER_DARK_TEXT, GRAY_100, GRAY_80 } from "../color/ColorConstants"
+import { GRAPHER_DARK_TEXT, GRAY_100 } from "../color/ColorConstants"
 
 interface HeaderProps {
     manager: HeaderManager
@@ -107,6 +115,7 @@ abstract class AbstractHeader<
             new TextWrap({
                 text: this.titleText,
                 maxWidth: this.maxWidth - this.logoWidth - logoPadding,
+                fontFamily: FontFamily.PlayfairDisplay,
                 fontWeight: this.titleFontWeight,
                 lineHeight: this.titleLineHeight,
                 fontSize,
@@ -223,7 +232,9 @@ abstract class AbstractHeader<
         // avoid linking to a grapher/data page when we're already on it
         if (manager.isOnCanonicalUrl && !this.manager.isInIFrame) {
             return (
-                <h1 style={this.title.htmlStyle}>{this.title.renderHTML()}</h1>
+                <h1 style={this.title.htmlStyle}>
+                    <TextWrapHtml textWrap={this.title} />
+                </h1>
             )
         }
 
@@ -232,11 +243,14 @@ abstract class AbstractHeader<
             return (
                 <a
                     href={manager.canonicalUrl}
-                    rel="noopener"
                     data-track-note="chart_click_title"
+                    {...(manager.isInIFrame && {
+                        target: "_blank",
+                        rel: "noopener",
+                    })}
                 >
                     <h1 style={this.title.htmlStyle}>
-                        {this.title.renderHTML()}
+                        <TextWrapHtml textWrap={this.title} />
                     </h1>
                 </a>
             )
@@ -247,10 +261,13 @@ abstract class AbstractHeader<
             <h1 style={this.title.htmlStyle}>
                 <a
                     href={manager.canonicalUrl}
-                    rel="noopener"
                     data-track-note="chart_click_title"
+                    {...(manager.isInIFrame && {
+                        target: "_blank",
+                        rel: "noopener",
+                    })}
                 >
-                    {this.title.renderHTML()}
+                    <TextWrapHtml textWrap={this.title} />
                 </a>
             </h1>
         )
@@ -264,10 +281,16 @@ abstract class AbstractHeader<
             // make sure there are no scrollbars on subtitle
             overflowY: "hidden",
         }
-        return <p style={style}>{this.subtitle.renderHTML()}</p>
+        return (
+            <p style={style}>
+                <MarkdownTextWrapHtml textWrap={this.subtitle} />
+            </p>
+        )
     }
 
-    override render(): React.ReactElement {
+    override render(): React.ReactElement | null {
+        const hasContent = !!this.logo || this.showTitle || this.showSubtitle
+        if (!hasContent) return null
         return (
             <div
                 className="HeaderHTML"
@@ -314,49 +337,60 @@ export class StaticHeader extends AbstractHeader<StaticHeaderProps> {
         return 1.2
     }
 
-    override render(): React.ReactElement {
+    override render(): React.ReactElement | null {
         const { targetX: x, targetY: y } = this.props
-        const { title, logo, subtitle, manager, maxWidth } = this
+        const {
+            title,
+            logo,
+            subtitle,
+            manager,
+            maxWidth,
+            showTitle,
+            showSubtitle,
+        } = this
+        const hasContent = !!logo || showTitle || showSubtitle
+        if (!hasContent) return null
         return (
-            <g
-                id={makeIdForHumanConsumption(GRAPHER_HEADER_CLASS)}
-                className="HeaderView"
-            >
+            <g id={makeFigmaId(GRAPHER_HEADER_CLASS)} className="HeaderView">
                 {logo &&
                     logo.height > 0 &&
                     logo.renderSVG(x + maxWidth - logo.width, y)}
                 {this.showTitle && (
                     <a
-                        id={makeIdForHumanConsumption("title")}
+                        id={makeFigmaId("title")}
                         href={manager.canonicalUrl}
                         style={{
                             fontFamily:
                                 "'Playfair Display', Georgia, 'Times New Roman', 'Liberation Serif', serif",
                         }}
-                        rel="noopener"
-                    >
-                        {title.renderSVG(x, y, {
-                            textProps: { fill: GRAY_100 },
+                        {...(manager.isInIFrame && {
+                            target: "_blank",
+                            rel: "noopener",
                         })}
+                    >
+                        <TextWrapSvg
+                            textWrap={title}
+                            x={x}
+                            y={y}
+                            fill={GRAY_100}
+                        />
                     </a>
                 )}
-                {this.showSubtitle &&
-                    subtitle.renderSVG(
-                        x,
-                        y +
+                {this.showSubtitle && (
+                    <MarkdownTextWrapSvg
+                        textWrap={subtitle}
+                        x={x}
+                        y={
+                            y +
                             (this.showTitle
                                 ? title.height + this.subtitleMarginTop
-                                : 0),
-                        {
-                            id: makeIdForHumanConsumption("subtitle"),
-                            textProps: {
-                                fill: this.manager.isSocialMediaExport
-                                    ? GRAY_80
-                                    : GRAPHER_DARK_TEXT,
-                            },
-                            detailsMarker: this.manager.detailsMarkerInSvg,
+                                : 0)
                         }
-                    )}
+                        id={makeFigmaId("subtitle")}
+                        fill={GRAPHER_DARK_TEXT}
+                        detailsMarker={this.manager.detailsMarkerInSvg}
+                    />
+                )}
             </g>
         )
     }

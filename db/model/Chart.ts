@@ -25,13 +25,7 @@ import {
 import { OpenAI } from "openai"
 import { zodResponseFormat } from "openai/helpers/zod"
 import { OPENAI_API_KEY } from "../../settings/serverSettings.js"
-import { z } from "zod"
-
-// XXX hardcoded filtering to public parent tags
-export const PUBLIC_TAG_PARENT_IDS = [
-    1515, 1507, 1513, 1504, 1502, 1509, 1506, 1501, 1514, 1511, 1500, 1503,
-    1505, 1508, 1512, 1510, 1834, 1835,
-]
+import * as z from "zod"
 
 // Only considers published charts, because only in that case the mapping slug -> id is unique
 export async function mapSlugsToIds(
@@ -72,9 +66,19 @@ export async function mapSlugsToIds(
 // ]
 export async function mapSlugsToConfigs(
     knex: db.KnexReadonlyTransaction
-): Promise<{ slug: string; id: number; config: GrapherInterface }[]> {
+): Promise<
+    {
+        slug: string
+        id: number
+        config: GrapherInterface
+    }[]
+> {
     return db
-        .knexRaw<{ slug: string; config: string; id: number }>(
+        .knexRaw<{
+            slug: string
+            config: string
+            id: number
+        }>(
             knex,
             `-- sql
                 SELECT csr.slug AS slug, cc.full AS config, c.id AS id
@@ -239,15 +243,19 @@ export const getChartConfigById = async (
     knex: db.KnexReadonlyTransaction,
     grapherId: number
 ): Promise<
-    | (Pick<DbPlainChart, "id"> & { config: DbEnrichedChartConfig["full"] })
+    | (Pick<DbPlainChart, "id" | "forceDatapage"> & {
+          config: DbEnrichedChartConfig["full"]
+      })
     | undefined
 > => {
     const grapher = await db.knexRawFirst<
-        Pick<DbPlainChart, "id"> & { config: DbRawChartConfig["full"] }
+        Pick<DbPlainChart, "id" | "forceDatapage"> & {
+            config: DbRawChartConfig["full"]
+        }
     >(
         knex,
         `-- sql
-            SELECT c.id, cc.full as config
+            SELECT c.id, c.forceDatapage, cc.full as config
             FROM charts c
             JOIN chart_configs cc ON c.configId = cc.id
             WHERE c.id=?
@@ -259,6 +267,7 @@ export const getChartConfigById = async (
 
     return {
         id: grapher.id,
+        forceDatapage: Boolean(grapher.forceDatapage),
         config: parseChartConfig(grapher.config),
     }
 }
@@ -267,10 +276,14 @@ export async function getChartConfigBySlug(
     knex: db.KnexReadonlyTransaction,
     slug: string
 ): Promise<
-    Pick<DbPlainChart, "id"> & { config: DbEnrichedChartConfig["full"] }
+    Pick<DbPlainChart, "id"> & {
+        config: DbEnrichedChartConfig["full"]
+    }
 > {
     const row = await db.knexRawFirst<
-        Pick<DbPlainChart, "id"> & { config: DbRawChartConfig["full"] }
+        Pick<DbPlainChart, "id" | "forceDatapage"> & {
+            config: DbRawChartConfig["full"]
+        }
     >(
         knex,
         `-- sql
@@ -284,6 +297,22 @@ export async function getChartConfigBySlug(
     if (!row) throw new JsonError(`No chart found for slug ${slug}`, 404)
 
     return { id: row.id, config: parseChartConfig(row.config) }
+}
+
+export async function getForceDatapageByChartId(
+    knex: db.KnexReadonlyTransaction,
+    chartId: number
+): Promise<boolean> {
+    const row = await db.knexRawFirst<Pick<DbPlainChart, "forceDatapage">>(
+        knex,
+        `-- sql
+            SELECT forceDatapage
+            FROM charts
+            WHERE id = ?
+        `,
+        [chartId]
+    )
+    return !!row?.forceDatapage
 }
 
 export async function isInheritanceEnabledForChart(
@@ -373,27 +402,8 @@ export async function setChartTags(
             [tagRows]
         )
 
-    const parentIds = tags.length
-        ? await db.knexRaw<{ parentId: number }>(
-              knex,
-              `-- sql
-                SELECT
-                    parentId
-                FROM
-                    tags
-                WHERE
-                    id IN (?)`,
-              [tags.map((t) => t.id)]
-          )
-        : []
-
-    // A chart is indexable if it is not tagged "Unlisted" and has at
-    // least one public parent tag
-    const isIndexable = tags.some((t) => t.name === "Unlisted")
-        ? false
-        : parentIds.some((t) => PUBLIC_TAG_PARENT_IDS.includes(t.parentId))
-    const updateFields = ["isIndexable = ?", "lastEditedAt = ?"]
-    const updateValues: (boolean | Date | number)[] = [isIndexable, new Date()]
+    const updateFields = ["lastEditedAt = ?"]
+    const updateValues: (Date | number)[] = [new Date()]
 
     if (userId) {
         updateFields.push("lastEditedByUserId = ?")
@@ -468,15 +478,7 @@ export async function getGptTopicSuggestions(
         throw new JsonError(`No chart found for id ${chartId}`, 404)
     const enrichedChartConfig = parseChartConfig(chartConfigOnly.config)
 
-    const topics: Pick<DbPlainTag, "id" | "name">[] = await db.knexRaw(
-        knex,
-        `-- sql
-        SELECT t.id, t.name
-            FROM tags t
-            WHERE t.slug IS NOT NULL
-            AND t.parentId IN (${PUBLIC_TAG_PARENT_IDS.join(",")})
-        `
-    )
+    const topics = await db.getAllTopicTags(knex)
 
     if (!topics.length) throw new JsonError("No topics found", 404)
 
@@ -548,6 +550,9 @@ export interface OldChartFieldList {
     publishedAt: Date
     publishedByUserId: number
     publishedBy: string
+    grapherViewsPerDay: number
+    narrativeChartsCount: number
+    referencesCount: number
     isExplorable: boolean
 }
 
@@ -567,7 +572,10 @@ export const oldChartFieldList = `
         lastEditedByUser.fullName AS lastEditedBy,
         charts.publishedAt,
         charts.publishedByUserId,
-        publishedByUser.fullName AS publishedBy
+        publishedByUser.fullName AS publishedBy,
+        round(agv.views_365d / 365, 1) as grapherViewsPerDay,
+        crv.narrativeChartsCount,
+        crv.referencesCount
     `
 // TODO: replace this with getBySlug and pick
 

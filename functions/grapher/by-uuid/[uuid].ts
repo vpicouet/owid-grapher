@@ -78,23 +78,41 @@ async function handleConfigRequest(
         identifier: { type: "uuid", id: uuid },
         env,
         etag,
+        searchParams,
     })
 
     if (grapherPageResp.status === 304) {
         return new Response(null, { status: 304 })
     }
 
-    console.log("Grapher page response", grapherPageResp.grapherConfig.title)
+    if (grapherPageResp.status !== 200) {
+        console.log(
+            "Returning non-200 config response for uuid",
+            uuid,
+            grapherPageResp.status
+        )
+        return new Response(null, {
+            status: grapherPageResp.status,
+            headers: {
+                "Cache-Control": "no-cache",
+            },
+        })
+    }
+
+    console.log("Grapher page response", grapherPageResp.grapherConfig?.title)
 
     const cacheControl = shouldCache
         ? "s-maxage=300, max-age=0, must-revalidate"
         : "no-cache"
 
+    const headers: HeadersInit = {
+        "Content-Type": "application/json",
+        "Cache-Control": cacheControl,
+    }
+    if (grapherPageResp.etag) headers.ETag = grapherPageResp.etag
+
     return Response.json(grapherPageResp.grapherConfig, {
-        headers: {
-            "content-type": "application/json",
-            "Cache-Control": cacheControl,
-            ETag: grapherPageResp.etag,
-        },
+        status: grapherPageResp.status,
+        headers,
     })
 }

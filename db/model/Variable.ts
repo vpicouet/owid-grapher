@@ -21,17 +21,18 @@ import {
     OwidVariableMixedData,
     OwidVariableWithSourceAndDimension,
     OwidVariableId,
-    GRAPHER_CHART_TYPES,
     DimensionProperty,
     GrapherInterface,
     DbRawVariable,
     VariablesTableName,
     DbRawChartConfig,
+    DbPlainDatapage,
     parseChartConfig,
     DbEnrichedChartConfig,
     DbEnrichedVariable,
     DbPlainChart,
     DbPlainMultiDimXChartConfig,
+    Distribution,
 } from "@ourworldindata/types"
 import { knexRaw, knexRawFirst } from "../db.js"
 import {
@@ -577,54 +578,40 @@ export async function getAllChartsForIndicator(
 /**
  * Returns the indicator ID to use for datapage metadata if the grapher is
  * eligible for a datapage, otherwise undefined.
- *
- * If we have a single Y indicator and it has schema version >= 2, meaning it
- * has the metadata necessary to render a datapage, AND if the metadata includes
- * text for at least one of the description* fields or titlePublic, then we can
- * use it in a datapage.
  */
 export async function getDatapageIndicatorId(
     knex: db.KnexReadonlyTransaction,
-    grapher: GrapherInterface
-): Promise<number | undefined> {
-    const yVariableIds = grapher
-        .dimensions!.filter((d) => d.property === DimensionProperty.y)
-        .map((d) => d.variableId)
-    const xVariableIds = grapher
-        .dimensions!.filter((d) => d.property === DimensionProperty.x)
-        .map((d) => d.variableId)
-
-    // For scatter plots we want to only show a data page if it has no X indicator mapped, which
-    // is a special case where time is the X axis. Marimekko charts are the other chart that uses
-    // the X dimension but there we usually map population on X which should not prevent us from
-    // showing a data page.
-    if (
-        yVariableIds.length === 1 &&
-        (grapher.chartTypes?.[0] !== GRAPHER_CHART_TYPES.ScatterPlot ||
-            xVariableIds.length === 0)
-    ) {
-        const variableId = yVariableIds[0]
-        const result = await knexRawFirst<{ id: number }>(
-            knex,
-            `-- sql
-                SELECT id
-                FROM variables
-                WHERE id = ?
-                  AND schemaVersion >= 2
-                  AND (
-                    (descriptionShort IS NOT NULL AND descriptionShort != '') OR
-                    (descriptionProcessing IS NOT NULL AND descriptionProcessing != '') OR
-                    (descriptionKey IS NOT NULL AND descriptionKey != '' AND descriptionKey != '[]') OR
-                    (descriptionFromProducer IS NOT NULL AND descriptionFromProducer != '') OR
-                    (titlePublic IS NOT NULL AND titlePublic != '')
-                  )
-            `,
-            [variableId]
-        )
-
-        return result?.id
+    grapher: GrapherInterface,
+    options?: {
+        forceDatapage?: boolean
     }
-    return undefined
+): Promise<number | undefined> {
+    // If a data page is forced, simply return the first y-dimension
+    if (options?.forceDatapage) {
+        const yVariableIds = grapher
+            .dimensions!.filter((d) => d.property === DimensionProperty.y)
+            .map((d) => d.variableId)
+        return yVariableIds[0]
+    }
+
+    if (!grapher.id) {
+        console.warn(
+            "Grapher must have an ID to check for datapage eligibility"
+        )
+        return undefined
+    }
+
+    const row = await knexRawFirst<DbPlainDatapage>(
+        knex,
+        `-- sql
+            SELECT variableId
+            FROM datapages
+            WHERE chartId = ?
+        `,
+        [grapher.id]
+    )
+
+    return row?.variableId
 }
 
 // TODO: these are domain functions and should live somewhere else
@@ -662,9 +649,7 @@ export async function getVariableData(
 export async function getDataForMultipleVariables(
     variableIds: number[]
 ): Promise<MultipleOwidVariableDataDimensionsMap> {
-    const promises = variableIds.map(
-        async (id) => await getVariableData(id as number)
-    )
+    const promises = variableIds.map(async (id) => await getVariableData(id))
     const allVariablesDataAndMetadata = await Promise.all(promises)
     const allVariablesDataAndMetadataMap = new Map(
         allVariablesDataAndMetadata.map((item) => [item.metadata.id, item])
@@ -917,15 +902,12 @@ export const readSQLasDF = async (
 
 export async function getVariableOfDatapageIfApplicable(
     knex: db.KnexReadonlyTransaction,
-    grapher: GrapherInterface
+    grapher: GrapherInterface,
+    options?: { forceDatapage?: boolean }
 ): Promise<
-    | {
-          id: number
-          metadata: OwidVariableWithSourceAndDimension
-      }
-    | undefined
+    { id: number; metadata: OwidVariableWithSourceAndDimension } | undefined
 > {
-    const indicatorId = await getDatapageIndicatorId(knex, grapher)
+    const indicatorId = await getDatapageIndicatorId(knex, grapher, options)
     if (indicatorId) {
         const fullMetadata = await getVariableMetadata(indicatorId, {
             noCache: true,
@@ -933,6 +915,51 @@ export async function getVariableOfDatapageIfApplicable(
         return { id: indicatorId, metadata: fullMetadata }
     }
     return undefined
+}
+
+export async function getVariableDistribution(
+    knex: db.KnexReadonlyTransaction,
+    variableIds: number[]
+): Promise<Distribution> {
+    if (!variableIds.length) return { allowed: true }
+
+    const result = await knexRawFirst<{
+        hasNonRedistributableVariable: number
+    }>(
+        knex,
+        `-- sql
+            SELECT MAX(COALESCE(d.nonRedistributable, 0)) AS hasNonRedistributableVariable
+            FROM variables v
+            LEFT JOIN active_datasets d ON d.id = v.datasetId
+            WHERE v.id IN (?)
+        `,
+        [variableIds]
+    )
+
+    if (!result?.hasNonRedistributableVariable) return { allowed: true }
+
+    const sourceLinksRows = await knexRaw<{ sourceLink: string | null }>(
+        knex,
+        `-- sql
+            SELECT DISTINCT COALESCE(o.urlMain, s.description->>'$.link') AS sourceLink
+            FROM variables v
+            LEFT JOIN active_datasets d ON d.id = v.datasetId
+            LEFT JOIN origins_variables ov ON ov.variableId = v.id
+            LEFT JOIN origins o ON o.id = ov.originId
+            LEFT JOIN sources s ON s.id = v.sourceId
+            WHERE v.id IN (?)
+              AND COALESCE(d.nonRedistributable, 0) = 1
+              AND COALESCE(o.urlMain, s.description->>'$.link') IS NOT NULL
+        `,
+        [variableIds]
+    )
+
+    return {
+        allowed: false,
+        sourceLinks: sourceLinksRows
+            .map((row) => row.sourceLink)
+            .filter((link): link is string => !!link),
+    }
 }
 
 /**

@@ -3,15 +3,30 @@ import { getCanonicalUrl } from "@ourworldindata/components"
 import {
     GdocsContentSource,
     DbInsertUser,
+    EnrichedBlockDataCallout,
     JsonError,
     GDOCS_BASE_URL,
     gdocUrlRegex,
+    LinkedCallouts,
     PostsGdocsLinksTableName,
     PostsGdocsXImagesTableName,
     PostsGdocsTableName,
     PostsGdocsComponentsTableName,
+    PagesIndexRecordsResponse,
+    RedirectsTableName,
+    OwidGdocType,
 } from "@ourworldindata/types"
-import { checkIsGdocPostExcludingFragments } from "@ourworldindata/utils"
+import {
+    checkIsChronologicalFeedPost,
+    checkIsDataInsight,
+    checkIsGdocPostExcludingFragments,
+    checkShouldDataCalloutRender,
+    getEntitiesForProfile,
+    makeCalloutGrapherStateKey,
+    makeLinkedCalloutKey,
+    traverseEnrichedBlock,
+    Url,
+} from "@ourworldindata/utils"
 import { match } from "ts-pattern"
 import {
     checkHasChanges,
@@ -22,11 +37,25 @@ import {
 import {
     indexIndividualGdocPost,
     removeIndividualGdocPostFromIndex,
+    getIndividualGdocRecords,
+    getPreprocessedIndexableText,
+    indexIndividualProfile,
+    removeIndividualProfileFromIndex,
 } from "../../baker/algolia/utils/pages.js"
+import {
+    indexIndividualGdocInChronological,
+    removeIndividualGdocFromChronological,
+} from "../../baker/algolia/utils/pagesChronological.js"
 import { GdocAbout } from "../../db/model/Gdoc/GdocAbout.js"
 import { GdocAuthor } from "../../db/model/Gdoc/GdocAuthor.js"
 import { getMinimalGdocPostsByIds } from "../../db/model/Gdoc/GdocBase.js"
 import { GdocDataInsight } from "../../db/model/Gdoc/GdocDataInsight.js"
+import { prepareCalloutTableForUrl } from "../../db/model/Gdoc/dataCallouts.js"
+import {
+    prepareCalloutTable,
+    constructGrapherValuesJsonFromTable,
+} from "@ourworldindata/grapher"
+import { mapSlugsToIds } from "../../db/model/Chart.js"
 import {
     getAllGdocIndexItemsOrderedByUpdatedAt,
     getAndLoadGdocById,
@@ -37,8 +66,9 @@ import {
     setLinksForGdoc,
     GdocLinkUpdateMode,
     upsertGdoc,
-    getGdocBaseObjectById,
     setTagsForGdoc,
+    loadGdocFromGdocBase,
+    getGdocBaseObjectById,
 } from "../../db/model/Gdoc/GdocFactory.js"
 import { GdocHomepage } from "../../db/model/Gdoc/GdocHomepage.js"
 import { GdocPost } from "../../db/model/Gdoc/GdocPost.js"
@@ -46,12 +76,13 @@ import { enqueueLightningChange } from "./routeUtils.js"
 import { triggerStaticBuild } from "../../baker/GrapherBakingUtils.js"
 import * as db from "../../db/db.js"
 import { Request } from "../authentication.js"
-import e from "express"
+import { HandlerResponse } from "../FunctionalRouter.js"
 import { GdocAnnouncement } from "../../db/model/Gdoc/GdocAnnouncement.js"
+import { GdocProfile } from "../../db/model/Gdoc/GdocProfile.js"
 
 export async function getAllGdocIndexItems(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     return getAllGdocIndexItemsOrderedByUpdatedAt(trx)
@@ -59,30 +90,223 @@ export async function getAllGdocIndexItems(
 
 export async function getIndividualGdoc(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const id = req.params.id
     const contentSource = req.query.contentSource as
         | GdocsContentSource
         | undefined
+    const acceptSuggestions = req.query.acceptSuggestions === "true"
 
     try {
         // Beware: if contentSource=gdocs this will update images in the DB+S3 even if the gdoc is published
-        const gdoc = await getAndLoadGdocById(trx, id, contentSource)
+        const gdoc = await getAndLoadGdocById(
+            trx,
+            id,
+            contentSource,
+            acceptSuggestions
+        )
 
-        if (!gdoc.published) {
+        if (!gdoc.published && !acceptSuggestions) {
             await updateGdocContentOnly(trx, id, gdoc)
         }
 
         res.set("Cache-Control", "no-store")
-        res.send(gdoc)
+        return gdoc
     } catch (error) {
         console.error("Error fetching gdoc", error)
-        res.status(500).json({
+        res.status(500)
+        return {
             error: { message: String(error), status: 500 },
+        }
+    }
+}
+
+export async function getGdocCalloutCoverage(
+    req: Request,
+    res: HandlerResponse,
+    trx: db.KnexReadonlyTransaction
+) {
+    const id = req.params.id
+    const contentSource = req.query.contentSource as
+        | GdocsContentSource
+        | undefined
+    const acceptSuggestions = req.query.acceptSuggestions === "true"
+
+    const base = await getGdocBaseObjectById(trx, id, true)
+    if (!base) throw new JsonError(`No Google Doc with id ${id} found`, 404)
+
+    const gdoc = await loadGdocFromGdocBase(
+        trx,
+        base,
+        contentSource,
+        acceptSuggestions,
+        { loadState: false }
+    )
+
+    if (gdoc.content.type !== OwidGdocType.Profile) {
+        throw new JsonError("Coverage matrix is only available for profiles")
+    }
+
+    // Extract data-callout blocks from the template body
+    const dataCalloutBlocks: EnrichedBlockDataCallout[] = []
+    for (const node of gdoc.content.body ?? []) {
+        traverseEnrichedBlock(node, (b) => {
+            if (b.type === "data-callout") {
+                dataCalloutBlocks.push(b)
+            }
         })
     }
+
+    const rows = dataCalloutBlocks.map(({ url }, index) => {
+        const rowUrl = Url.fromURL(url).updateQueryParams({
+            country: undefined,
+        }).fullUrl
+        return {
+            id: `${rowUrl}#${index}`,
+            label: rowUrl,
+        }
+    })
+
+    const entities = getEntitiesForProfile(
+        gdoc.content.scope,
+        gdoc.content.exclude
+    )
+    const coverageByEntity: Record<string, Record<string, boolean>> = {}
+
+    // Pre-fetch slug to ID map for efficiency
+    const slugToIdMap = await mapSlugsToIds(trx)
+
+    // Group blocks by chart key to prepare each chart's table once
+    const chartKeyToUrl = new Map<string, string>()
+    for (const block of dataCalloutBlocks) {
+        const chartKey = makeCalloutGrapherStateKey(block.url)
+        if (!chartKeyToUrl.has(chartKey)) {
+            chartKeyToUrl.set(chartKey, block.url)
+        }
+    }
+
+    // Prepare tables for each unique chart
+    const preparedTablesByChartKey = new Map<
+        string,
+        ReturnType<typeof prepareCalloutTable>
+    >()
+    for (const [chartKey, templateUrl] of chartKeyToUrl) {
+        const result = await prepareCalloutTableForUrl(
+            trx,
+            templateUrl,
+            slugToIdMap
+        )
+        if (result) {
+            const prepared = prepareCalloutTable(
+                result.inputTable,
+                result.config
+            )
+            preparedTablesByChartKey.set(chartKey, prepared)
+        }
+    }
+
+    // For each entity, check if each block's callout spans can resolve
+    for (const entity of entities) {
+        const rowCoverage: Record<string, boolean> = {}
+
+        dataCalloutBlocks.forEach((block, index) => {
+            const chartKey = makeCalloutGrapherStateKey(block.url)
+            const prepared = preparedTablesByChartKey.get(chartKey)
+
+            if (!prepared) {
+                rowCoverage[rows[index].id] = false
+                return
+            }
+
+            // Instantiate the URL with the entity code
+            const instantiatedUrl = Url.fromURL(block.url).updateQueryParams({
+                country: entity.code,
+            }).fullUrl
+            const url = Url.fromURL(instantiatedUrl)
+
+            const values = constructGrapherValuesJsonFromTable(
+                prepared,
+                entity.name,
+                url.queryParams.time
+            )
+
+            // Build a linkedCallouts entry and check if the block can render
+            const linkedCallouts: LinkedCallouts = {
+                [makeLinkedCalloutKey(instantiatedUrl)]: {
+                    url: instantiatedUrl,
+                    values,
+                },
+            }
+            // Use a shallow copy with the instantiated URL so the key lookup matches
+            const instantiatedBlock = { ...block, url: instantiatedUrl }
+            rowCoverage[rows[index].id] = checkShouldDataCalloutRender(
+                instantiatedBlock,
+                linkedCallouts
+            )
+        })
+
+        coverageByEntity[entity.code] = rowCoverage
+    }
+
+    return {
+        rows,
+        entities,
+        coverageByEntity,
+    }
+}
+
+/**
+ * Given a chart URL (e.g. /grapher/life-expectancy?country=USA),
+ * returns the available callout function strings that can be used
+ * in data-callout blocks.
+ */
+export async function getCalloutFunctionStrings(
+    req: Request,
+    res: HandlerResponse,
+    trx: db.KnexReadonlyTransaction
+) {
+    const chartUrl = req.query.url as string | undefined
+    if (!chartUrl) {
+        throw new JsonError("Missing 'url' query parameter", 400)
+    }
+
+    const tableResult = await prepareCalloutTableForUrl(trx, chartUrl)
+    if (!tableResult) {
+        throw new JsonError(`Could not load chart for URL: ${chartUrl}`, 404)
+    }
+
+    const { config, inputTable } = tableResult
+    const prepared = prepareCalloutTable(inputTable, config)
+
+    // Get column short names from the prepared table
+    const columnSlugs = [
+        ...prepared.yColumnSlugs,
+        ...(prepared.xColumnSlug ? [prepared.xColumnSlug] : []),
+    ]
+
+    const functionStringsByName: Record<string, string[]> = {}
+
+    for (const slug of columnSlugs) {
+        const columnInfo = prepared.columns?.[slug]
+        if (columnInfo?.shortName) {
+            functionStringsByName[columnInfo.name] = [
+                `$latestValue(${columnInfo.shortName})`,
+                `$latestValueWithUnit(${columnInfo.shortName})`,
+                `$latestTime(${columnInfo.shortName})`,
+            ]
+        }
+    }
+
+    return {
+        url: chartUrl,
+        functionStringsByName,
+    }
+}
+
+function checkIsProfile(gdoc: { content: { type?: OwidGdocType } }): boolean {
+    return gdoc.content.type === OwidGdocType.Profile
 }
 
 /**
@@ -101,7 +325,8 @@ async function indexAndBakeGdocIfNeccesary(
         | GdocHomepage
         | GdocAbout
         | GdocAuthor
-        | GdocAnnouncement,
+        | GdocAnnouncement
+        | GdocProfile,
     nextGdoc:
         | GdocPost
         | GdocDataInsight
@@ -109,12 +334,15 @@ async function indexAndBakeGdocIfNeccesary(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ) {
     const prevJson = prevGdoc.toJSON()
     const nextJson = nextGdoc.toJSON()
     const hasChanges = checkHasChanges(prevGdoc, nextGdoc)
     const action = getPublishingAction(prevJson, nextJson)
     const isGdocPost = checkIsGdocPostExcludingFragments(nextJson)
+    const isProfile = checkIsProfile(nextJson)
+    const isChronologicalPost = checkIsChronologicalFeedPost(nextJson)
 
     await match(action)
         .with(GdocPublishingAction.SavingDraft, _.noop)
@@ -128,11 +356,23 @@ async function indexAndBakeGdocIfNeccesary(
                     prevGdoc.slug || nextJson.slug
                 )
             }
+            if (isProfile) {
+                await indexIndividualProfile(nextGdoc as GdocProfile, trx)
+            }
+            if (isChronologicalPost) {
+                await indexIndividualGdocInChronological(nextJson, trx)
+            }
             await triggerStaticBuild(user, `${action} ${nextJson.slug}`)
         })
         .with(GdocPublishingAction.Updating, async () => {
             if (isGdocPost) {
                 await indexIndividualGdocPost(nextJson, trx, prevGdoc.slug)
+            }
+            if (isProfile) {
+                await indexIndividualProfile(nextGdoc as GdocProfile, trx)
+            }
+            if (isChronologicalPost) {
+                await indexIndividualGdocInChronological(nextJson, trx)
             }
             if (checkIsLightningUpdate(prevJson, nextJson, hasChanges)) {
                 await enqueueLightningChange(
@@ -148,6 +388,12 @@ async function indexAndBakeGdocIfNeccesary(
             if (isGdocPost) {
                 await removeIndividualGdocPostFromIndex(nextJson)
             }
+            if (isProfile) {
+                await removeIndividualProfileFromIndex(nextGdoc as GdocProfile)
+            }
+            if (isChronologicalPost) {
+                await removeIndividualGdocFromChronological(nextJson.id)
+            }
             await triggerStaticBuild(user, `${action} ${nextJson.slug}`)
         })
         .exhaustive()
@@ -162,6 +408,7 @@ async function validateSlugCollisionsIfPublishing(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ) {
     if (!gdoc.published) return
 
@@ -174,13 +421,75 @@ async function validateSlugCollisionsIfPublishing(
 }
 
 /**
+ * Creates a redirect from the old slug to the new slug when a published gdoc's slug changes.
+ * Also updates any existing redirects that point to the old slug to point to the new slug instead
+ * (to avoid redirect chains).
+ */
+async function createRedirectForSlugChangeIfNeeded(
+    trx: db.KnexReadWriteTransaction,
+    prevGdoc: {
+        slug: string
+        published: boolean
+        content: { type?: OwidGdocType }
+    },
+    nextGdoc: {
+        slug: string
+        published: boolean
+        content: { type?: OwidGdocType }
+    }
+): Promise<void> {
+    // Only create redirects when both prev and next are published and slug has changed
+    if (!prevGdoc.published || !nextGdoc.published) return
+    if (!prevGdoc.slug || prevGdoc.slug === nextGdoc.slug) return
+
+    const oldPath = getCanonicalUrl("", prevGdoc)
+    const newPath = getCanonicalUrl("", nextGdoc)
+
+    if (oldPath === newPath) return
+
+    // For profiles, create a splat redirect so all entity pages are covered
+    // e.g. /profile/old-slug/* -> /profile/new-slug/:splat
+    const isProfile = prevGdoc.content.type === OwidGdocType.Profile
+    const oldSource = isProfile ? `${oldPath}/*` : oldPath
+    const newTarget = isProfile ? `${newPath}/:splat` : newPath
+    // For chain-collapsing: the target stored in the DB uses :splat, not *
+    const oldTarget = isProfile ? `${oldPath}/:splat` : oldPath
+
+    // Update any existing redirects that point to the old path to point to the new path instead
+    // This prevents redirect chains (A -> B -> C becomes A -> C)
+    await trx(RedirectsTableName)
+        .where("target", oldTarget)
+        .update({ target: newTarget })
+
+    // Delete any self-referential redirects that may have been created by the above update
+    // (e.g., when reverting a slug change: a→b updated to a→a)
+    // For splat redirects, source uses /* and target uses /:splat (Cloudflare
+    // convention), so we normalise before comparing.
+    await trx(RedirectsTableName)
+        .whereRaw("REPLACE(source, '/*', '') = REPLACE(target, '/:splat', '')")
+        .delete()
+
+    // Delete any existing redirect from the old path (in case we're reverting a previous change)
+    await trx(RedirectsTableName).where("source", oldSource).delete()
+
+    // Create the new redirect from old path to new path
+    await trx(RedirectsTableName).insert({
+        source: oldSource,
+        target: newTarget,
+        code: 301, // Permanent redirect
+    })
+
+    console.log(`Created redirect: ${oldSource} -> ${newTarget}`)
+}
+
+/**
  * Only supports creating a new empty Gdoc or updating an existing one. Does not
  * support creating a new Gdoc from an existing one. Relevant updates will
  * trigger a deploy.
  */
 export async function createOrUpdateGdoc(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const { id } = req.params
@@ -196,6 +505,9 @@ export async function createOrUpdateGdoc(
     await nextGdoc.loadState(trx)
 
     await validateSlugCollisionsIfPublishing(trx, nextGdoc)
+
+    // Create redirect if slug changed on a published gdoc
+    await createRedirectForSlugChangeIfNeeded(trx, prevGdoc, nextGdoc)
 
     await setImagesInContentGraph(trx, nextGdoc)
 
@@ -234,7 +546,7 @@ async function validateTombstoneRelatedLinkUrl(
 
 export async function deleteGdoc(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const { id } = req.params
@@ -275,20 +587,29 @@ export async function deleteGdoc(
         .table(PostsGdocsComponentsTableName)
         .where({ gdocId: id })
         .delete()
-    if (gdoc.published && checkIsGdocPostExcludingFragments(gdoc)) {
-        await removeIndividualGdocPostFromIndex(gdoc)
-    }
     if (gdoc.published) {
+        if (checkIsGdocPostExcludingFragments(gdoc)) {
+            await removeIndividualGdocPostFromIndex(gdoc)
+        }
+        if (checkIsProfile(gdoc)) {
+            await removeIndividualProfileFromIndex(
+                gdoc as unknown as GdocProfile
+            )
+        }
+        if (checkIsChronologicalFeedPost(gdoc)) {
+            await removeIndividualGdocFromChronological(gdoc.id)
+        }
         if (!tombstone && gdocSlug && gdocSlug !== "/") {
             // Assets have TTL of one week in Cloudflare. Add a redirect to make sure
             // the page is no longer accessible.
             // https://developers.cloudflare.com/pages/configuration/serving-pages/#asset-retention
-            console.log(`Creating redirect for "${gdocSlug}" to "/"`)
+            const source = checkIsProfile(gdoc) ? `${gdocSlug}/*` : gdocSlug
+            console.log(`Creating redirect for "${source}" to "/"`)
             await db.knexRawInsert(
                 trx,
                 `INSERT INTO redirects (source, target, ttl)
                 VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 8 DAY))`,
-                [gdocSlug, "/"]
+                [source, "/"]
             )
         }
         await triggerStaticBuild(res.locals.user, `Deleting ${gdocSlug}`)
@@ -298,7 +619,7 @@ export async function deleteGdoc(
 
 export async function setGdocTags(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const { gdocId } = req.params
@@ -310,4 +631,119 @@ export async function setGdocTags(
     await setTagsForGdoc(trx, gdocId, tagIdsAsObjects)
 
     return { success: true }
+}
+
+/**
+ * Generate a preview of Algolia index records for a gdoc.
+ * Returns the records that would be created when indexing this gdoc.
+ *
+ * When `?raw=true` is passed, returns the preprocessed indexable text
+ * (same pre-index cleanup as Algolia records, before chunk serialization).
+ */
+export async function getPreviewGdocIndexRecords(
+    req: Request,
+    res: HandlerResponse,
+    trx: db.KnexReadonlyTransaction
+): Promise<PagesIndexRecordsResponse | { plaintext: string | undefined }> {
+    const { id } = req.params
+    const contentSource = req.query.contentSource as
+        | GdocsContentSource
+        | undefined
+    const raw = req.query.raw === "true"
+
+    try {
+        const gdoc = await getAndLoadGdocById(trx, id, contentSource, false)
+
+        if (!gdoc) {
+            throw new JsonError(`No Google Doc with id ${id} found`)
+        }
+
+        res.set("Cache-Control", "no-store")
+
+        if (raw) {
+            const plaintext = getPreprocessedIndexableText(
+                gdoc.content.body,
+                gdoc.linkedCallouts
+            )
+            return { plaintext }
+        }
+
+        const gdocJson = gdoc.toJSON()
+
+        // Provide fallback dates to avoid issues in record generation, where
+        // dates are expected
+        const fallbackDate = gdocJson.publishedAt ?? new Date()
+        gdocJson.publishedAt = fallbackDate
+        gdocJson.updatedAt ??= fallbackDate
+
+        if (checkIsProfile(gdocJson)) {
+            const payload: PagesIndexRecordsResponse = {
+                records: [],
+                count: 0,
+                message:
+                    "Profile preview is not supported — profiles are indexed at publish time for all entities",
+            }
+            return payload
+        }
+
+        // Only generate records for posts (excluding fragments)
+        if (
+            !checkIsGdocPostExcludingFragments(gdocJson) &&
+            !checkIsDataInsight(gdocJson)
+        ) {
+            const payload: PagesIndexRecordsResponse = {
+                records: [],
+                count: 0,
+                message: `Gdoc type "${gdocJson.content.type}" is not indexed in Algolia`,
+            }
+            return payload
+        }
+
+        if (
+            "deprecation-notice" in gdocJson.content &&
+            gdocJson.content["deprecation-notice"]
+        ) {
+            const payload: PagesIndexRecordsResponse = {
+                records: [],
+                count: 0,
+                message:
+                    "Gdoc is deprecated (has deprecation-notice) and will not be indexed in Algolia",
+            }
+            return payload
+        }
+
+        const records = await getIndividualGdocRecords(gdocJson, trx)
+
+        const payload: PagesIndexRecordsResponse = {
+            records,
+            count: records.length,
+        }
+
+        return payload
+    } catch (error) {
+        console.error("Error generating gdoc index records", error)
+        if (error instanceof Error) throw error
+        throw new Error(String(error), { cause: error })
+    }
+}
+
+/**
+ * Get slugs of all published topic pages (topic-page, linear-topic-page).
+ * Used by the tag editor to determine if a tag's slug matches a published gdoc.
+ */
+export async function getPublishedGdocTopicSlugs(
+    _req: Request,
+    _res: HandlerResponse,
+    trx: db.KnexReadonlyTransaction
+): Promise<{ slugs: string[] }> {
+    const rows = await db.knexRaw<{ slug: string }>(
+        trx,
+        `-- sql
+        SELECT slug FROM posts_gdocs
+        WHERE published = TRUE
+        AND type IN ('topic-page', 'linear-topic-page')
+        AND slug IS NOT NULL
+        `
+    )
+    return { slugs: rows.map((r) => r.slug) }
 }

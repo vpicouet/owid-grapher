@@ -1,6 +1,3 @@
-// Todo: remove this.
-// Any display changes really can be computed columns. And then charts just need xColumnSlug, sizeColumnSlug, yColumnSlug (or yColumnSlugs) et cetera
-
 import { observable, computed, makeObservable } from "mobx"
 import {
     trimObject,
@@ -14,6 +11,7 @@ import {
     OwidChartDimensionInterface,
     Time,
     OwidChartDimensionInterfaceWithMandatorySlug,
+    objectWithPersistablesToObject,
 } from "@ourworldindata/utils"
 import { OwidTable, CoreColumn } from "@ourworldindata/core-table"
 
@@ -57,7 +55,7 @@ export class ChartDimension
     extends ChartDimensionDefaults
     implements Persistable, OwidChartDimensionInterfaceWithMandatorySlug
 {
-    private manager: LegacyDimensionsManager
+    private readonly manager: LegacyDimensionsManager
 
     constructor(
         obj: OwidChartDimensionInterface,
@@ -86,17 +84,20 @@ export class ChartDimension
     }
 
     toObject(): OwidChartDimensionInterface {
-        return trimObject(
-            deleteRuntimeAndUnchangedProps(
-                {
-                    property: this.property,
-                    variableId: this.variableId,
-                    display: this.display,
-                    targetYear: this.targetYear,
-                },
-                new ChartDimensionDefaults()
-            )
+        const keysToSerialize = [
+            "variableId",
+            "property",
+            "display",
+            "targetYear",
+        ]
+        const obj: OwidChartDimensionInterface = objectWithPersistablesToObject(
+            this,
+            keysToSerialize
         )
+
+        deleteRuntimeAndUnchangedProps(obj, new ChartDimensionDefaults())
+
+        return trimObject(obj)
     }
 
     // Do not persist yet, until we migrate off VariableIds

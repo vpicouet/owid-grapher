@@ -7,6 +7,7 @@ import fs from "fs-extra"
 import path from "path"
 import { glob } from "glob"
 import ProgressBar from "progress"
+import { stringify } from "safe-stable-stringify"
 import * as db from "../db/db.js"
 import { BASE_DIR } from "../settings/serverSettings.js"
 
@@ -17,9 +18,6 @@ import {
     makeAtomFeed,
     feedbackPage,
     renderNotFoundPage,
-    renderCountryProfile,
-    flushCache as siteBakingFlushCache,
-    renderPost,
     renderGdoc,
     makeAtomFeedNoTopicPages,
     renderDynamicCollectionPage,
@@ -33,10 +31,7 @@ import {
     renderSubscribePage,
 } from "../baker/siteRenderers.js"
 import { makeSitemap } from "../baker/sitemap.js"
-import { bakeCountries } from "../baker/countryProfiles.js"
 import {
-    countries,
-    FullPost,
     LinkedAuthor,
     LinkedChart,
     LinkedIndicator,
@@ -52,10 +47,14 @@ import {
     NarrativeChartInfo,
     ArchiveContext,
     OwidGdocType,
+    getEntitiesForProfile,
+    LinkedStaticViz,
 } from "@ourworldindata/utils"
 import { execWrapper } from "../db/execWrapper.js"
-import { countryProfileSpecs } from "../site/countryProfileProjects.js"
-import { getRedirects, flushCache as redirectsFlushCache } from "./redirects.js"
+import {
+    getCloudflarePagesRedirects,
+    flushCache as redirectsFlushCache,
+} from "./redirects.js"
 import { bakeAllChangedGrapherPagesAndDeleteRemovedGraphers } from "./GrapherBaker.js"
 import { EXPLORERS_ROUTE_FOLDER } from "@ourworldindata/explorer"
 import {
@@ -68,14 +67,24 @@ import { generateEmbedSnippet } from "../site/viteUtils.js"
 import { logErrorAndMaybeCaptureInSentry } from "../serverUtils/errorLog.js"
 import { mapSlugsToConfigs } from "../db/model/Chart.js"
 import { GdocDataInsight } from "../db/model/Gdoc/GdocDataInsight.js"
+import {
+    GdocProfile,
+    instantiateProfileForEntity,
+} from "../db/model/Gdoc/GdocProfile.js"
+import {
+    prepareCalloutTablesForProfile,
+    checkShouldProfileRender,
+} from "../db/model/Gdoc/dataCallouts.js"
 import { calculateDataInsightIndexPageCount } from "../db/model/Gdoc/gdocUtils.js"
 import {
     gdocFromJSON,
     getMinimalGdocBaseObjects,
     getLatestDataInsights,
+    getAndLoadGdocBySlug,
 } from "../db/model/Gdoc/GdocFactory.js"
 import { getBakePath } from "@ourworldindata/components"
 import { GdocAuthor, getMinimalAuthors } from "../db/model/Gdoc/GdocAuthor.js"
+import { getLatestArchivedPostPageVersionsIfEnabled } from "../db/model/ArchivedPostVersion.js"
 import {
     makeExplorerLinkedChart,
     makeGrapherLinkedChart,
@@ -88,18 +97,21 @@ import { bakeAllMultiDimDataPages } from "./MultiDimBaker.js"
 import { getAllLinkedPublishedMultiDimDataPages } from "../db/model/MultiDimDataPage.js"
 import { getPublicDonorNames } from "../db/model/Donor.js"
 import { getNarrativeChartsInfo } from "../db/model/NarrativeChart.js"
-import { getGrapherRedirectsMap } from "./redirectsFromDb.js"
+import { getLinkedStaticVizByNames } from "../db/model/StaticViz.js"
+import {
+    getExplorerToMultiDimRedirects,
+    getGrapherToChartAndMultiDimRedirects,
+} from "./redirectsFromDb.js"
 import * as R from "remeda"
 import { getDods, getParsedDodsDictionary } from "../db/model/Dod.js"
-import {
-    getLatestChartArchivedVersionsIfEnabled,
-    getLatestMultiDimArchivedVersionsIfEnabled,
-} from "../db/model/archival/archivalDb.js"
+import { getLatestArchivedChartPageVersionsIfEnabled } from "../db/model/ArchivedChartVersion.js"
+import { getLatestArchivedMultiDimPageVersionsIfEnabled } from "../db/model/ArchivedMultiDimVersion.js"
 import { SEARCH_BASE_PATH } from "../site/search/searchUtils.js"
 import {
     getLatestPageItems,
     enrichLatestPageItems,
 } from "../db/model/Gdoc/GdocPost.js"
+import { PostArchivalManifest } from "../serverUtils/archivalUtils.js"
 
 type PrefetchedAttachments = {
     donors: string[]
@@ -116,6 +128,7 @@ type PrefetchedAttachments = {
     }
     linkedIndicators: Record<number, LinkedIndicator>
     linkedNarrativeCharts: Record<string, NarrativeChartInfo>
+    linkedStaticViz: Record<string, LinkedStaticViz>
 }
 
 // These aren't all "wordpress" steps
@@ -124,7 +137,6 @@ const wordpressSteps = ["assets", "blogIndex", "redirects", "rss"] as const
 
 const nonWordpressSteps = [
     "specialPages",
-    "countries",
     "countryProfiles",
     "explorers",
     "charts",
@@ -153,18 +165,17 @@ const defaultSteps = new Set(bakeSteps)
 function getProgressBarTotal(bakeSteps: BakeStepConfig): number {
     // There are 2 non-optional steps: flushCache at the beginning and flushCache at the end (again)
     const minimum = 2
-    let total = minimum + bakeSteps.size
-    // Redirects has two progress bar ticks
-    if (bakeSteps.has("redirects")) total++
-    return total
+    return minimum + bakeSteps.size
 }
 
 export class SiteBaker {
-    private bakedSiteDir: string
+    private readonly bakedSiteDir: string
     baseUrl: string
     progressBar: ProgressBar
     explorerAdminServer: ExplorerAdminServer
     bakeSteps: BakeStepConfig
+    private readonly _renderedProfileEntityCodes: Map<string, string[]> =
+        new Map()
 
     constructor(
         bakedSiteDir: string,
@@ -186,40 +197,105 @@ export class SiteBaker {
 
     private async bakeCountryProfiles(knex: db.KnexReadonlyTransaction) {
         if (!this.bakeSteps.has("countryProfiles")) return
-        this.progressBar.tick({ name: "Baking country profiles" })
-        await Promise.all(
-            countryProfileSpecs.map(async (spec) => {
-                // Delete all country profiles before regenerating them
-                await fs.remove(`${this.bakedSiteDir}/${spec.rootPath}`)
+        this.progressBar.tick({ name: "Baking profile pages" })
 
-                // Not necessary, as this is done by stageWrite already
-                // await this.ensureDir(profile.rootPath)
-                for (const country of countries) {
-                    const html = await renderCountryProfile(
-                        spec,
-                        country,
-                        knex
-                    ).catch(() =>
-                        console.error(
-                            `${country.name} country profile not baked for project "${spec.project}". Check that both pages "${spec.landingPageSlug}" and "${spec.genericProfileSlug}" exist and are published.`
-                        )
-                    )
-
-                    if (html) {
-                        const outPath = path.join(
-                            this.bakedSiteDir,
-                            `${spec.rootPath}/${country.slug}.html`
-                        )
-                        await this.stageWrite(outPath, html)
-                    }
-                }
-            })
+        const profileTemplates = (
+            await db
+                .getPublishedGdocsWithTags(knex, [OwidGdocType.Profile])
+                .then((gdocs) => gdocs.map(gdocFromJSON))
+        ).filter(
+            (gdoc): gdoc is GdocProfile =>
+                gdoc.content.type === OwidGdocType.Profile
         )
+
+        if (profileTemplates.length === 0) return
+
+        for (const profileTemplate of profileTemplates) {
+            const attachments = await this.getPrefetchedGdocAttachments(
+                knex,
+                [
+                    profileTemplate.content.authors,
+                    profileTemplate.linkedDocumentIds,
+                    profileTemplate.linkedImageFilenames,
+                    profileTemplate.linkedChartSlugs.grapher,
+                    profileTemplate.linkedChartSlugs.explorer,
+                    profileTemplate.linkedNarrativeChartNames,
+                    profileTemplate.linkedStaticVizNames,
+                ],
+                profileTemplate.content.authorRoles
+            )
+
+            profileTemplate.donors = attachments.donors
+            profileTemplate.linkedAuthors = attachments.linkedAuthors
+            profileTemplate.linkedDocuments = attachments.linkedDocuments
+            profileTemplate.imageMetadata = attachments.imageMetadata
+            profileTemplate.linkedCharts = {
+                ...attachments.linkedCharts.graphers,
+                ...attachments.linkedCharts.explorers,
+            }
+            profileTemplate.linkedIndicators = attachments.linkedIndicators
+            profileTemplate.linkedNarrativeCharts =
+                attachments.linkedNarrativeCharts
+            profileTemplate.linkedStaticViz = attachments.linkedStaticViz
+
+            // Prepare all callout tables ONCE for this profile.
+            // This avoids fetching the same chart data for each entity.
+            const preparedTables = await prepareCalloutTablesForProfile(
+                knex,
+                profileTemplate.content
+            )
+
+            const entities = getEntitiesForProfile(
+                profileTemplate.content.scope,
+                profileTemplate.content.exclude
+            )
+
+            const renderedCodes: string[] = []
+
+            for (const entity of entities) {
+                // Pass pre-prepared tables to avoid redundant API calls
+                const instantiatedProfile = await instantiateProfileForEntity(
+                    profileTemplate,
+                    entity,
+                    { preparedTables }
+                )
+
+                if (!checkShouldProfileRender(instantiatedProfile.content)) {
+                    continue
+                }
+
+                renderedCodes.push(entity.code)
+
+                const html = renderGdoc(instantiatedProfile)
+                const outPath = `${getBakePath(this.bakedSiteDir, instantiatedProfile)}.html`
+                await this.stageWrite(outPath, html)
+            }
+
+            this._renderedProfileEntityCodes.set(
+                profileTemplate.id,
+                renderedCodes
+            )
+        }
+
+        // Update prefetched linkedDocuments cache with filtered entity codes
+        if (this._prefetchedAttachmentsCache) {
+            for (const [gdocId, renderedCodes] of this
+                ._renderedProfileEntityCodes) {
+                const linkedDoc =
+                    this._prefetchedAttachmentsCache.linkedDocuments[gdocId]
+                if (linkedDoc) {
+                    linkedDoc.availableEntityCodes = renderedCodes
+                }
+            }
+        }
     }
 
     // Bake an individual post/page
-    private async bakeOwidGdoc(gdoc: OwidGdoc) {
-        const html = renderGdoc(gdoc)
+    private async bakeOwidGdoc(
+        gdoc: OwidGdoc,
+        archiveContext?: ArchiveContext
+    ) {
+        const html = renderGdoc(gdoc, false, archiveContext)
         const outPath = `${getBakePath(this.bakedSiteDir, gdoc)}.html`
         await fs.mkdirp(path.dirname(outPath))
         await this.stageWrite(outPath, html)
@@ -243,15 +319,6 @@ export class SiteBaker {
         await this.stageWrite(outPath, html)
     }
 
-    // Bake an individual post/page
-    private async bakePost(post: FullPost, knex: db.KnexReadonlyTransaction) {
-        const html = await renderPost(post, knex, this.baseUrl)
-
-        const outPath = path.join(this.bakedSiteDir, `${post.slug}.html`)
-        await fs.mkdirp(path.dirname(outPath))
-        await this.stageWrite(outPath, html)
-    }
-
     // Returns the slugs of posts which exist on the filesystem but are not in the DB anymore.
     // This happens when posts have been saved in previous bakes but have been since then deleted, unpublished or renamed.
     // Among all existing slugs on the filesystem, some are not coming from WP. They are baked independently and should not
@@ -267,12 +334,8 @@ export class SiteBaker {
                     !path.startsWith("uploads") &&
                     !path.startsWith("grapher") &&
                     !path.startsWith("countries") &&
-                    !path.startsWith("country") &&
                     !path.startsWith("latest") &&
                     !path.startsWith("explore") &&
-                    !countryProfileSpecs.some((spec) =>
-                        path.startsWith(spec.rootPath)
-                    ) &&
                     path !== "donate" &&
                     path !== "feedback" &&
                     path !== "charts" &&
@@ -290,10 +353,23 @@ export class SiteBaker {
     // linkedCharts, and linkedIndicators instead of having to fetch them for
     // each individual gdoc. Optionally takes a tuple of string arrays to pick
     // from the prefetched dictionaries.
+    // Doesn't prefetch data for callouts.
     _prefetchedAttachmentsCache: PrefetchedAttachments | undefined = undefined
     private async getPrefetchedGdocAttachments(
         knex: db.KnexReadonlyTransaction,
-        picks?: [string[], string[], string[], string[], string[], string[]]
+        picks?: [
+            string[],
+            string[],
+            string[],
+            string[],
+            string[],
+            string[],
+            string[],
+        ],
+        // Author roles are per-gdoc (e.g. "writing", "data work"), not global,
+        // so they can't be part of the shared prefetch cache. They need to be
+        // applied when filtering authors for a specific gdoc.
+        authorRoles?: Record<string, string>
     ): Promise<PrefetchedAttachments> {
         if (!this._prefetchedAttachmentsCache) {
             console.log("Prefetching donors")
@@ -328,8 +404,8 @@ export class SiteBaker {
             console.log("Prefetching archived versions")
             const [archivedChartVersions, archivedMultiDimVersions] =
                 await Promise.all([
-                    getLatestChartArchivedVersionsIfEnabled(knex),
-                    getLatestMultiDimArchivedVersionsIfEnabled(knex),
+                    getLatestArchivedChartPageVersionsIfEnabled(knex),
+                    getLatestArchivedMultiDimPageVersionsIfEnabled(knex),
                 ])
 
             const archivedVersions = {
@@ -384,11 +460,19 @@ export class SiteBaker {
             }
 
             const multiDims = await getAllLinkedPublishedMultiDimDataPages(knex)
-            for (const { id, slug, config } of multiDims) {
+            for (const {
+                id,
+                slug,
+                config,
+                originalSlug,
+                queryStr,
+            } of multiDims) {
                 publishedCharts.push(
-                    makeMultiDimLinkedChart(config, slug, {
+                    makeMultiDimLinkedChart(config, originalSlug, {
                         archivedPageVersion:
                             archivedVersions.multiDims[id] || undefined,
+                        queryStr,
+                        resolvedSlug: originalSlug !== slug ? slug : undefined,
                     })
                 )
             }
@@ -438,6 +522,17 @@ export class SiteBaker {
                 `✅ Prefetched ${narrativeChartsInfo.length} narrative charts`
             )
 
+            console.log("Prefetching static viz")
+            const staticVizLinkTargets = await db
+                .getStaticVizLinkTargets(knex)
+                .then((rows) => rows.map((row) => row.target))
+            const staticVizList = await getLinkedStaticVizByNames(
+                knex,
+                staticVizLinkTargets
+            )
+            const staticVizByName = _.keyBy(staticVizList, "name")
+            console.log(`✅ Prefetched ${staticVizList.length} static viz`)
+
             const prefetchedAttachments = {
                 donors,
                 linkedAuthors: publishedAuthors,
@@ -453,6 +548,7 @@ export class SiteBaker {
                 },
                 linkedIndicators: datapageIndicatorsById,
                 linkedNarrativeCharts: narrativeChartsInfoByName,
+                linkedStaticViz: staticVizByName,
             }
             this._prefetchedAttachmentsCache = prefetchedAttachments
         }
@@ -464,6 +560,7 @@ export class SiteBaker {
                 linkedGrapherSlugs,
                 linkedExplorerSlugs,
                 linkedNarrativeChartNames,
+                linkedStaticVizNames,
             ] = picks
             const linkedDocuments = _.pick(
                 this._prefetchedAttachmentsCache.linkedDocuments,
@@ -513,13 +610,20 @@ export class SiteBaker {
                     this._prefetchedAttachmentsCache.linkedIndicators,
                     linkedIndicatorIds
                 ),
-                linkedAuthors:
-                    this._prefetchedAttachmentsCache.linkedAuthors.filter(
-                        (author) => authorNames.includes(author.name)
-                    ),
+                linkedAuthors: this._prefetchedAttachmentsCache.linkedAuthors
+                    .filter((author) => authorNames.includes(author.name))
+                    .map((author) => {
+                        const role = authorRoles?.[author.name]
+                        if (role) return { ...author, role }
+                        return author
+                    }),
                 linkedNarrativeCharts: _.pick(
                     this._prefetchedAttachmentsCache.linkedNarrativeCharts,
                     linkedNarrativeChartNames
+                ),
+                linkedStaticViz: _.pick(
+                    this._prefetchedAttachmentsCache.linkedStaticViz,
+                    linkedStaticVizNames
                 ),
             }
         }
@@ -546,6 +650,7 @@ export class SiteBaker {
     async bakeGDocPosts(knex: db.KnexReadonlyTransaction, slugs?: string[]) {
         if (!this.bakeSteps.has("gdocPosts")) return
         this.progressBar.tick({ name: "Baking Google doc posts" })
+        const slugsToBake = slugs === undefined ? undefined : _.uniq(slugs)
         // We don't need to call `load` on these, because we prefetch all attachments
         const publishedGdocs = await db
             .getPublishedGdocsWithTags(knex)
@@ -555,29 +660,46 @@ export class SiteBaker {
             await db.getTagHierarchiesByChildName(knex)
 
         const gdocsToBake =
-            slugs !== undefined
-                ? publishedGdocs.filter((gdoc) => slugs.includes(gdoc.slug))
+            slugsToBake !== undefined
+                ? publishedGdocs.filter((gdoc) =>
+                      slugsToBake.includes(gdoc.slug)
+                  )
                 : publishedGdocs
 
+        const gdocIds = gdocsToBake.map((gdoc) => gdoc.id)
+
+        const archivedVersions =
+            gdocIds.length > 0
+                ? await getLatestArchivedPostPageVersionsIfEnabled(
+                      knex,
+                      gdocIds
+                  )
+                : {}
+
         // Ensure we have a published gdoc for each slug given
-        if (slugs !== undefined && slugs.length !== gdocsToBake.length) {
-            const slugsNotFound = slugs.filter(
-                (slug) => !gdocsToBake.find((gdoc) => gdoc.slug === slug)
+        if (slugsToBake && slugsToBake.length !== gdocsToBake.length) {
+            const slugsNotFound = slugsToBake.filter(
+                (slug) => !gdocsToBake.some((gdoc) => gdoc.slug === slug)
             )
             throw new Error(
-                `Some of the gdoc slugs were not found or are not published: ${slugsNotFound}`
+                `Some of the gdoc slugs were not found or are not published: ${slugsNotFound.join(", ")}`
             )
         }
 
         for (const publishedGdoc of gdocsToBake) {
-            const attachments = await this.getPrefetchedGdocAttachments(knex, [
-                publishedGdoc.content.authors,
-                publishedGdoc.linkedDocumentIds,
-                publishedGdoc.linkedImageFilenames,
-                publishedGdoc.linkedChartSlugs.grapher,
-                publishedGdoc.linkedChartSlugs.explorer,
-                publishedGdoc.linkedNarrativeChartNames,
-            ])
+            const attachments = await this.getPrefetchedGdocAttachments(
+                knex,
+                [
+                    publishedGdoc.content.authors,
+                    publishedGdoc.linkedDocumentIds,
+                    publishedGdoc.linkedImageFilenames,
+                    publishedGdoc.linkedChartSlugs.grapher,
+                    publishedGdoc.linkedChartSlugs.explorer,
+                    publishedGdoc.linkedNarrativeChartNames,
+                    publishedGdoc.linkedStaticVizNames,
+                ],
+                publishedGdoc.content.authorRoles
+            )
             publishedGdoc.donors = attachments.donors
             publishedGdoc.linkedAuthors = attachments.linkedAuthors
             publishedGdoc.linkedDocuments = attachments.linkedDocuments
@@ -589,6 +711,8 @@ export class SiteBaker {
             publishedGdoc.linkedIndicators = attachments.linkedIndicators
             publishedGdoc.linkedNarrativeCharts =
                 attachments.linkedNarrativeCharts
+            publishedGdoc.linkedStaticViz = attachments.linkedStaticViz
+            await publishedGdoc.loadAndClearLinkedCallouts(knex)
 
             if (
                 !publishedGdoc.manualBreadcrumbs?.length &&
@@ -609,8 +733,9 @@ export class SiteBaker {
             }
 
             await publishedGdoc.validate(knex)
+            const archiveContext = archivedVersions[publishedGdoc.id]
             try {
-                await this.bakeOwidGdoc(publishedGdoc)
+                await this.bakeOwidGdoc(publishedGdoc, archiveContext)
             } catch (e) {
                 await logErrorAndMaybeCaptureInSentry(
                     new Error(
@@ -625,6 +750,11 @@ export class SiteBaker {
         if (!this.bakeSteps.has("gdocTombstones")) return
         this.progressBar.tick({ name: "Baking Google doc tombstones" })
         const tombstones = await getTombstones(knex)
+        const archivedPostVersions =
+            await getLatestArchivedPostPageVersionsIfEnabled(
+                knex,
+                tombstones.map((t) => t.gdocId)
+            )
 
         for (const tombstone of tombstones) {
             const attachments = await this.getPrefetchedGdocAttachments(knex)
@@ -640,8 +770,20 @@ export class SiteBaker {
                     )
                 }
             }
+            const pageData: TombstonePageData = {
+                ...R.pick(tombstone, [
+                    "slug",
+                    "reason",
+                    "includeArchiveLink",
+                    "relatedLinkUrl",
+                    "relatedLinkTitle",
+                    "relatedLinkDescription",
+                    "relatedLinkThumbnail",
+                ]),
+                archiveUrl: archivedPostVersions[tombstone.gdocId]?.archiveUrl,
+            }
             try {
-                await this.bakeOwidGdocTombstone(tombstone, attachments)
+                await this.bakeOwidGdocTombstone(pageData, attachments)
             } catch (e) {
                 await logErrorAndMaybeCaptureInSentry(
                     new Error(
@@ -671,7 +813,7 @@ export class SiteBaker {
         )
         await this.stageWrite(
             `${this.bakedSiteDir}/feedback.html`,
-            await feedbackPage()
+            feedbackPage()
         )
         await this.stageWrite(
             `${this.bakedSiteDir}${SEARCH_BASE_PATH}.html`,
@@ -687,7 +829,7 @@ export class SiteBaker {
         )
         await this.stageWrite(
             `${this.bakedSiteDir}/collection/custom.html`,
-            await renderDynamicCollectionPage()
+            renderDynamicCollectionPage()
         )
         await this.stageWrite(
             `${this.bakedSiteDir}/collection/top-charts.html`,
@@ -695,7 +837,7 @@ export class SiteBaker {
         )
         await this.stageWrite(
             `${this.bakedSiteDir}/404.html`,
-            await renderNotFoundPage()
+            renderNotFoundPage()
         )
         await this.stageWrite(
             `${this.bakedSiteDir}/sitemap.xml`,
@@ -799,14 +941,19 @@ export class SiteBaker {
             await GdocDataInsight.getPublishedDataInsights(knex)
 
         for (const dataInsight of publishedDataInsights) {
-            const attachments = await this.getPrefetchedGdocAttachments(knex, [
-                dataInsight.content.authors,
-                dataInsight.linkedDocumentIds,
-                dataInsight.linkedImageFilenames,
-                dataInsight.linkedChartSlugs.grapher,
-                dataInsight.linkedChartSlugs.explorer,
-                dataInsight.linkedNarrativeChartNames,
-            ])
+            const attachments = await this.getPrefetchedGdocAttachments(
+                knex,
+                [
+                    dataInsight.content.authors,
+                    dataInsight.linkedDocumentIds,
+                    dataInsight.linkedImageFilenames,
+                    dataInsight.linkedChartSlugs.grapher,
+                    dataInsight.linkedChartSlugs.explorer,
+                    dataInsight.linkedNarrativeChartNames,
+                    dataInsight.linkedStaticVizNames,
+                ],
+                dataInsight.content.authorRoles
+            )
             dataInsight.linkedDocuments = attachments.linkedDocuments
             dataInsight.imageMetadata = {
                 ...attachments.imageMetadata,
@@ -816,6 +963,8 @@ export class SiteBaker {
                 ...attachments.linkedCharts.graphers,
                 ...attachments.linkedCharts.explorers,
             }
+            dataInsight.linkedStaticViz = attachments.linkedStaticViz
+            await dataInsight.loadAndClearLinkedCallouts(knex)
             dataInsight.latestDataInsights = latestDataInsights
 
             await dataInsight.validate(knex)
@@ -883,14 +1032,19 @@ export class SiteBaker {
         const publishedAuthors = await GdocAuthor.getPublishedAuthors(knex)
 
         for (const publishedAuthor of publishedAuthors) {
-            const attachments = await this.getPrefetchedGdocAttachments(knex, [
-                publishedAuthor.content.authors,
-                publishedAuthor.linkedDocumentIds,
-                publishedAuthor.linkedImageFilenames,
-                publishedAuthor.linkedChartSlugs.grapher,
-                publishedAuthor.linkedChartSlugs.explorer,
-                publishedAuthor.linkedNarrativeChartNames,
-            ])
+            const attachments = await this.getPrefetchedGdocAttachments(
+                knex,
+                [
+                    publishedAuthor.content.authors,
+                    publishedAuthor.linkedDocumentIds,
+                    publishedAuthor.linkedImageFilenames,
+                    publishedAuthor.linkedChartSlugs.grapher,
+                    publishedAuthor.linkedChartSlugs.explorer,
+                    publishedAuthor.linkedNarrativeChartNames,
+                    publishedAuthor.linkedStaticVizNames,
+                ],
+                publishedAuthor.content.authorRoles
+            )
 
             // We don't need these to be attached to the gdoc in the current
             // state of author pages. We'll keep them here as documentation
@@ -1059,6 +1213,11 @@ export class SiteBaker {
             `rm -rf ${this.bakedSiteDir}/assets-admin && (cp -r ${BASE_DIR}/dist/assets-admin ${this.bakedSiteDir}/assets-admin || true)`
         )
 
+        // The bespoke assets are optional; they need not exist on the admin server, for example; don't fail if they don't exist
+        await execWrapper(
+            `rm -rf ${this.bakedSiteDir}/assets/bespoke && (cp -r ${BASE_DIR}/dist/assets-bespoke ${this.bakedSiteDir}/assets/bespoke || true)`
+        )
+
         await this.validateTagIcons(trx)
         await execWrapper(
             `rsync -hav --delete ${BASE_DIR}/public/* ${this.bakedSiteDir}/`
@@ -1075,18 +1234,26 @@ export class SiteBaker {
 
     async bakeRedirects(knex: db.KnexReadonlyTransaction) {
         if (!this.bakeSteps.has("redirects")) return
-        this.progressBar.tick({ name: "Baking site redirects" })
-        const redirects = await getRedirects(knex)
+        this.progressBar.tick({ name: "Baking redirects" })
+        const redirects = await getCloudflarePagesRedirects(knex)
         await this.stageWrite(
             path.join(this.bakedSiteDir, `_redirects`),
             redirects.join("\n")
         )
 
-        this.progressBar.tick({ name: "Baking grapher redirects" })
-        const grapherRedirects = await getGrapherRedirectsMap(knex, "")
+        const grapherRedirects = await getGrapherToChartAndMultiDimRedirects(
+            knex,
+            ""
+        )
         await this.stageWrite(
             path.join(this.bakedSiteDir, `grapher/_grapherRedirects.json`),
             JSON.stringify(Object.fromEntries(grapherRedirects), null, 2)
+        )
+
+        const explorerRedirects = await getExplorerToMultiDimRedirects(knex, "")
+        await this.stageWrite(
+            path.join(this.bakedSiteDir, `explorers/_explorerRedirects.json`),
+            JSON.stringify(Object.fromEntries(explorerRedirects), null, 2)
         )
     }
 
@@ -1098,9 +1265,6 @@ export class SiteBaker {
     }
 
     private async _bakeNonWordpressPages(knex: db.KnexReadonlyTransaction) {
-        if (this.bakeSteps.has("countries")) {
-            await bakeCountries(this, knex)
-        }
         await this.bakeSpecialPages(knex)
         await this.bakeCountryProfiles(knex)
         await this.bakeExplorers(knex)
@@ -1173,7 +1337,30 @@ export class SiteBaker {
     private flushCache() {
         this.progressBar.tick({ name: "Flushing cache" })
         // Clear caches to allow garbage collection while waiting for next run
-        siteBakingFlushCache()
         redirectsFlushCache()
     }
+}
+
+export const bakeSinglePostPageForArchival = async (
+    bakedSiteDir: string,
+    slug: string,
+    knex: db.KnexReadonlyTransaction,
+    {
+        archiveContext,
+        manifest,
+    }: {
+        archiveContext: ArchiveContext
+        manifest: PostArchivalManifest
+    }
+) => {
+    const gdoc = await getAndLoadGdocBySlug(knex, slug, [OwidGdocType.Article])
+    await gdoc.loadState(knex)
+
+    const outPathHtml = `${bakedSiteDir}/${slug}.html`
+    await fs.mkdirp(path.dirname(outPathHtml))
+    await fs.writeFile(outPathHtml, renderGdoc(gdoc, false, archiveContext))
+
+    const outPathManifest = `${bakedSiteDir}/${slug}.manifest.json`
+    await fs.mkdirp(path.dirname(outPathManifest))
+    await fs.writeFile(outPathManifest, stringify(manifest, undefined, 2))
 }

@@ -15,7 +15,7 @@ import { zoom } from "d3-zoom"
 // @ts-expect-error no types available
 import versor from "versor"
 import {
-    makeIdForHumanConsumption,
+    makeFigmaId,
     Bounds,
     isTouchDevice,
     getRelativeMouse,
@@ -180,7 +180,7 @@ export class ChoroplethGlobe extends React.Component<{
     // Otherwise we do a quadtree search for the closest center point of a feature bounds,
     // so that we can hover very small countries without trouble
     @action.bound private detectNearbyFeature(
-        event: MouseEvent | TouchEvent,
+        event: PointerEvent,
         maxDistance = MAP_HOVER_TARGET_RANGE
     ): GlobeRenderFeature | undefined {
         if (this.hoverEnterFeature || !this.base.current) return
@@ -385,38 +385,26 @@ export class ChoroplethGlobe extends React.Component<{
         })
     }
 
-    private rotateFrameId: number | undefined
     @action.bound private rotateGlobe(targetCoords: [number, number]): void {
-        if (this.rotateFrameId) cancelAnimationFrame(this.rotateFrameId)
-        this.rotateFrameId = requestAnimationFrame(
-            action(() => {
-                this.mapConfig.globe.rotation = [
-                    -targetCoords[0],
-                    // Clamping the latitude to [-90, 90] would allow rotation up to the poles.
-                    // However, the panning strategy used doesn't work well around the poles.
-                    // That's why we clamp the latitude to a narrower range.
-                    -R.clamp(targetCoords[1], {
-                        min: GLOBE_LATITUDE_MIN,
-                        max: GLOBE_LATITUDE_MAX,
-                    }),
-                ]
-            })
-        )
+        this.mapConfig.globe.rotation = [
+            -targetCoords[0],
+            // Clamping the latitude to [-90, 90] would allow rotation up to the poles.
+            // However, the panning strategy used doesn't work well around the poles.
+            // That's why we clamp the latitude to a narrower range.
+            -R.clamp(targetCoords[1], {
+                min: GLOBE_LATITUDE_MIN,
+                max: GLOBE_LATITUDE_MAX,
+            }),
+        ]
     }
 
-    private zoomFrameId: number | undefined
     @action.bound private zoomGlobe(delta: number): void {
-        if (this.zoomFrameId) cancelAnimationFrame(this.zoomFrameId)
-        this.zoomFrameId = requestAnimationFrame(
-            action(() => {
-                const sensitivity = 0.01
-                const newZoom = this.zoomScale * (1 + delta * sensitivity)
-                this.mapConfig.globe.zoom = R.clamp(newZoom, {
-                    min: GLOBE_MIN_ZOOM,
-                    max: GLOBE_MAX_ZOOM,
-                })
-            })
-        )
+        const sensitivity = 0.01
+        const newZoom = this.zoomScale * (1 + delta * sensitivity)
+        this.mapConfig.globe.zoom = R.clamp(newZoom, {
+            min: GLOBE_MIN_ZOOM,
+            max: GLOBE_MAX_ZOOM,
+        })
     }
 
     @computed private get hoverFeature(): GlobeRenderFeature | undefined {
@@ -430,22 +418,25 @@ export class ChoroplethGlobe extends React.Component<{
         this.globeController.dismissCountryFocus()
     }
 
-    @action.bound private onMouseMove(event: MouseEvent): void {
+    @action.bound private onPointerMove(event: PointerEvent): void {
         this.detectNearbyFeature(event)
     }
 
-    @action.bound private onMouseEnterFeature(
-        feature: GlobeRenderFeature
+    @action.bound private onPointerEnterFeature(
+        feature: GlobeRenderFeature,
+        event: PointerEvent
     ): void {
-        // ignore mouse enter if panning or zooming
+        // ignore pointer enter if panning or zooming
         if (this.isPanningOrZooming) return
+        // on touch, let the click handler set hover so the
+        // tooltip doesn't appear before the click event fires
+        if (event.pointerType === "touch") return
         this.setHoverEnterFeature(feature)
     }
 
-    @action.bound private onMouseLeaveFeature(): void {
-        // Fixes an issue where clicking on a country that overlaps with the
-        // tooltip causes the tooltip to disappear shortly after being rendered
-        if (this.isTouchDevice) return
+    @action.bound private onPointerLeaveFeature(event: PointerEvent): void {
+        // on touch, the tooltip is dismissed via the document pointerdown handler
+        if (event.pointerType === "touch") return
 
         this.clearHoverEnterFeature()
     }
@@ -475,10 +466,6 @@ export class ChoroplethGlobe extends React.Component<{
         if (this.manager.isMapSelectionEnabled) {
             this.mapConfig.selection.toggleSelection(country)
 
-            // reset the map region dropdown if the selection changed
-            if (this.manager.mapRegionDropdownValue === "Selection")
-                this.manager.resetMapRegionDropdownValue?.()
-
             // make sure country focus is dismissed for unselected countries
             if (!this.mapConfig.selection.selectedSet.has(country))
                 this.globeController.dismissCountryFocus()
@@ -492,11 +479,7 @@ export class ChoroplethGlobe extends React.Component<{
         }
     }
 
-    @action.bound private onTouchStart(feature: GlobeRenderFeature): void {
-        this.setHoverEnterFeature(feature)
-    }
-
-    @action.bound private onDocumentClick(): void {
+    @action.bound private onDocumentPointerDown(): void {
         this.clearHover()
     }
 
@@ -568,7 +551,6 @@ export class ChoroplethGlobe extends React.Component<{
 
                 this.clearHover() // dismiss the tooltip
                 this.mapConfig.region = MapRegionName.World // reset region
-                this.manager.resetMapRegionDropdownValue?.() // reset map region dropdown
 
                 const wheeling = (): void => {
                     this.zoomGlobe(-event.sourceEvent.deltaY)
@@ -678,8 +660,7 @@ export class ChoroplethGlobe extends React.Component<{
             this.globeController.jumpToOwidContinent(this.mapConfig.region)
         }
 
-        document.addEventListener("touchstart", this.onDocumentClick, {
-            capture: true,
+        document.addEventListener("pointerdown", this.onDocumentPointerDown, {
             passive: true,
         })
 
@@ -687,26 +668,21 @@ export class ChoroplethGlobe extends React.Component<{
     }
 
     override componentWillUnmount(): void {
-        document.removeEventListener("touchstart", this.onDocumentClick, {
-            capture: true,
-        })
-
-        if (this.rotateFrameId) cancelAnimationFrame(this.rotateFrameId)
-        if (this.zoomFrameId) cancelAnimationFrame(this.zoomFrameId)
+        document.removeEventListener("pointerdown", this.onDocumentPointerDown)
     }
 
     renderGlobeOutline(): React.ReactElement {
         return (
             <>
                 <circle
-                    id={makeIdForHumanConsumption("globe-sphere")}
+                    id={makeFigmaId("globe-sphere")}
                     cx={this.globeCenter[0]}
                     cy={this.globeCenter[1]}
                     r={this.globeRadius}
                     fill="#fafafa"
                 />
                 <path
-                    id={makeIdForHumanConsumption("globe-graticule")}
+                    id={makeFigmaId("globe-graticule")}
                     d={this.graticulePath}
                     stroke="#e7e7e7"
                     strokeWidth={1}
@@ -714,7 +690,7 @@ export class ChoroplethGlobe extends React.Component<{
                     style={{ pointerEvents: "none" }}
                 />
                 <path
-                    id={makeIdForHumanConsumption("globe-equator")}
+                    id={makeFigmaId("globe-equator")}
                     d={this.equatorPath}
                     stroke="#dadada"
                     strokeWidth={1}
@@ -729,7 +705,7 @@ export class ChoroplethGlobe extends React.Component<{
         if (this.backgroundFeatures.length === 0) return
 
         return (
-            <g id={makeIdForHumanConsumption("countries-background")}>
+            <g id={makeFigmaId("countries-background")}>
                 {this.backgroundFeatures.map((feature) => (
                     <BackgroundCountry
                         key={feature.id}
@@ -748,7 +724,7 @@ export class ChoroplethGlobe extends React.Component<{
 
         return (
             <g
-                id={makeIdForHumanConsumption("countries-without-data")}
+                id={makeFigmaId("countries-without-data")}
                 className="noDataFeatures"
             >
                 <defs>
@@ -770,9 +746,8 @@ export class ChoroplethGlobe extends React.Component<{
 
                             this.onClick(feature)
                         }}
-                        onTouchStart={() => this.onTouchStart(feature)}
-                        onMouseEnter={this.onMouseEnterFeature}
-                        onMouseLeave={this.onMouseLeaveFeature}
+                        onPointerEnter={this.onPointerEnterFeature}
+                        onPointerLeave={this.onPointerLeaveFeature}
                     />
                 ))}
             </g>
@@ -783,7 +758,7 @@ export class ChoroplethGlobe extends React.Component<{
         if (this.sortedFeaturesWithData.length === 0) return
 
         return (
-            <g id={makeIdForHumanConsumption("countries-with-data")}>
+            <g id={makeFigmaId("countries-with-data")}>
                 {this.manager.hasProjectedData && (
                     <defs>
                         {/* Pattern used by the map legend for the projected data bin */}
@@ -831,9 +806,8 @@ export class ChoroplethGlobe extends React.Component<{
 
                                 this.onClick(feature)
                             }}
-                            onTouchStart={() => this.onTouchStart(feature)}
-                            onMouseEnter={this.onMouseEnterFeature}
-                            onMouseLeave={this.onMouseLeaveFeature}
+                            onPointerEnter={this.onPointerEnterFeature}
+                            onPointerLeave={this.onPointerLeaveFeature}
                         />
                     )
                 })}
@@ -845,7 +819,7 @@ export class ChoroplethGlobe extends React.Component<{
         if (this.internalAnnotations.length === 0) return
 
         return (
-            <g id={makeIdForHumanConsumption("annotations-internal")}>
+            <g id={makeFigmaId("annotations-internal")}>
                 {this.internalAnnotations.map((annotation) => (
                     <InternalValueAnnotation
                         key={annotation.id}
@@ -864,19 +838,19 @@ export class ChoroplethGlobe extends React.Component<{
 
         return (
             <g
-                id={makeIdForHumanConsumption("annotations-external")}
+                id={makeFigmaId("annotations-external")}
                 className="ExternalAnnotations"
             >
                 {this.externalAnnotations.map((annotation) => (
                     <ExternalValueAnnotation
                         key={annotation.id}
                         annotation={annotation}
-                        onMouseEnter={action((feature: RenderFeature) =>
+                        onPointerEnter={action((feature: RenderFeature) =>
                             this.setHoverEnterFeature(
                                 feature as GlobeRenderFeature
                             )
                         )}
-                        onMouseLeave={action(() =>
+                        onPointerLeave={action(() =>
                             this.clearHoverEnterFeature()
                         )}
                     />
@@ -889,7 +863,7 @@ export class ChoroplethGlobe extends React.Component<{
         return (
             <>
                 {this.renderGlobeOutline()}
-                <g id={makeIdForHumanConsumption("globe")}>
+                <g id={makeFigmaId("globe")}>
                     {this.renderFeaturesInBackground()}
                     {this.renderFeaturesWithNoData()}
                     {this.renderFeaturesWithData()}
@@ -901,7 +875,7 @@ export class ChoroplethGlobe extends React.Component<{
     }
 
     renderInteractive(): React.ReactElement {
-        // this needs to be referenced here or it will be recomputed on every mousemove
+        // @ts-expect-error this needs to be referenced here or it will be recomputed on every mousemove
         const _cachedCentroids = this.quadtree
 
         return (
@@ -911,16 +885,20 @@ export class ChoroplethGlobe extends React.Component<{
                     (ev: SVGMouseEvent): void =>
                         ev.preventDefault() /* Without this, title may get selected while shift clicking */
                 }
-                onMouseMove={(ev: SVGMouseEvent): void =>
-                    this.onMouseMove(ev.nativeEvent)
+                onPointerMove={(ev): void => this.onPointerMove(ev.nativeEvent)}
+                onPointerLeave={(e) =>
+                    this.onPointerLeaveFeature(e.nativeEvent)
                 }
-                onMouseLeave={this.onMouseLeaveFeature}
                 onClick={() => {
                     // invoke a click on a feature when clicking nearby one
                     if (this.hoverNearbyFeature)
                         this.onClick(this.hoverNearbyFeature)
                 }}
-                style={{ cursor: this.hoverFeature ? "pointer" : undefined }}
+                style={{
+                    cursor: this.hoverFeature ? "pointer" : undefined,
+                    // Remove the 300ms delay on click events and double-tap-to-zoom for touch devices
+                    touchAction: "manipulation",
+                }}
             >
                 {this.renderGlobeOutline()}
                 <g className={GEO_FEATURES_CLASSNAME}>

@@ -1,31 +1,207 @@
-import React from "react"
-import { VerticalAxis } from "../axis/Axis"
-import { VerticalLabelsState } from "./VerticalLabelsState"
+import * as React from "react"
+import { TextWrapSvg } from "@ourworldindata/components"
+import { makeFigmaId } from "@ourworldindata/utils"
+import { SeriesName } from "@ourworldindata/types"
+import { SeriesLabel } from "../seriesLabel/SeriesLabel.js"
 import { darkenColorForText } from "../color/ColorUtils.js"
+import { ANNOTATION_PADDING, LABEL_STYLE } from "./VerticalLabelsConstants.js"
+import { getSeriesKey } from "./VerticalLabelsHelpers"
+import { PlacedLabelSeries, RenderLabelSeries } from "./VerticalLabelsTypes"
+import { VerticalLabelsState } from "./VerticalLabelsState"
+import { Emphasis } from "../interaction/Emphasis.js"
 
+/**
+ * Series labels stacked vertically, with connector lines,
+ * entity annotations, and interactive hover/focus states
+ */
 export function VerticalLabels({
     state,
-    yAxis,
     x = 0,
-    xAnchor = "start",
+    outline = false,
+    onMouseEnter,
+    onMouseLeave,
+    interactive = true,
 }: {
     state: VerticalLabelsState
-    yAxis: VerticalAxis
     x?: number
-    xAnchor?: "start" | "end"
+    outline?: boolean
+    onMouseEnter?: (key: SeriesName) => void
+    onMouseLeave?: () => void
+    interactive?: boolean
+}): React.ReactElement {
+    const { renderSeries, annotatedSeries, textAnchor } = state
+
+    return (
+        <g id={makeFigmaId("vertical-labels")} transform={`translate(${x}, 0)`}>
+            {interactive && (
+                <InteractionOverlays
+                    series={state.placedSeries}
+                    anchor={textAnchor}
+                    onMouseEnter={onMouseEnter}
+                    onMouseLeave={onMouseLeave}
+                />
+            )}
+            {state.needsConnectorLines && (
+                <ConnectorLines series={renderSeries} />
+            )}
+            {state.hasAnnotatedSeries && (
+                <Annotations series={annotatedSeries} anchor={textAnchor} />
+            )}
+            <Labels
+                series={renderSeries}
+                outline={outline}
+                onMouseEnter={onMouseEnter}
+                onMouseLeave={onMouseLeave}
+            />
+        </g>
+    )
+}
+
+function Labels({
+    series,
+    outline = false,
+    onMouseEnter,
+    onMouseLeave,
+}: {
+    series: RenderLabelSeries[]
+    outline: boolean
+    onMouseEnter?: (key: SeriesName) => void
+    onMouseLeave?: (key: SeriesName) => void
+}): React.ReactElement {
+    return (
+        <g id={makeFigmaId("text-labels")} style={{ pointerEvents: "none" }}>
+            {series.map((series, index) => {
+                const color = darkenColorForText(series.color)
+                const emphasis = series.emphasis ?? Emphasis.Default
+                return (
+                    <SeriesLabel
+                        key={getSeriesKey(series, index)}
+                        id={makeFigmaId("label", series.seriesName)}
+                        state={series.seriesLabel}
+                        x={series.labelCoords.x}
+                        y={series.labelCoords.y}
+                        color={{ name: color, value: color }}
+                        opacity={LABEL_STYLE[emphasis].opacity}
+                        outline={outline}
+                        onMouseEnter={() => onMouseEnter?.(series.seriesName)}
+                        onMouseLeave={() => onMouseLeave?.(series.seriesName)}
+                    />
+                )
+            })}
+        </g>
+    )
+}
+
+function Annotations({
+    series,
+    anchor,
+}: {
+    series: RenderLabelSeries[]
+    anchor: "start" | "end"
+}): React.ReactElement | null {
+    return (
+        <g
+            id={makeFigmaId("text-annotations")}
+            style={{ pointerEvents: "none" }}
+        >
+            {series.map((series, index) => {
+                if (!series.annotationTextWrap) return null
+                const emphasis = series.emphasis ?? Emphasis.Default
+                return (
+                    <React.Fragment key={getSeriesKey(series, index)}>
+                        <TextWrapSvg
+                            textWrap={series.annotationTextWrap}
+                            x={series.labelCoords.x}
+                            y={
+                                series.labelCoords.y +
+                                series.seriesLabel.height +
+                                ANNOTATION_PADDING
+                            }
+                            fill="#333"
+                            opacity={LABEL_STYLE[emphasis].opacity}
+                            textAnchor={anchor}
+                            style={{ fontWeight: 300 }}
+                        />
+                    </React.Fragment>
+                )
+            })}
+        </g>
+    )
+}
+
+function ConnectorLines({
+    series,
+}: {
+    series: RenderLabelSeries[]
+}): React.ReactElement {
+    return (
+        <g id={makeFigmaId("connectors")} style={{ pointerEvents: "none" }}>
+            {series.map((series, index) => {
+                const { startX, endX } = series.connectorLineCoords
+                const {
+                    level,
+                    totalLevels,
+                    origBounds: { centerY: leftCenterY },
+                    bounds: { centerY: rightCenterY },
+                } = series
+
+                const step = (endX - startX) / (totalLevels + 1)
+                const markerXMid = startX + step + level * step
+                const d = `M${startX},${leftCenterY} H${markerXMid} V${rightCenterY} H${endX}`
+
+                const emphasis = series.emphasis ?? Emphasis.Default
+                const lineColor = LABEL_STYLE[emphasis].connectorLineColor
+
+                return (
+                    <path
+                        id={makeFigmaId(series.seriesName)}
+                        key={getSeriesKey(series, index)}
+                        d={d}
+                        stroke={lineColor}
+                        strokeWidth={0.5}
+                        fill="none"
+                    />
+                )
+            })}
+        </g>
+    )
+}
+
+function InteractionOverlays({
+    series,
+    anchor,
+    onMouseEnter,
+    onMouseLeave,
+}: {
+    series: PlacedLabelSeries[]
+    anchor: "start" | "end"
+    onMouseEnter?: (key: SeriesName) => void
+    onMouseLeave?: (key: SeriesName) => void
 }): React.ReactElement {
     return (
         <g>
-            {state.series.map((series) => (
-                <React.Fragment key={series.yPosition}>
-                    {series.textWrap.renderSVG(x, yAxis.place(series.value), {
-                        textProps: {
-                            textAnchor: xAnchor,
-                            fill: darkenColorForText(series.color),
-                        },
-                    })}
-                </React.Fragment>
-            ))}
+            {series.map((series, index) => {
+                const x =
+                    anchor === "start"
+                        ? series.origBounds.x
+                        : series.origBounds.x - series.bounds.width
+                return (
+                    <g
+                        key={getSeriesKey(series, index)}
+                        onMouseEnter={() => onMouseEnter?.(series.seriesName)}
+                        onMouseLeave={() => onMouseLeave?.(series.seriesName)}
+                    >
+                        <rect
+                            x={x}
+                            y={series.bounds.y}
+                            width={series.bounds.width}
+                            height={series.bounds.height}
+                            fill="#fff"
+                            opacity={0}
+                        />
+                    </g>
+                )
+            })}
         </g>
     )
 }

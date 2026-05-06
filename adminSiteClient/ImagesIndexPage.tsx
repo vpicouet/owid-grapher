@@ -15,6 +15,7 @@ import {
     Modal,
     Popconfirm,
     Popover,
+    Select,
     Table,
     TableColumnsType,
     Upload,
@@ -22,8 +23,11 @@ import {
 } from "antd"
 import { AdminLayout } from "./AdminLayout.js"
 import { AdminAppContext } from "./AdminAppContext.js"
-import { DbEnrichedImageWithUserId, DbPlainUser } from "@ourworldindata/types"
-import { downloadImage } from "@ourworldindata/utils"
+import {
+    DbEnrichedImageWithPageviews,
+    DbPlainUser,
+} from "@ourworldindata/types"
+import { downloadImage, formatValue } from "@ourworldindata/utils"
 import { Timeago } from "./Forms.js"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import {
@@ -43,7 +47,29 @@ import { CLOUDFLARE_IMAGES_URL } from "../settings/clientSettings.js"
 import { NotificationInstance } from "antd/es/notification/interface.js"
 import { EditableTextarea } from "./EditableTextarea.js"
 
-type ImageMap = Record<string, DbEnrichedImageWithUserId>
+type ImageMap = Record<string, DbEnrichedImageWithPageviews>
+
+type ImageTypeFilter = "all" | "featured-thumbnail-rw" | "content" | "other"
+
+function getImageType(image: DbEnrichedImageWithPageviews): ImageTypeFilter {
+    const isFeatured = image.isFeaturedImage === 1
+    const isThumbnail = image.filename.toLowerCase().includes("thumbnail")
+    const isInResearchAndWriting = image.isInResearchAndWriting === 1
+    const isBodyContent = image.isBodyContent === 1
+
+    // If an image is used in both body content and featured/rw/thumbnail, keep it in content category
+    if (isBodyContent) {
+        return "content"
+    }
+
+    // Category for featured, thumbnails, and research-and-writing (only if not in body content)
+    if (isFeatured || isThumbnail || isInResearchAndWriting) {
+        return "featured-thumbnail-rw"
+    }
+
+    // Everything else is other (fallback)
+    return "other"
+}
 
 type UserMap = Record<string, DbPlainUser>
 
@@ -53,12 +79,12 @@ type UsageInfo = {
 }
 
 type ImageEditorApi = {
-    getUsage: () => void
+    getUsage: () => Promise<void>
     getAltText: (id: number) => Promise<{ altText: string; success: boolean }>
     patchImage: (
-        image: DbEnrichedImageWithUserId,
-        patch: Partial<DbEnrichedImageWithUserId>
-    ) => void
+        image: DbEnrichedImageWithPageviews,
+        patch: Partial<DbEnrichedImageWithPageviews>
+    ) => Promise<void>
     putImage: (
         id: number,
         payload: {
@@ -66,20 +92,23 @@ type ImageEditorApi = {
             content?: string
             type: string
         }
-    ) => void
+    ) => Promise<void>
     postImage: (payload: {
         filename: string
         content?: string
         type: string
-    }) => void
-    deleteImage: (image: DbEnrichedImageWithUserId) => void
-    getImages: () => void
-    getUsers: () => void
-    postUserImage: (user: DbPlainUser, image: DbEnrichedImageWithUserId) => void
+    }) => Promise<void>
+    deleteImage: (image: DbEnrichedImageWithPageviews) => Promise<void>
+    getImages: () => Promise<void>
+    getUsers: () => Promise<void>
+    postUserImage: (
+        user: DbPlainUser,
+        image: DbEnrichedImageWithPageviews
+    ) => Promise<void>
     deleteUserImage: (
         user: DbPlainUser,
-        image: DbEnrichedImageWithUserId
-    ) => void
+        image: DbEnrichedImageWithPageviews
+    ) => Promise<void>
 }
 
 function AltTextEditor({
@@ -88,17 +117,24 @@ function AltTextEditor({
     patchImage,
     getAltText,
 }: {
-    image: DbEnrichedImageWithUserId
+    image: DbEnrichedImageWithPageviews
     text: string
     patchImage: ImageEditorApi["patchImage"]
     getAltText: ImageEditorApi["getAltText"]
 }) {
     const [value, setValue] = useState(text)
+    const [savedValue, setSavedValue] = useState(text)
+
+    useEffect(() => {
+        setValue(text)
+        setSavedValue(text)
+    }, [text])
 
     const saveAltText = useCallback(
         (newValue: string) => {
-            patchImage(image, { defaultAlt: newValue })
+            void patchImage(image, { defaultAlt: newValue })
             setValue(newValue)
+            setSavedValue(newValue)
         },
         [image, patchImage]
     )
@@ -122,6 +158,7 @@ function AltTextEditor({
             className="ImageIndexPage__alt-text-editor"
             extraActions={altTextButton}
             autoResize
+            isDirtyOverride={value !== savedValue}
         />
     )
 }
@@ -169,7 +206,7 @@ function UserSelect({
 
         if (selectedUser) {
             setValue(selectedUser.fullName)
-            await onUserSelect(selectedUser)
+            onUserSelect(selectedUser)
         }
     }
 
@@ -281,7 +318,7 @@ function createColumns({
     users: UserMap
     usage: Record<string, UsageInfo[]>
     notificationApi: NotificationInstance
-}): TableColumnsType<DbEnrichedImageWithUserId> {
+}): TableColumnsType<DbEnrichedImageWithPageviews> {
     return [
         {
             title: "Preview",
@@ -367,6 +404,15 @@ function createColumns({
             sorter: (a, b) =>
                 a.updatedAt && b.updatedAt ? a.updatedAt - b.updatedAt : 0,
             render: (time) => <Timeago time={time} />,
+        },
+        {
+            title: "Views per day",
+            dataIndex: "views_365d",
+            key: "viewsPerDay",
+            width: 100,
+            sorter: (a, b) => a.views_365d - b.views_365d,
+            render: (views_365d: number) =>
+                formatValue(views_365d / 365, { numDecimalPlaces: 0 }),
         },
         {
             title: "Owner",
@@ -458,7 +504,7 @@ function PostImageButton({
     async function uploadImage({ file }: { file: File }) {
         const result = await fileToBase64(file)
         if (result) {
-            postImage(result)
+            await postImage(result)
         }
     }
     return (
@@ -484,7 +530,7 @@ function ImageReplaceConfirmModal({
     open: boolean
     onCancel: () => void
     onConfirm: () => void
-    currentImage: DbEnrichedImageWithUserId
+    currentImage: DbEnrichedImageWithPageviews
     newImageFile: RcFile | null
 }) {
     const currentImageSrc =
@@ -588,7 +634,7 @@ function PutImageButton({
     notificationApi,
 }: {
     putImage: ImageEditorApi["putImage"]
-    image: DbEnrichedImageWithUserId
+    image: DbEnrichedImageWithPageviews
     notificationApi: NotificationInstance
 }) {
     const [showConfirmModal, setShowConfirmModal] = useState(false)
@@ -657,6 +703,8 @@ export function ImageIndexPage() {
     const [users, setUsers] = useState<UserMap>({})
     const [usage, setUsage] = useState<Record<string, UsageInfo[]>>({})
     const [filenameSearchValue, setFilenameSearchValue] = useState("")
+    const [imageTypeFilter, setImageTypeFilter] =
+        useState<ImageTypeFilter>("all")
 
     const api = useMemo(
         (): ImageEditorApi => ({
@@ -683,7 +731,7 @@ export function ImageIndexPage() {
             },
             getImages: async () => {
                 const json = await admin.getJSON<{
-                    images: DbEnrichedImageWithUserId[]
+                    images: DbEnrichedImageWithPageviews[]
                 }>("/api/images.json")
                 setImages(_.keyBy(json.images, "id"))
             },
@@ -786,12 +834,16 @@ export function ImageIndexPage() {
 
     const filteredImages = useMemo(
         () =>
-            Object.values(images).filter((image) =>
-                image.filename
+            Object.values(images).filter((image) => {
+                const matchesFilename = image.filename
                     .toLowerCase()
                     .includes(filenameSearchValue.toLowerCase())
-            ),
-        [images, filenameSearchValue]
+                const matchesType =
+                    imageTypeFilter === "all" ||
+                    getImageType(image) === imageTypeFilter
+                return matchesFilename && matchesType
+            }),
+        [images, filenameSearchValue, imageTypeFilter]
     )
 
     const columns = useMemo(
@@ -811,14 +863,30 @@ export function ImageIndexPage() {
                 {notificationContextHolder}
                 <main className="ImageIndexPage">
                     <Flex justify="space-between">
-                        <Input
-                            placeholder="Search by filename"
-                            value={filenameSearchValue}
-                            onChange={(e) =>
-                                setFilenameSearchValue(e.target.value)
-                            }
-                            style={{ width: 500, marginBottom: 20 }}
-                        />
+                        <Flex gap={12}>
+                            <Input
+                                placeholder="Search by filename"
+                                value={filenameSearchValue}
+                                onChange={(e) =>
+                                    setFilenameSearchValue(e.target.value)
+                                }
+                                style={{ width: 300, marginBottom: 20 }}
+                            />
+                            <Select
+                                value={imageTypeFilter}
+                                onChange={setImageTypeFilter}
+                                style={{ width: 250 }}
+                                options={[
+                                    { value: "all", label: "All images" },
+                                    { value: "content", label: "Content" },
+                                    {
+                                        value: "featured-thumbnail-rw",
+                                        label: "Thumbnails or featured images",
+                                    },
+                                    { value: "other", label: "Other" },
+                                ]}
+                            />
+                        </Flex>
                         <PostImageButton postImage={api.postImage} />
                     </Flex>
                     <Table

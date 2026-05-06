@@ -1,15 +1,16 @@
 import { createContext, useContext } from "react"
-import { SearchState, SynonymMap, TemplateConfig } from "./searchTypes.js"
-import { createActions } from "./searchState.js"
-import { TagGraphRoot } from "@ourworldindata/types"
+import {
+    SearchState,
+    SynonymMap,
+    TemplateConfig,
+    TagGraphRoot,
+    SearchActions,
+} from "@ourworldindata/types"
 import { LiteClient } from "algoliasearch/lite"
 import { SiteAnalytics } from "../SiteAnalytics.js"
 
-type SearchActions = ReturnType<typeof createActions>
-
 interface SearchContextType {
     state: SearchState
-    deferredState: SearchState
     actions: SearchActions
     liteSearchClient: LiteClient
     templateConfig: TemplateConfig

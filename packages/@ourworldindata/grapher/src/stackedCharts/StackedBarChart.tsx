@@ -7,7 +7,7 @@ import {
     Time,
     getRelativeMouse,
     excludeUndefined,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     guid,
     exposeInstanceOnWindow,
 } from "@ourworldindata/utils"
@@ -16,44 +16,48 @@ import { NoDataModal } from "../noDataModal/NoDataModal"
 import {
     VerticalColorLegend,
     VerticalColorLegendManager,
-    LegendItem,
-} from "../verticalColorLegend/VerticalColorLegend"
+} from "../legend/VerticalColorLegend"
 import { TooltipFooterIcon } from "../tooltip/TooltipProps.js"
 import {
     Tooltip,
     TooltipState,
     TooltipTable,
     makeTooltipRoundingNotice,
+    toTooltipTableColumns,
 } from "../tooltip/Tooltip"
 import {
     BASE_FONT_SIZE,
     DEFAULT_GRAPHER_BOUNDS,
 } from "../core/GrapherConstants"
 import { StackedBarChartState } from "./StackedBarChartState.js"
-import { BAR_OPACITY, StackedPoint, StackedSeries } from "./StackedConstants"
+import {
+    LEGEND_STYLE_FOR_STACKED_CHARTS,
+    StackedPoint,
+    StackedSeries,
+    PlacedStackedBarSeries,
+    RenderStackedBarSeries,
+    STACKED_BAR_STYLE,
+} from "./StackedConstants"
 import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
-import { HorizontalAlign } from "@ourworldindata/types"
-import { makeClipPath } from "../chart/ChartUtils"
+import { Color, HorizontalAlign, SeriesName } from "@ourworldindata/types"
+import { getHoverStateForSeries } from "../chart/ChartUtils"
+import { InteractionState } from "../interaction/InteractionState"
+import { resolveEmphasis, Emphasis } from "../interaction/Emphasis"
 import {
     HorizontalCategoricalColorLegend,
     HorizontalColorLegendManager,
-} from "../horizontalColorLegend/HorizontalColorLegends"
+} from "../legend/HorizontalColorLegends"
 import { CategoricalBin, ColorScaleBin } from "../color/ColorScaleBin"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig.js"
-import { easeLinear } from "d3-ease"
-import { select, type BaseType, type Selection } from "d3-selection"
+
 import { ChartInterface } from "../chart/ChartInterface"
 import { ChartManager } from "../chart/ChartManager"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
 import { StackedBars } from "./StackedBars"
-import { getXAxisConfigDefaultsForStackedBar } from "./StackedUtils"
-
-interface TickmarkPlacement {
-    time: number
-    text: string
-    bounds: Bounds
-    isHidden: boolean
-}
+import {
+    getXAxisConfigDefaultsForStackedBar,
+    toPlacedStackedBarSeries,
+} from "./StackedUtils"
 
 export type StackedBarChartProps = ChartComponentProps<StackedBarChartState>
 
@@ -72,21 +76,20 @@ export class StackedBarChart
         super(props)
 
         makeObservable(this, {
-            hoverColor: observable,
-            hoveredTick: observable,
+            legendHoverColor: observable,
             tooltipState: observable,
         })
     }
 
-    // currently hovered legend color
-    hoverColor: string | undefined = undefined
-    // currently hovered axis label
-    hoveredTick: TickmarkPlacement | undefined = undefined
-    // current hovered individual bar
+    /** Currently hovered legend color */
+    legendHoverColor: Color | undefined = undefined
+
     tooltipState = new TooltipState<{
-        bar: StackedPoint<number>
-        series: StackedSeries<number>
+        bar: StackedPoint<Time>
+        series: StackedSeries<Time>
     }>()
+
+    legendStyleConfig = LEGEND_STYLE_FOR_STACKED_CHARTS
 
     @computed get chartState(): StackedBarChartState {
         return this.props.chartState
@@ -168,7 +171,7 @@ export class StackedBarChart
 
     @computed
     get allStackedPoints(): readonly StackedPoint<number>[] {
-        return this.stackedSeries.flatMap((series) => series.points)
+        return this.series.flatMap((series) => series.points)
     }
 
     @computed private get showHorizontalLegend(): boolean {
@@ -193,69 +196,89 @@ export class StackedBarChart
             : 0
     }
 
-    // All currently hovered group keys, combining the legend and the main UI
-    @computed private get hoverKeys(): string[] {
-        const { hoverColor, manager } = this
-        const { externalLegendHoverBin } = manager
+    /** Series names matching the currently hovered legend item in the color legend */
+    @computed private get legendHoveredSeriesNames(): SeriesName[] {
+        const { legendHoverColor } = this
 
-        const hoverKeys =
-            hoverColor === undefined
-                ? []
-                : _.uniq(
-                      this.stackedSeries
-                          .filter((g) => g.color === hoverColor)
-                          .map((g) => g.seriesName)
-                  )
-        if (externalLegendHoverBin) {
-            hoverKeys.push(
-                ...this.chartState.rawSeries
-                    .map((g) => g.seriesName)
-                    .filter((name) => externalLegendHoverBin.contains(name))
-            )
-        }
-
-        return hoverKeys
-    }
-
-    @computed get activeColors(): string[] {
-        const { hoverKeys } = this
-        const activeKeys = hoverKeys.length > 0 ? hoverKeys : []
-
-        if (!activeKeys.length)
-            // No hover means they're all active by default
-            return _.uniq(this.stackedSeries.map((g) => g.color))
+        if (!legendHoverColor) return []
 
         return _.uniq(
-            this.stackedSeries
-                .filter((g) => activeKeys.indexOf(g.seriesName) !== -1)
-                .map((g) => g.color)
+            this.series
+                .filter((g) => g.color === legendHoverColor)
+                .map((g) => g.seriesName)
         )
     }
 
-    // used by <VerticalColorLegend />
-    @computed get legendItems(): (LegendItem &
-        Required<Pick<LegendItem, "label">>)[] {
-        return this.stackedSeries
-            .map((series) => {
-                return {
-                    label: series.seriesName,
-                    color: series.color,
-                }
-            })
-            .toReversed() // Vertical legend orders things in the opposite direction we want
+    /** Series names matching the currently hovered legend item in the external facet legend */
+    @computed private get externalLegendHoveredSeriesNames(): SeriesName[] {
+        const { externalLegendHoverBin } = this.manager
+
+        if (!externalLegendHoverBin) return []
+
+        return this.chartState.rawSeries
+            .map((g) => g.seriesName)
+            .filter((name) => externalLegendHoverBin.contains(name))
     }
 
-    // used by <HorizontalCategoricalColorLegend />
+    @computed private get hoveredSeriesNames(): SeriesName[] {
+        return _.uniq([
+            ...this.legendHoveredSeriesNames,
+            ...this.externalLegendHoveredSeriesNames,
+        ])
+    }
+
+    @computed private get isHoverModeActive(): boolean {
+        return (
+            this.hoveredSeriesNames.length > 0 ||
+            !!this.manager.externalLegendHoverBin
+        )
+    }
+
+    private hoverStateForSeries(series: StackedSeries<Time>): InteractionState {
+        return getHoverStateForSeries(series, {
+            hoveredSeriesNames: this.hoveredSeriesNames,
+            isHoverModeActive: this.isHoverModeActive,
+        })
+    }
+
+    /** All colors that are currently hovered or focused */
+    @computed get activeColors(): string[] {
+        const hoveredSeriesNamesSet = new Set(this.hoveredSeriesNames)
+        const hoveredColors = this.series
+            .filter((g) => hoveredSeriesNamesSet.has(g.seriesName))
+            .map((g) => g.color)
+
+        const focusedColors = this.series
+            .filter((g) => g.focus?.active)
+            .map((g) => g.color)
+
+        const activeColors = _.uniq(
+            excludeUndefined([...focusedColors, ...hoveredColors])
+        )
+
+        return activeColors
+    }
+
+    resolveLegendBinEmphasis(bin: ColorScaleBin): Emphasis {
+        const isActive = this.activeColors?.includes(bin.color)
+
+        if (this.activeColors.length === 0) return Emphasis.Default
+
+        return isActive ? Emphasis.Highlighted : Emphasis.Muted
+    }
+
     @computed get categoricalLegendData(): CategoricalBin[] {
-        return this.legendItems.map(
-            (legendItem, index) =>
-                new CategoricalBin({
-                    index,
-                    value: legendItem.label,
-                    label: legendItem.label,
-                    color: legendItem.color,
-                })
-        )
+        return this.series
+            .map(
+                (series, index) =>
+                    new CategoricalBin({
+                        index,
+                        value: series.seriesName,
+                        label: series.seriesName,
+                        color: series.color,
+                    })
+            )
+            .toReversed() // Vertical legend orders things in the opposite direction we want
     }
 
     @computed get legendWidth(): number {
@@ -279,10 +302,7 @@ export class StackedBarChart
     }
 
     @computed private get showLegend(): boolean {
-        return (
-            !!this.manager.showLegend &&
-            !this.manager.isDisplayedAlongsideComplementaryTable
-        )
+        return !!this.manager.showLegend
     }
 
     @computed private get sidebarWidth(): number {
@@ -320,7 +340,11 @@ export class StackedBarChart
                         })
                 )
                 .toReversed()
-            return { categoricalLegendData }
+
+            return {
+                categoricalLegendData,
+                legendStyleConfig: this.legendStyleConfig,
+            }
         }
         return undefined
     }
@@ -328,8 +352,7 @@ export class StackedBarChart
     @computed private get tooltip(): React.ReactElement | undefined {
         const {
             tooltipState: { target, position, fading },
-            stackedSeries: series,
-            hoveredTick,
+            series,
         } = this
         const { formatColumn } = this.chartState
 
@@ -337,14 +360,12 @@ export class StackedBarChart
         let hoverTime: number
         if (hoverBar !== undefined) {
             hoverTime = hoverBar.position
-        } else if (hoveredTick !== undefined) {
-            hoverTime = hoveredTick.time
         } else return
 
         const title = formatColumn.formatTime(hoverTime)
         const titleAnnotation = this.xAxis.label ? `(${this.xAxis.label})` : ""
 
-        const { unit, shortUnit } = formatColumn
+        const { displayUnit } = formatColumn
 
         const totalValue = _.sum(
             series.map(
@@ -355,7 +376,7 @@ export class StackedBarChart
 
         const roundingNotice = formatColumn.roundsToSignificantFigures
             ? {
-                  icon: TooltipFooterIcon.none,
+                  icon: TooltipFooterIcon.None,
                   text: makeTooltipRoundingNotice([
                       formatColumn.numSignificantFigures,
                   ]),
@@ -393,27 +414,27 @@ export class StackedBarChart
                 offsetY={-16}
                 title={title}
                 titleAnnotation={titleAnnotation}
-                subtitle={unit !== shortUnit ? unit : undefined}
+                subtitle={displayUnit}
                 subtitleFormat="unit"
                 footer={footer}
                 dissolve={fading}
                 dismiss={() => (this.tooltipState.target = null)}
             >
                 <TooltipTable
-                    columns={[formatColumn]}
+                    columns={toTooltipTableColumns(formatColumn)}
                     totals={[totalValue]}
                     rows={sortedHoverPoints.map(
                         ({ point, seriesName: name, seriesColor }) => {
                             const focused = hoverSeries?.seriesName === name
-                            const blurred = point?.fake ?? true
-                            const values = [
-                                point?.fake ? undefined : point?.value,
-                            ]
+                            const fake = point?.missing || point?.interpolated
+                            const blurred = fake ?? true
+                            const values = [fake ? undefined : point?.value]
 
                             const color = point?.color ?? seriesColor
-                            const opacity = focused
-                                ? BAR_OPACITY.FOCUS
-                                : BAR_OPACITY.DEFAULT
+                            const emphasis = focused
+                                ? Emphasis.Highlighted
+                                : Emphasis.Default
+                            const opacity = STACKED_BAR_STYLE[emphasis].opacity
                             const swatch = { color, opacity }
 
                             return { name, swatch, blurred, focused, values }
@@ -424,30 +445,20 @@ export class StackedBarChart
         )
     }
 
-    // Both legend managers accept a `onLegendMouseOver` property, but define different signatures.
-    // The <HorizontalCategoricalColorLegend /> component expects a string,
-    // the <VerticalColorLegend /> component expects a ColorScaleBin.
-    @action.bound onLegendMouseOver(binOrColor: string | ColorScaleBin): void {
-        this.hoverColor =
-            typeof binOrColor === "string" ? binOrColor : binOrColor.color
+    @action.bound onLegendMouseOver(bin: ColorScaleBin): void {
+        this.chartState.focusArray.clear()
+        this.legendHoverColor = bin.color
     }
 
     @action.bound onLegendMouseLeave(): void {
-        this.hoverColor = undefined
-    }
-
-    @action.bound onLabelMouseOver(tick: TickmarkPlacement): void {
-        this.hoveredTick = tick
-    }
-
-    @action.bound onLabelMouseLeave(): void {
-        this.hoveredTick = undefined
+        this.legendHoverColor = undefined
     }
 
     @action.bound onBarMouseOver(
         bar: StackedPoint<Time>,
         series: StackedSeries<Time>
     ): void {
+        this.chartState.focusArray.clear()
         this.tooltipState.target = { bar, series }
     }
 
@@ -482,7 +493,6 @@ export class StackedBarChart
                 dualAxis={this.dualAxis}
                 showTickMarks={true}
                 detailsMarker={manager.detailsMarkerInSvg}
-                backgroundColor={this.manager.backgroundColor}
             />
         )
     }
@@ -490,13 +500,9 @@ export class StackedBarChart
     renderBars(): React.ReactElement {
         return (
             <StackedBars
-                dualAxis={this.dualAxis}
-                series={this.stackedSeries}
-                formatColumn={this.chartState.formatColumn}
-                hoveredSeriesNames={this.hoverKeys}
-                hoveredBar={this.tooltipState.target?.bar}
-                onBarMouseOver={this.onBarMouseOver}
-                onBarMouseLeave={this.onBarMouseLeave}
+                series={this.renderSeries}
+                onMouseOver={this.onBarMouseOver}
+                onMouseLeave={this.onBarMouseLeave}
             />
         )
     }
@@ -505,31 +511,21 @@ export class StackedBarChart
         return (
             <>
                 {this.renderAxis()}
-                <g id={makeIdForHumanConsumption("bars")}>
-                    {this.renderBars()}
-                </g>
+                <g id={makeFigmaId("bars")}>{this.renderBars()}</g>
                 {this.renderLegend()}
             </>
         )
     }
 
     renderInteractive(): React.ReactElement {
-        const { dualAxis, renderUid, bounds } = this
-        const { innerBounds } = dualAxis
-
-        const clipPath = makeClipPath({
-            renderUid: renderUid,
-            box: innerBounds,
-        })
+        const { bounds } = this
 
         return (
             <g
-                className="StackedBarChart"
                 width={bounds.width}
                 height={bounds.height}
                 onMouseMove={this.onMouseMove}
             >
-                {clipPath.element}
                 <rect
                     x={bounds.left}
                     y={bounds.top}
@@ -539,7 +535,7 @@ export class StackedBarChart
                     fill="rgba(255,255,255,0)"
                 />
                 {this.renderAxis()}
-                <g clipPath={clipPath.id}>{this.renderBars()}</g>
+                {this.renderBars()}
                 {this.renderLegend()}
                 {this.tooltip}
             </g>
@@ -551,11 +547,7 @@ export class StackedBarChart
 
         if (this.chartState.errorInfo.reason)
             return (
-                <g
-                    className="StackedBarChart"
-                    width={bounds.width}
-                    height={bounds.height}
-                >
+                <g width={bounds.width} height={bounds.height}>
                     {this.renderAxis()}
                     <NoDataModal
                         manager={this.manager}
@@ -575,7 +567,8 @@ export class StackedBarChart
     }
 
     @computed get legendY(): number {
-        return this.bounds.top
+        // Small offset aligns the legend with the chart area's top edge in relative mode
+        return this.bounds.top + 3
     }
 
     @computed get legendX(): number {
@@ -584,32 +577,35 @@ export class StackedBarChart
             : this.bounds.right - this.sidebarWidth
     }
 
-    @computed
-    get stackedSeries(): readonly StackedSeries<number>[] {
+    @computed get series(): readonly StackedSeries<Time>[] {
         return this.chartState.series
     }
 
-    animSelection?: Selection<BaseType, unknown, SVGGElement | null, unknown>
-
-    base = React.createRef<SVGGElement>()
-    override componentDidMount(): void {
-        if (!this.manager.disableIntroAnimation) {
-            // Fancy intro animation
-            this.animSelection = select(this.base.current)
-                .selectAll("clipPath > rect")
-                .attr("width", 0)
-
-            this.animSelection
-                .transition()
-                .duration(800)
-                .ease(easeLinear)
-                .attr("width", this.bounds.width)
-                .on("end", () => this.forceUpdate()) // Important in case bounds changes during transition
-        }
-        exposeInstanceOnWindow(this)
+    @computed
+    private get placedSeries(): readonly PlacedStackedBarSeries<Time>[] {
+        return toPlacedStackedBarSeries(this.series, this.dualAxis)
     }
 
-    override componentWillUnmount(): void {
-        if (this.animSelection) this.animSelection.interrupt()
+    @computed
+    private get renderSeries(): readonly RenderStackedBarSeries<Time>[] {
+        const { target } = this.tooltipState
+        return this.placedSeries.map((series) => {
+            const hover = this.hoverStateForSeries(series)
+            const emphasis = resolveEmphasis({ hover, focus: series.focus })
+
+            return {
+                ...series,
+                emphasis,
+                hover,
+                hoverTime:
+                    target?.series.seriesName === series.seriesName
+                        ? target.bar.time
+                        : undefined,
+            }
+        })
+    }
+
+    override componentDidMount(): void {
+        exposeInstanceOnWindow(this)
     }
 }

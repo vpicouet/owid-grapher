@@ -1,9 +1,11 @@
 import * as React from "react"
 import { computed, makeObservable } from "mobx"
 import { Triangle } from "./Triangle"
-import { TextWrap } from "@ourworldindata/components"
+import { TextWrap, TextWrapSvg } from "@ourworldindata/components"
 import { BASE_FONT_SIZE } from "../core/GrapherConstants"
-import { makeIdForHumanConsumption } from "@ourworldindata/utils"
+import { makeFigmaId } from "@ourworldindata/utils"
+import * as _ from "lodash-es"
+import { GRAPHER_DARK_TEXT, GRAY_70 } from "../color/ColorConstants.js"
 
 export interface ConnectedScatterLegendManager {
     sidebarWidth: number
@@ -11,23 +13,38 @@ export interface ConnectedScatterLegendManager {
     displayEndTime: string
     fontSize?: number
     compareEndPointsOnly?: boolean
+    isStaticAndSmall?: boolean
 }
 
 export class ConnectedScatterLegend {
     manager: ConnectedScatterLegendManager
+
+    private readonly lineToLabelSpacing = 8
+    private readonly dotRadius = 2
+    private readonly arrowRadius = 3
+    private readonly padding = this.arrowRadius
+    private readonly textColor = GRAPHER_DARK_TEXT
+    private readonly arrowColor = GRAY_70
+    private readonly outlineColor = "#fff"
+    private readonly outlineWidth = 0.2
+
     constructor(manager: ConnectedScatterLegendManager) {
         makeObservable(this)
         this.manager = manager
     }
 
     @computed get fontSize(): number {
-        return 0.7 * (this.manager.fontSize ?? BASE_FONT_SIZE)
+        const baseFontSize = this.manager.fontSize ?? BASE_FONT_SIZE
+        const fontScale = this.manager.isStaticAndSmall ? 0.5 : 0.7
+        return fontScale * baseFontSize
     }
-    @computed get fontColor(): string {
-        return "#333"
+
+    @computed get width(): number {
+        return this.manager.sidebarWidth
     }
+
     @computed get maxLabelWidth(): number {
-        return this.manager.sidebarWidth / 3
+        return (this.width - 2) / 2
     }
 
     @computed get startLabel(): TextWrap {
@@ -50,12 +67,12 @@ export class ConnectedScatterLegend {
         })
     }
 
-    @computed get width(): number {
-        return this.manager.sidebarWidth
+    @computed get maxLabelHeight(): number {
+        return Math.max(this.startLabel.height, this.endLabel.height)
     }
 
     @computed get height(): number {
-        return Math.max(this.startLabel.height, this.endLabel.height)
+        return this.maxLabelHeight + this.padding + this.lineToLabelSpacing
     }
 
     render(
@@ -63,15 +80,21 @@ export class ConnectedScatterLegend {
         targetY: number,
         renderOptions: React.SVGAttributes<SVGGElement> = {}
     ): React.ReactElement {
-        const { manager, startLabel, endLabel, fontColor } = this
+        const { startLabel, endLabel, padding, lineToLabelSpacing, width } =
+            this
 
-        const lineLeft = targetX + startLabel.width + 5
-        const lineRight = targetX + manager.sidebarWidth - endLabel.width - 5
-        const lineY = targetY + this.height / 2 - 0.5
+        // Arrow line
+        const lineLeft = targetX + padding
+        const lineRight = targetX + width - padding
+        const lineY = targetY + padding
 
+        // Labels below the line
+        const labelY = lineY + lineToLabelSpacing
+        const labelStartX = targetX
+        const labelEndX = targetX + width - endLabel.width
         return (
             <g
-                id={makeIdForHumanConsumption("arrow-legend")}
+                id={makeFigmaId("arrow-legend")}
                 className="ConnectedScatterLegend"
                 {...renderOptions}
             >
@@ -83,58 +106,62 @@ export class ConnectedScatterLegend {
                     fill="#fff"
                     opacity={0}
                 />
-                {startLabel.renderSVG(targetX, targetY, {
-                    textProps: { fill: fontColor },
-                })}
-                {endLabel.renderSVG(
-                    targetX + manager.sidebarWidth - endLabel.width,
-                    targetY,
-                    { textProps: { fill: fontColor } }
-                )}
+                <TextWrapSvg
+                    textWrap={startLabel}
+                    x={labelStartX}
+                    y={labelY}
+                    fill={this.textColor}
+                />
+                <TextWrapSvg
+                    textWrap={endLabel}
+                    x={labelEndX}
+                    y={labelY}
+                    fill={this.textColor}
+                />
                 <line
                     x1={lineLeft}
                     y1={lineY}
                     x2={lineRight}
                     y2={lineY}
-                    stroke="#666"
+                    stroke={this.arrowColor}
                     strokeWidth={1}
                 />
                 <circle
                     cx={lineLeft}
                     cy={lineY}
-                    r={2}
-                    fill="#666"
-                    stroke="#ccc"
-                    strokeWidth={0.2}
+                    r={this.dotRadius}
+                    fill={this.arrowColor}
+                    stroke={this.outlineColor}
+                    strokeWidth={this.outlineWidth}
                 />
-                {!manager.compareEndPointsOnly && (
+                {!this.manager.compareEndPointsOnly && (
                     <React.Fragment>
                         <circle
                             cx={lineLeft + (lineRight - lineLeft) / 3}
                             cy={lineY}
-                            r={2}
-                            fill="#666"
-                            stroke="#ccc"
-                            strokeWidth={0.2}
+                            r={this.dotRadius}
+                            fill={this.arrowColor}
+                            stroke={this.outlineColor}
+                            strokeWidth={this.outlineWidth}
                         />
                         <circle
                             cx={lineLeft + (2 * (lineRight - lineLeft)) / 3}
                             cy={lineY}
-                            r={2}
-                            fill="#666"
-                            stroke="#ccc"
-                            strokeWidth={0.2}
+                            r={this.dotRadius}
+                            fill={this.arrowColor}
+                            stroke={this.outlineColor}
+                            strokeWidth={this.outlineWidth}
                         />
                     </React.Fragment>
                 )}
                 <Triangle
                     cx={lineRight}
                     cy={lineY}
-                    r={3}
-                    fill="#666"
-                    stroke="#ccc"
-                    strokeWidth={0.2}
-                    transform={`rotate(${90}, ${lineRight}, ${lineY})`}
+                    r={this.arrowRadius}
+                    rotation={90}
+                    fill={this.arrowColor}
+                    stroke={this.outlineColor}
+                    strokeWidth={this.outlineWidth}
                 />
             </g>
         )

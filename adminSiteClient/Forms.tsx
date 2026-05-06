@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /* Forms.tsx
  * ================
  *
@@ -7,7 +8,13 @@
 import * as _ from "lodash-es"
 import * as React from "react"
 import { useState } from "react"
-import { bind, dayjs, Tippy, copyToClipboard } from "@ourworldindata/utils"
+import {
+    bind,
+    dayjs,
+    Tippy,
+    copyToClipboard,
+    ColorSchemeName,
+} from "@ourworldindata/utils"
 import { action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
 import cx from "classnames"
@@ -36,6 +43,7 @@ interface TextFieldProps extends React.HTMLAttributes<HTMLInputElement> {
     secondaryLabel?: string
     value: string | undefined
     onValue?: (value: string) => void
+    onDebouncedValue?: (value: string) => void
     onEnter?: () => void
     onEscape?: () => void
     onButtonClick?: () => void
@@ -55,8 +63,18 @@ interface TextFieldProps extends React.HTMLAttributes<HTMLInputElement> {
 
 export class TextField extends React.Component<TextFieldProps> {
     base = React.createRef<HTMLDivElement>()
+    debouncedOnValue: ReturnType<typeof _.debounce>
+
     constructor(props: TextFieldProps) {
         super(props)
+        this.debouncedOnValue = _.debounce(
+            (value: string) => this.props.onDebouncedValue?.(value),
+            200
+        )
+    }
+
+    override componentWillUnmount() {
+        this.debouncedOnValue.cancel()
     }
 
     @bind onKeyDown(ev: React.KeyboardEvent<HTMLInputElement>) {
@@ -74,6 +92,11 @@ export class TextField extends React.Component<TextFieldProps> {
         const trimmedValue = value.trim()
         this.props.onValue?.(trimmedValue)
         this.props.onBlur?.(e)
+    }
+
+    @bind onChange(value: string) {
+        this.props.onValue?.(value)
+        this.debouncedOnValue(value)
     }
 
     override componentDidMount() {
@@ -145,9 +168,7 @@ export class TextField extends React.Component<TextFieldProps> {
                         className="form-control"
                         type="text"
                         value={props.value || ""}
-                        onChange={(e) =>
-                            this.props.onValue?.(e.currentTarget.value)
-                        }
+                        onChange={(e) => this.onChange(e.currentTarget.value)}
                         onBlur={this.onBlur}
                         onKeyDown={this.onKeyDown}
                         {...passthroughProps}
@@ -278,6 +299,7 @@ interface NumberFieldProps {
     allowDecimal?: boolean
     allowNegative?: boolean
     onValue: (value: number | undefined) => void
+    onDebouncedValue?: (value: number | undefined) => void
     onBlur?: () => void
     onEnter?: () => void
     onEscape?: () => void
@@ -327,6 +349,13 @@ export class NumberField extends React.Component<
                 this.setState({ inputValue: inputMatches ? undefined : value })
                 props.onValue(isNumber ? asNumber : undefined)
             },
+            onDebouncedValue: props.onDebouncedValue
+                ? (value: string) => {
+                      const asNumber = parseFloat(value)
+                      const isNumber = !isNaN(asNumber)
+                      props.onDebouncedValue?.(isNumber ? asNumber : undefined)
+                  }
+                : undefined,
             onBlur: () => {
                 this.setState({
                     inputValue: undefined,
@@ -395,9 +424,7 @@ export class SelectField extends React.Component<SelectFieldProps> {
                 {props.label && <label>{props.label}</label>}
                 <select
                     className="form-control"
-                    onChange={(e) =>
-                        props.onValue(e.currentTarget.value as string)
-                    }
+                    onChange={(e) => props.onValue(e.currentTarget.value)}
                     onBlur={this.props.onBlur}
                     value={props.value}
                     defaultValue={undefined}
@@ -451,9 +478,7 @@ export class SelectGroupsField extends React.Component<SelectGroupsFieldProps> {
                 {props.label && <label>{props.label}</label>}
                 <select
                     className="form-control"
-                    onChange={(e) =>
-                        props.onValue(e.currentTarget.value as string)
-                    }
+                    onChange={(e) => props.onValue(e.currentTarget.value)}
                     value={props.value}
                 >
                     {props.options.map((opt) => (
@@ -630,8 +655,7 @@ export class EditableList extends React.Component<{
     }
 }
 
-export interface EditableListItemProps
-    extends React.HTMLAttributes<HTMLLIElement> {
+export interface EditableListItemProps extends React.HTMLAttributes<HTMLLIElement> {
     className?: string
 }
 
@@ -653,6 +677,7 @@ interface ColorBoxProps {
     color: string | undefined
     onColor: (color: string | undefined) => void
     showLineChartColors: boolean
+    baseColorScheme?: ColorSchemeName
 }
 
 @observer
@@ -671,6 +696,7 @@ export class ColorBox extends React.Component<ColorBoxProps> {
                             color={color}
                             onColor={this.props.onColor}
                             showLineChartColors={this.props.showLineChartColors}
+                            baseColorScheme={this.props.baseColorScheme}
                         />
                         <div
                             style={{
@@ -853,93 +879,6 @@ export class BindString extends React.Component<BindStringProps> {
     }
 }
 
-interface BindStringArrayProps {
-    field: string
-    store: Record<string, any>
-    label?: React.ReactNode
-    secondaryLabel?: string
-    placeholder?: string
-    helpText?: string
-    softCharacterLimit?: number
-    disabled?: boolean
-    rows?: number
-    errorMessage?: string
-    buttonContent?: React.ReactNode
-    onButtonClick?: () => void
-}
-
-@observer
-export class BindStringArray extends React.Component<BindStringArrayProps> {
-    constructor(props: BindStringArrayProps) {
-        super(props)
-        makeObservable(this)
-    }
-
-    @action.bound onValue(value: string = "") {
-        this.props.store[this.props.field] = parseBulletList(value)
-    }
-
-    override render() {
-        const { field, store, label, ...rest } = this.props
-        const values = store[field] as string[] | []
-        return (
-            <TextAreaField
-                label={label === undefined ? _.capitalize(field) : label}
-                secondaryLabel={this.props.secondaryLabel}
-                value={createBulletList(values || [])}
-                onValue={this.onValue}
-                {...rest}
-            />
-        )
-    }
-}
-
-interface BindDropdownProps {
-    field: string
-    store: Record<string, any>
-    label?: React.ReactNode
-    options: Array<{
-        value: string
-        label: string
-    }>
-    disabled?: boolean
-}
-
-@observer
-export class BindDropdown extends React.Component<BindDropdownProps> {
-    constructor(props: BindDropdownProps) {
-        super(props)
-        makeObservable(this)
-    }
-
-    @action.bound onChange(event: React.ChangeEvent<HTMLSelectElement>) {
-        const value = event.target.value
-        this.props.store[this.props.field] = value
-    }
-
-    override render() {
-        const { field, store, label, options, disabled } = this.props
-        const value = store[field] || "" // Default to empty string if no value is set
-
-        return (
-            <div>
-                {label && <label>{label}</label>}{" "}
-                <select
-                    value={value}
-                    onChange={this.onChange}
-                    disabled={disabled}
-                >
-                    {options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                            {option.label}
-                        </option>
-                    ))}
-                </select>
-            </div>
-        )
-    }
-}
-
 interface BindAutoStringProps<K, T> {
     field: K
     store: T
@@ -949,6 +888,7 @@ interface BindAutoStringProps<K, T> {
     errorMessage?: string
     softCharacterLimit?: number
     onBlur?: () => void
+    onDebouncedChange?: () => void
     placeholder?: string
     textarea?: boolean
 }
@@ -980,7 +920,8 @@ export class BindAutoString<
     }
 
     override render() {
-        const { field, store, label, auto, ...rest } = this.props
+        const { field, store, label, auto, onDebouncedChange, ...rest } =
+            this.props
 
         const value = store[field] as string | undefined
 
@@ -991,6 +932,7 @@ export class BindAutoString<
                 isAuto={value === undefined}
                 onValue={this.onValue}
                 onToggleAuto={this.onToggleAuto}
+                onDebouncedValue={onDebouncedChange}
                 {...rest}
                 onBlur={this.onBlur}
             />
@@ -1079,6 +1021,7 @@ interface AutoFloatFieldProps {
     isAuto: boolean
     helpText?: string
     onValue: (value: number | undefined) => void
+    onDebouncedValue?: (value: number | undefined) => void
     onToggleAuto: (value: boolean) => void
     onBlur?: () => void
     resetButton?: Omit<WithResetButtonProps, "children">
@@ -1191,6 +1134,7 @@ export class BindAutoFloat<
     label?: string
     helpText?: string
     onBlur?: () => void
+    onDebouncedChange?: () => void
 }> {
     constructor(props: {
         field: K
@@ -1199,6 +1143,7 @@ export class BindAutoFloat<
         label?: string
         helpText?: string
         onBlur?: () => void
+        onDebouncedChange?: () => void
     }) {
         super(props)
         makeObservable(this)
@@ -1215,7 +1160,8 @@ export class BindAutoFloat<
     }
 
     override render() {
-        const { field, store, label, auto, ...rest } = this.props
+        const { field, store, label, auto, onDebouncedChange, ...rest } =
+            this.props
 
         const value = store[field] as number | undefined
 
@@ -1226,6 +1172,7 @@ export class BindAutoFloat<
                 isAuto={value === undefined}
                 onValue={this.onValue}
                 onToggleAuto={this.onToggleAuto}
+                onDebouncedValue={onDebouncedChange}
                 {...rest}
             />
         )
@@ -1348,35 +1295,36 @@ export const CatalogPathField = ({
         const [datasetName, indicatorName] = catalogPath.split("#")
 
         if (!datasetName || !indicatorName) tokenizedCatalogPath = catalogPath
-
-        // Tokenize, color and word-break any slashes, underscores, and hashes
-        tokenizedCatalogPath = (
-            <>
-                {[...datasetName].map((char, i) => {
-                    if (char === "/")
-                        return (
-                            <span key={i} style={{ color: "gray" }}>
-                                <wbr />/
-                            </span>
-                        )
-                    return char
-                })}
-                <span style={{ color: "#91577c" }}>
-                    <wbr />#
-                </span>
-                <span style={{ color: "#2162e6" }}>
-                    {[...indicatorName].map((char, i) => {
-                        if (char === "_")
+        else {
+            // Tokenize, color and word-break any slashes, underscores, and hashes
+            tokenizedCatalogPath = (
+                <>
+                    {[...datasetName].map((char, i) => {
+                        if (char === "/")
                             return (
-                                <span key={i}>
-                                    <wbr />_
+                                <span key={i} style={{ color: "gray" }}>
+                                    <wbr />/
                                 </span>
                             )
                         return char
                     })}
-                </span>
-            </>
-        )
+                    <span style={{ color: "#91577c" }}>
+                        <wbr />#
+                    </span>
+                    <span style={{ color: "#2162e6" }}>
+                        {[...indicatorName].map((char, i) => {
+                            if (char === "_")
+                                return (
+                                    <span key={i}>
+                                        <wbr />_
+                                    </span>
+                                )
+                            return char
+                        })}
+                    </span>
+                </>
+            )
+        }
     }
 
     return (
@@ -1449,26 +1397,3 @@ export class Button extends React.Component<ButtonProps> {
 export const Help = ({ children }: { children: React.ReactNode }) => (
     <small className="form-text text-muted mb-4">{children}</small>
 )
-
-const createBulletList = (items: string[]): string => {
-    return items.map((item) => `• ${item}`).join("\n")
-}
-
-const parseBulletList = (bulletedString: string): string[] => {
-    // Return an array with a single empty string if the input is empty
-    if (bulletedString === "") {
-        return [""]
-    }
-
-    const items = bulletedString
-        .split(/\n•\s?/)
-        .map((item) => item.replace(/^•\s?/, ""))
-
-    // Check if the input string ends with a newline. If it does, ensure the last item is an empty string.
-    if (bulletedString.endsWith("\n")) {
-        items[items.length - 1] = items[items.length - 1].trim()
-        items.push("")
-    }
-
-    return items
-}

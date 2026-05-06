@@ -69,15 +69,26 @@ export class MarimekkoChartState implements ChartState, ColorScaleManager {
         // TODO: remove this filter once we don't have mixed type columns in datasets
         table = table.replaceNonNumericCellsWithErrorValues(yColumnSlugs)
 
+        if (colorColumnSlug && manager.matchingEntitiesOnly)
+            table = table.dropRowsWithErrorValuesForColumn(colorColumnSlug)
+
+        // We want to "chop off" any rows outside the time domain for X and Y to avoid creating
+        // leading and trailing timeline times that don't really exist in the dataset.
+        const xySlugs = xColumnSlug
+            ? [xColumnSlug, ...yColumnSlugs]
+            : [...yColumnSlugs]
+        const [timeDomainStart, timeDomainEnd] = table.timeDomainFor(xySlugs)
+        table = table.filterByTimeRange(
+            timeDomainStart ?? -Infinity,
+            timeDomainEnd ?? Infinity
+        )
+
         yColumnSlugs.forEach((slug) => {
             table = table.interpolateColumnWithTolerance(slug)
         })
 
         if (xColumnSlug)
             table = table.interpolateColumnWithTolerance(xColumnSlug)
-
-        if (colorColumnSlug && manager.matchingEntitiesOnly)
-            table = table.dropRowsWithErrorValuesForColumn(colorColumnSlug)
 
         if (!manager.showNoDataArea)
             table = table.dropRowsWithErrorValuesForAllColumns(yColumnSlugs)
@@ -137,8 +148,7 @@ export class MarimekkoChartState implements ChartState, ColorScaleManager {
     }
 
     @computed get colorColumnSlug(): string | undefined {
-        // Marimekko charts only support categorical variables as color dimension
-        return this.manager.categoricalColorColumnSlug
+        return this.manager.colorColumnSlug
     }
 
     @computed get colorColumn(): CoreColumn {
@@ -434,6 +444,8 @@ export class MarimekkoChartState implements ChartState, ColorScaleManager {
             axis.updateDomainPreservingUserSettings(this.xDomainDefault)
         }
 
+        // Marimekko charts should always use linear scale
+        axis.scaleType = ScaleType.linear
         axis.formatColumn = this.xColumn
 
         axis.label = this.horizontalAxisLabel

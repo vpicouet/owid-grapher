@@ -2,11 +2,14 @@
 
 @import "../../../components/src/styles/colors.scss";
 @import "../../../components/src/styles/variables.scss";
+@import "../../../components/src/styles/typography-constants.scss";
 @import "../../../components/src/styles/typography.scss";
 @import "../../../components/src/styles/util.scss";
 @import "../../../components/src/styles/mixins.scss";
 
 @import "../../../components/src/CodeSnippet/code-snippet.scss";
+@import "../../../components/src/DownloadButton/DownloadButton.scss";
+@import "../../../components/src/DownloadApiOptions/DownloadApiOptions.scss";
 @import "../../../components/src/ExpandableToggle/ExpandableToggle.scss";
 
 @import "../../../components/src/LabeledSwitch/LabeledSwitch.scss";
@@ -14,31 +17,7 @@
 @import "../../../components/src/IndicatorProcessing/IndicatorProcessing.scss";
 
 @import "./typography.scss";
-
-// grapher frame
-$frame-color: $gray-10;
-
-// text
-$dark-text: $gray-80;
-$light-text: $gray-70;
-$active-text: $blue-90;
-
-// tooltip for button label
-$tooltip-fill: $gray-90;
-$tooltip-text: #fff;
-
-// These should be between 0–100 in order to avoid conflicting with
-// site dropdowns, search overlays, etc.
-$zindex-chart: 1;
-$zindex-table: 1;
-$zindex-global-entity-select: 11;
-$zindex-Tooltip: 20;
-$zindex-modal: 30;
-
-$zindex-full-screen: 120;
-$zindex-controls-backdrop: 130;
-$zindex-controls-popup: 140;
-$zindex-controls-drawer: 150;
+@import "./variables.scss";
 
 // needed for .global-entity-control-container
 @mixin xxlg-down {
@@ -55,11 +34,12 @@ $zindex-controls-drawer: 150;
 .GrapherComponent {
     @import "../controls/CommandPalette.scss";
     @import "../controls/Controls.scss";
-    @import "../popover/Popover.scss";
     @import "../controls/SettingsMenu.scss";
     @import "../controls/MapRegionDropdown.scss";
     @import "../captionedChart/CaptionedChart.scss";
     @import "../timeline/TimelineComponent.scss";
+    @import "../tabs/Tabs.scss";
+    @import "../tabs/TabsWithDropdown.scss";
     @import "../controls/ContentSwitchers.scss";
     @import "../controls/ActionButtons.scss";
     @import "../controls/ShareMenu.scss";
@@ -75,13 +55,9 @@ $zindex-controls-drawer: 150;
     @import "../header/Header.scss";
     @import "../modal/SourcesKeyDataTable.scss";
     @import "../modal/SourcesDescriptions.scss";
-    @import "../tabs/Tabs.scss";
-    @import "../tabs/ExpandableTabs.scss";
     @import "../slideInDrawer/SlideInDrawer.scss";
     @import "../sidePanel/SidePanel.scss";
     @import "../scatterCharts/NoDataSection.scss";
-    @import "../controls/CloseGlobeViewButton.scss";
-    @import "../controls/GlobeSwitcher.scss";
     @import "../mapCharts/MapChart.scss";
     @import "../controls/SearchField.scss";
     @import "../controls/DataTableSearchField.scss";
@@ -90,18 +66,18 @@ $zindex-controls-drawer: 150;
 // These rules are currently used elsewhere in the site. e.g. Explorers
 // so we can't scope them to be grapher-only
 @import "../controls/entityPicker/EntityPicker.scss";
-@import "../controls/globalEntitySelector/GlobalEntitySelector.scss";
 @import "../fullScreen/FullScreen.scss";
 @import "../../../components/src/Checkbox.scss";
 @import "../../../components/src/RadioButton.scss";
 @import "../../../components/src/loadingIndicator/LoadingIndicator.scss";
+@import "../seriesLabel/RegionTooltip.scss";
 
 @import "../../../components/src/closeButton/CloseButton.scss";
 @import "../../../components/src/OverlayHeader.scss";
 
 @import "../controls/Dropdown.scss";
+@import "../controls/MapZoomDropdown.scss";
 @import "../controls/DataTableFilterDropdown.scss";
-@import "../controls/MapCountryDropdown.scss";
 
 .grapher_dark {
     color: $dark-text;
@@ -195,7 +171,7 @@ $zindex-controls-drawer: 150;
 }
 
 .Tooltip {
-    z-index: $zindex-Tooltip;
+    z-index: $zindex-tooltip;
 }
 
 // white background tooltip for longer explanations
@@ -214,6 +190,46 @@ $zindex-controls-drawer: 150;
 .tippy-box[data-theme="grapher-explanation"] {
     .tippy-content {
         padding: 15px;
+    }
+}
+
+.tippy-box[data-theme="grapher-dark"] {
+    background-color: $gray-90;
+    color: white;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 16px;
+    padding: 8px;
+
+    .tippy-content {
+        padding: 0;
+    }
+
+    .tippy-arrow {
+        color: $gray-90;
+    }
+}
+
+// React Aria Tooltip
+// Matches the styling of .tippy-box[data-theme="grapher-explanation"]
+.react-aria-tooltip {
+    background: white;
+    color: $gray-80;
+    font: 400 14px/1.5 $sans-serif-font-stack;
+    box-shadow: 0px 4px 40px 0px rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    padding: 15px;
+    max-width: 338px;
+
+    // Small triangle arrow that point to the info icon
+    .react-aria-tooltip__overlay-arrow {
+        position: absolute;
+
+        svg {
+            display: block;
+            fill: white;
+            stroke: none;
+        }
     }
 }
 

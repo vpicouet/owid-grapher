@@ -5,6 +5,10 @@ metadata:
           column: replacedBy
         - table: posts_gdocs_x_images
           column: imageId
+        - table: static_viz
+          column: imageId
+        - table: static_viz
+          column: mobileImageId
 fields:
     id:
         description: Unique identifier for the image
@@ -14,6 +18,8 @@ fields:
         description: Image filename as stored in the system
     defaultAlt:
         description: Default alt text for accessibility
+    extractedText:
+        description: Text extracted from the image via OCR, used for Algolia search indexing
     originalWidth:
         description: Original width of the image in pixels
     updatedAt:

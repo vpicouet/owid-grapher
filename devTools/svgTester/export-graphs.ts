@@ -1,36 +1,47 @@
 #! /usr/bin/env node
 
+import * as _ from "lodash-es"
+import { match } from "ts-pattern"
 import fs from "fs-extra"
-import parseArgs from "minimist"
+import yargs from "yargs"
+import { hideBin } from "yargs/helpers"
 import path from "path"
 import workerpool from "workerpool"
 
 import * as utils from "./utils.js"
+import { ALL_GRAPHER_CHART_TYPES } from "@ourworldindata/types"
 
-async function main(args: parseArgs.ParsedArgs) {
+async function exportGraphers(args: ReturnType<typeof parseArguments>) {
     try {
-        // input and output directories
-        const inDir: string = args["i"] ?? utils.DEFAULT_CONFIGS_DIR
-        let outDir: string = args["o"] ?? utils.DEFAULT_REFERENCE_DIR
+        // Test suite
+        const testSuite = args.testSuite as utils.TestSuite
 
-        // charts to process
-        const targetGrapherIds = utils.getGrapherIdListFromString(
-            utils.parseArgAsString(args["ids"] ?? args["c"])
-        )
-        const targetChartTypes = utils.validateChartTypes(
-            utils.parseArgAsList(args["chart-types"] ?? args["t"])
-        )
-        const randomCount = utils.parseRandomCount(args["random"] ?? args["d"])
-        const chartIdsFile: string = args["ids-from-file"] ?? args["f"]
+        // Input and output directories
+        const testSuiteDir = path.join(utils.SVG_REPO_PATH, testSuite)
+        const outDir = path.join(testSuiteDir, "references")
 
-        // chart configurations to test
-        const grapherQueryString: string = args["query-str"] ?? args["q"]
-        const shouldTestAllChartViews: boolean = args["all-views"] ?? false
+        // Charts to process
+        const targetViewIds = args.viewIds
+        const targetChartTypes = args.chartTypes
+        const randomCount = args.random
 
-        // other options
-        const enableComparisons: boolean = args["compare"] ?? false
-        const isolate: boolean = args["isolate"] ?? false
-        const verbose: boolean = args["verbose"] ?? false
+        // Load manifest and determine data directory
+        const { viewIds: manifestViewIds, dataDir } =
+            await utils.loadManifestViewIds(testSuite, {
+                targetViewIds,
+                manifestName: args.manifest,
+                verbose: args.verbose,
+            })
+
+        // Chart configurations to test
+        const grapherQueryString = args.queryStr
+        const shouldTestAllChartViews =
+            args.allViews ?? testSuite === "grapher-views"
+        const shouldTestAllTabs = args.allTabs ?? testSuite === "thumbnails"
+
+        // Other options
+        const isolate = args.isolate
+        const verbose = args.verbose
 
         if (isolate) {
             utils.logIfVerbose(
@@ -44,36 +55,37 @@ async function main(args: parseArgs.ParsedArgs) {
             )
         }
 
-        // create a directory that contains the old and new svgs for easy comparing
-        if (enableComparisons) {
-            outDir = path.join(outDir, "comparisons")
-        }
-
-        if (!fs.existsSync(inDir))
-            throw `Input directory does not exist ${inDir}`
+        if (!fs.existsSync(dataDir))
+            throw `Input directory does not exist ${dataDir}`
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
 
-        const chartIdsToProcess = await utils.selectChartIdsToProcess(inDir, {
-            chartIdsFile,
-            grapherIds: targetGrapherIds,
+        const chartIdsToProcess = await utils.selectChartIdsToProcess(dataDir, {
+            viewIds: targetViewIds ?? manifestViewIds ?? undefined,
             chartTypes: targetChartTypes,
             randomCount,
         })
 
         const chartViewsToGenerate = await utils.findChartViewsToGenerate(
-            inDir,
+            dataDir,
             chartIdsToProcess,
             {
                 queryStr: grapherQueryString,
                 shouldTestAllViews: shouldTestAllChartViews,
+                shouldTestAllTabs,
             }
         )
 
+        const variant = testSuite === "thumbnails" ? "thumbnail" : "default"
+
         const jobDescriptions: utils.RenderSvgAndSaveJobDescription[] =
             chartViewsToGenerate.map((chart: utils.ChartWithQueryStr) => ({
-                dir: path.join(inDir, chart.id.toString()),
+                dir: {
+                    viewId: chart.viewId,
+                    pathToProcess: path.join(dataDir, chart.viewId),
+                },
                 queryStr: chart.queryStr,
                 outDir,
+                variant,
             }))
 
         // if verbose, log how many SVGs we're going to generate
@@ -119,31 +131,6 @@ async function main(args: parseArgs.ParsedArgs) {
             }
         }
 
-        // Copy over copies from master for easy comparing
-        if (enableComparisons) {
-            const comparisonDir = await fs.opendir(outDir)
-            const filenames: string[] = []
-            for await (const file of comparisonDir) {
-                if (file.name.includes("svg")) {
-                    filenames.push(file.name)
-                }
-            }
-            const svgPath = path.join(inDir, "..", "svg")
-            const masterDir = await fs.opendir(svgPath)
-            for await (const file of masterDir) {
-                if (filenames.includes(file.name)) {
-                    await fs.copyFile(
-                        path.join(svgPath, file.name),
-                        path.join(outDir, file.name.replace(".svg", "_old.svg"))
-                    )
-                    await fs.copyFile(
-                        path.join(outDir, file.name),
-                        path.join(svgPath, file.name)
-                    )
-                }
-            }
-        }
-
         await utils.writeReferenceCsv(outDir, svgRecords)
         // This call to exit is necessary for some unknown reason to make sure that the process terminates. It
         // was not required before introducing the multiprocessing library.
@@ -156,34 +143,141 @@ async function main(args: parseArgs.ParsedArgs) {
     }
 }
 
-const parsedArgs = parseArgs(process.argv.slice(2))
-if (parsedArgs["h"] || parsedArgs["help"]) {
-    console.log(`Export Grapher SVG renderings and a summary CSV file
+async function exportExplorers(args: ReturnType<typeof parseArguments>) {
+    const testSuite = args.testSuite as utils.TestSuite
+    const verbose = args.verbose
 
-Usage:
-    export-graphs.js [-i] [-o] [-c | --ids] [-t | --chart-types] [-d | --random] [-f | --ids-from-file] [-q | --query-str] [--all-views] [--compare] [--isolate] [--verbose] [--help | -h]
+    // Input and output directories
+    const dataDir = path.join(utils.SVG_REPO_PATH, testSuite, "data")
+    const outDir = path.join(utils.SVG_REPO_PATH, testSuite, "references")
 
-Inputs and outputs:
-    -i      Input directory containing Grapher configs and data. [default: ${utils.DEFAULT_CONFIGS_DIR}]
-    -o      Output directory that will contain the CSV file and one SVG file per grapher [default: ${utils.DEFAULT_REFERENCE_DIR}]
+    if (!fs.existsSync(dataDir))
+        throw `Input directory does not exist ${dataDir}`
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
 
-Charts to process:
-    --ids, -c               A comma-separated list of config IDs and config ID ranges, e.g. 2,4-8,10
-    --chart-types, -t       A comma-separated list of chart types, e.g. LineChart,ScatterPlot
-    --random, -d            Generate SVGs for a random set of configs, optionally specify a count
-    --ids-from-file, -f     Generate SVGs for a set of configs read from a file with one config ID per line
+    // Collect all explorer directories
+    const explorerJobs: { dir: string; outDir: string }[] = []
+    const dir = await fs.opendir(dataDir)
+    for await (const entry of dir) {
+        if (!entry.isDirectory()) continue
 
-Chart configurations to test:
-    --query-str, -q     Grapher query string to export charts with a specific configuration, e.g. tab=chart&stackMode=relative
-    --all-views         For each Grapher, generate SVGs for all possible chart configurations
-    
-Other options:
-    --compare       Create a directory containing the old and new SVGs for easy comparison
-    --isolate       Run each export in a separate process. This yields accurate heap usage measurements, but is slower.
-    --verbose       Verbose mode
-    -h, --help      Display this help and exit
-    `)
-    process.exit(0)
-} else {
-    void main(parsedArgs)
+        const explorerDataDir = path.join(dataDir, entry.name)
+        explorerJobs.push({ dir: explorerDataDir, outDir })
+    }
+
+    const jobCount = explorerJobs.length
+    if (jobCount === 0) {
+        utils.logIfVerbose(verbose, "No explorer directories found")
+        process.exit(0)
+    } else {
+        utils.logIfVerbose(
+            verbose,
+            `Exporting ${jobCount} explorer${jobCount > 1 ? "s" : ""}...`
+        )
+    }
+
+    const pool = workerpool.pool(__dirname + "/worker.ts", {
+        minWorkers: 2,
+        maxWorkers: 12,
+        workerThreadOpts: {
+            execArgv: ["--require", "tsx"],
+        },
+    })
+
+    const allSvgRecordsArrays: utils.SvgRecord[][] = await Promise.all(
+        explorerJobs.map((job) =>
+            pool.exec("renderExplorerViewsToSVGsAndSave", [job])
+        )
+    )
+
+    await pool.terminate()
+
+    const allSvgRecords = allSvgRecordsArrays.flat()
+    await utils.writeReferenceCsv(outDir, allSvgRecords)
 }
+
+async function main(args: ReturnType<typeof parseArguments>) {
+    const testSuite = args.testSuite as utils.TestSuite
+
+    await match(testSuite)
+        .with("graphers", () => exportGraphers(args))
+        .with("grapher-views", () => exportGraphers(args))
+        .with("mdims", () => exportGraphers(args))
+        .with("thumbnails", () => exportGraphers(args))
+        .with("explorers", () => exportExplorers(args))
+        .exhaustive()
+}
+
+function parseArguments() {
+    return yargs(hideBin(process.argv))
+        .usage("Export Grapher SVG renderings and a summary CSV file")
+        .command("$0 [testSuite]", false)
+        .positional("testSuite", {
+            type: "string",
+            description: utils.TEST_SUITE_DESCRIPTION,
+            default: "graphers",
+            choices: utils.TEST_SUITES,
+        })
+        .parserConfiguration({ "camel-case-expansion": true })
+        .options({
+            viewIds: {
+                alias: "c",
+                type: "string",
+                array: true,
+                description:
+                    "A space-separated list of grapher slugs or mdim view ids, e.g. 'life-expectancy population'",
+            },
+            chartTypes: {
+                alias: "t",
+                type: "string",
+                array: true,
+                choices: ALL_GRAPHER_CHART_TYPES,
+                description:
+                    "A space-separated list of chart types, e.g. 'LineChart ScatterPlot'",
+            },
+            random: {
+                alias: "r",
+                type: "number",
+                description: "Generate SVGs for a random set of configs",
+            },
+            queryStr: {
+                alias: "q",
+                type: "string",
+                description:
+                    "Grapher query string to export charts with a specific configuration, e.g. tab=chart&stackMode=relative",
+            },
+            allViews: {
+                type: "boolean",
+                description:
+                    "For each Grapher, generate SVGs for all possible chart configurations. Default depends on the test suite.",
+            },
+            allTabs: {
+                type: "boolean",
+                description:
+                    "For each Grapher, generate thumbnail SVGs for all available tabs. Default depends on the test suite.",
+            },
+            manifest: {
+                type: "string",
+                description:
+                    "Manifest filename (e.g. 'top.manifest.json') specifying which charts to export. For grapher-views and thumbnails, defaults to 'top.manifest.json' if --viewIds is not provided. For other test suites, all charts in the data directory are exported if neither manifest nor --viewIds is provided.",
+            },
+            isolate: {
+                type: "boolean",
+                description:
+                    "Run each export in a separate process. This yields accurate heap usage measurements, but is slower.",
+                default: false,
+            },
+            verbose: {
+                type: "boolean",
+                description: "Verbose mode",
+                default: false,
+            },
+        })
+        .help()
+        .alias("help", "h")
+        .version(false)
+        .parseSync()
+}
+
+const argv = parseArguments()
+void main(argv)

@@ -1,6 +1,7 @@
 import * as _ from "lodash-es"
 import {
     DbInsertPostGdocComponent,
+    EnrichedBlockChartRows,
     EnrichedBlockKeyInsights,
     EnrichedBlockTable,
     OwidEnrichedGdocBlock,
@@ -34,6 +35,26 @@ function iterateKeyInsights<T extends EnrichedBlockKeyInsights>(
                 child: slide.content[j],
                 parentPath: `${parentPath}`,
                 path: `${parentPath}.insights[${i}].content[${j}]`,
+            })
+        }
+    }
+    return items
+}
+
+/** Specialized iteration function for the chart-rows block */
+function iterateChartRows<T extends EnrichedBlockChartRows>(
+    parent: T,
+    parentPath: string,
+    _prop: keyof T
+): ChildIterationInfo[] {
+    const items: ChildIterationInfo[] = []
+    for (let i = 0; i < parent.rows.length; i++) {
+        const row = parent.rows[i]
+        for (let j = 0; j < row.content.length; j++) {
+            items.push({
+                child: row.content[j],
+                parentPath: `${parentPath}`,
+                path: `${parentPath}.rows[${i}].content[${j}]`,
             })
         }
     }
@@ -157,7 +178,10 @@ function handleComponent<T extends OwidEnrichedGdocBlock>(
                 components.push(...childComponents)
             }
         } catch (e) {
-            throw new Error(`Error iterating ${String(prop)} for ${path}: ${e}`)
+            throw new Error(
+                `Error iterating ${String(prop)} for ${path}: ${e}`,
+                { cause: e }
+            )
         }
     }
 
@@ -205,6 +229,22 @@ export function enumerateGdocComponentsWithoutChildren(
                 handleComponent(
                     graySection,
                     [{ prop: "items", iterator: iterateArrayProp }],
+                    parentPath,
+                    path
+                )
+            )
+            .with({ type: "explore-data-section" }, (exploreDataSection) =>
+                handleComponent(
+                    exploreDataSection,
+                    [{ prop: "content", iterator: iterateArrayProp }],
+                    parentPath,
+                    path
+                )
+            )
+            .with({ type: "conditional-section" }, (conditionalSection) =>
+                handleComponent(
+                    conditionalSection,
+                    [{ prop: "content", iterator: iterateArrayProp }],
                     parentPath,
                     path
                 )
@@ -331,6 +371,30 @@ export function enumerateGdocComponentsWithoutChildren(
                     path
                 )
             )
+            .with({ type: "guided-chart" }, (guidedChart) =>
+                handleComponent(
+                    guidedChart,
+                    [{ prop: "content", iterator: iterateArrayProp }],
+                    parentPath,
+                    path
+                )
+            )
+            .with({ type: "chart-rows" }, (chartRows) =>
+                handleComponent(
+                    chartRows,
+                    [{ prop: "rows", iterator: iterateChartRows }],
+                    parentPath,
+                    path
+                )
+            )
+            .with({ type: "pull-chart" }, (pullChart) =>
+                handleComponent(
+                    pullChart,
+                    [{ prop: "content", iterator: iterateArrayProp }],
+                    parentPath,
+                    path
+                )
+            )
             .with(
                 {
                     type: P.union(
@@ -341,19 +405,17 @@ export function enumerateGdocComponentsWithoutChildren(
                         "narrative-chart",
                         "horizontal-rule",
                         "html",
-                        "script",
                         "image",
                         "video",
                         "missing-data",
                         "prominent-link",
                         "pull-quote",
-                        "guided-chart",
                         "recirc",
                         "resource-panel",
                         "research-and-writing",
-                        "scroller",
                         "sdg-grid",
                         "sdg-toc",
+                        "ltp-toc",
                         "topic-page-intro",
                         "all-charts",
                         "entry-summary",
@@ -361,6 +423,8 @@ export function enumerateGdocComponentsWithoutChildren(
                         "pill-row",
                         "homepage-search",
                         "homepage-intro",
+                        "featured-metrics",
+                        "featured-data-insights",
                         "latest-data-insights",
                         "aside",
                         "text",
@@ -370,7 +434,12 @@ export function enumerateGdocComponentsWithoutChildren(
                         "donors",
                         "socials",
                         "subscribe-banner",
-                        "narrative-chart"
+                        "narrative-chart",
+                        "static-viz",
+                        "data-callout",
+                        "country-profile-selector",
+                        "bespoke-component",
+                        "data-callout-group"
                     ),
                 },
                 (c) => handleComponent(c, [], parentPath, path)

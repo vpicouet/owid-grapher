@@ -1,4 +1,5 @@
 import { DbPlainTag } from "../dbTypes/Tags.js"
+import { OwidGdocType } from "../gdocTypes/Gdoc.js"
 
 export interface EntryMeta {
     slug: string
@@ -28,6 +29,7 @@ export const TagGraphRootName = "tag-graph-root" as const
 export type FlatTagGraphNode = Pick<DbPlainTag, "name" | "slug"> & {
     weight: number
     isTopic: boolean
+    isSearchable: boolean
     parentId: number
     childId: number
     slug: string | null
@@ -39,6 +41,7 @@ export interface TagGraphNode {
     children: TagGraphNode[]
     id: number
     isTopic: boolean
+    isSearchable: boolean
     name: string
     path: number[]
     slug: string | null
@@ -49,6 +52,7 @@ export type TagGraphRoot = TagGraphNode & {
     children: TagGraphNode[]
     id: number
     isTopic: false
+    isSearchable: false
     name: typeof TagGraphRootName
     path: [number]
     slug: null
@@ -60,6 +64,7 @@ export interface PostReference {
     title: string
     slug: string
     url: string
+    type: OwidGdocType
 }
 
 export enum ContentGraphLinkType {
@@ -68,6 +73,7 @@ export enum ContentGraphLinkType {
     Grapher = "grapher",
     Explorer = "explorer",
     NarrativeChart = "narrative-chart",
+    StaticViz = "static-viz",
     Dod = "dod",
     GuidedChart = "guided-chart",
 }

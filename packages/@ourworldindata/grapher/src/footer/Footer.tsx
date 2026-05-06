@@ -1,16 +1,20 @@
 import * as React from "react"
 import { observable, computed, action, makeObservable } from "mobx"
 import { observer } from "mobx-react"
-import parseUrl from "url-parse"
 import {
     Bounds,
     getRelativeMouse,
-    makeIdForHumanConsumption,
+    makeFigmaId,
+    Url,
+    Point,
 } from "@ourworldindata/utils"
 import {
     DATAPAGE_ABOUT_THIS_DATA_SECTION_ID,
     MarkdownTextWrap,
+    MarkdownTextWrapHtml,
+    MarkdownTextWrapSvg,
     TextWrap,
+    TextWrapSvg,
 } from "@ourworldindata/components"
 import { Tooltip } from "../tooltip/Tooltip"
 import { FooterManager } from "./FooterManager"
@@ -136,8 +140,8 @@ abstract class AbstractFooter<
 
     @computed protected get finalUrl(): string {
         const originUrl = this.originUrlWithProtocol
-        const url = parseUrl(originUrl)
-        return `${url.origin}${url.pathname}`
+        const url = Url.fromURL(originUrl)
+        return url.originAndPath ?? ""
     }
 
     @computed protected get correctedUrlText(): string | undefined {
@@ -147,8 +151,9 @@ abstract class AbstractFooter<
         if (!originUrl || !originUrl.toLowerCase().match(/^https?:\/\/./))
             return undefined
 
-        const url = parseUrl(originUrl)
-        return `${url.host}${url.pathname}`
+        const url = Url.fromURL(originUrl)
+        return url.originAndPath
+            ?.replace(/^https?:\/\//, "")
             .replace("ourworldindata.org", "OurWorldinData.org")
             .replace(/\/$/, "") // remove trailing slash
     }
@@ -379,11 +384,11 @@ abstract class AbstractFooter<
     }
 
     base = React.createRef<HTMLDivElement>()
-    tooltipTarget: { x: number; y: number } | undefined = undefined
+    tooltipTarget: Point | undefined = undefined
 
     @action.bound private onMouseMove(e: MouseEvent): void {
         const cc = this.base.current?.querySelector(".cclogo")
-        if (cc && cc.matches(":hover")) {
+        if (cc?.matches(":hover")) {
             const div = this.base.current as HTMLDivElement
             const grapher = div.closest(".GrapherComponent")
             if (grapher) {
@@ -406,7 +411,13 @@ abstract class AbstractFooter<
             <div className="license" style={this.licenseAndOriginUrl.htmlStyle}>
                 {this.finalUrlText && (
                     <>
-                        <a href={this.finalUrl} rel="noopener">
+                        <a
+                            href={this.finalUrl}
+                            {...(this.manager.isInIFrame && {
+                                target: "_blank",
+                                rel: "noopener",
+                            })}
+                        >
                             {this.finalUrlText}
                         </a>{" "}
                         |{" "}
@@ -415,8 +426,11 @@ abstract class AbstractFooter<
                 <a
                     className={this.manager.hasOWIDLogo ? "cclogo" : undefined}
                     href={this.licenseUrl}
-                    rel="noopener"
                     style={{ textDecoration: "none" }}
+                    {...(this.manager.isInIFrame && {
+                        target: "_blank",
+                        rel: "noopener",
+                    })}
                 >
                     {this.licenseText}
                 </a>
@@ -434,7 +448,7 @@ abstract class AbstractFooter<
 
         return (
             <p className="sources" style={sources.style}>
-                {sources.renderHTML()}
+                <MarkdownTextWrapHtml textWrap={sources} />
                 {" – "}
                 <a
                     className="learn-more-about-data"
@@ -481,7 +495,7 @@ abstract class AbstractFooter<
     private renderNote(): React.ReactElement {
         return (
             <p className="note" style={this.note.style}>
-                {this.note.renderHTML()}
+                <MarkdownTextWrapHtml textWrap={this.note} />
             </p>
         )
     }
@@ -702,9 +716,12 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
         const { finalUrl, finalUrlText, licenseText, licenseUrl, textColor } =
             this
         const linkStyle = `fill: ${textColor};`
-        const licenseSvg = `<a style="${linkStyle}" href="${licenseUrl}">${licenseText}</a>`
+        const targetAttr = this.manager.isInIFrame
+            ? ' target="_blank" rel="noopener"'
+            : ""
+        const licenseSvg = `<a style="${linkStyle}" href="${licenseUrl}"${targetAttr}>${licenseText}</a>`
         if (!finalUrlText) return licenseSvg
-        const originUrlSvg = `<a style="${linkStyle}" href="${finalUrl}">${finalUrlText}</a>`
+        const originUrlSvg = `<a style="${linkStyle}" href="${finalUrl}"${targetAttr}>${finalUrlText}</a>`
         return [originUrlSvg, licenseSvg].join(" | ")
     }
 
@@ -757,38 +774,47 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
 
         return (
             <g
-                id={makeIdForHumanConsumption(GRAPHER_FOOTER_CLASS)}
+                id={makeFigmaId(GRAPHER_FOOTER_CLASS)}
                 className="SourcesFooter"
                 style={{ fill: this.textColor }}
             >
-                {sources.renderSVG(targetX, targetY, {
-                    id: makeIdForHumanConsumption("sources"),
-                })}
-                {this.showNote &&
-                    note.renderSVG(
-                        targetX,
-                        targetY + sources.height + this.verticalPadding,
-                        {
-                            id: makeIdForHumanConsumption("note"),
-                            detailsMarker: this.manager.detailsMarkerInSvg,
+                <MarkdownTextWrapSvg
+                    textWrap={sources}
+                    x={targetX}
+                    y={targetY}
+                    id={makeFigmaId("sources")}
+                />
+                {this.showNote && (
+                    <MarkdownTextWrapSvg
+                        textWrap={note}
+                        x={targetX}
+                        y={targetY + sources.height + this.verticalPadding}
+                        id={makeFigmaId("note")}
+                        detailsMarker={this.manager.detailsMarkerInSvg}
+                    />
+                )}
+                {showLicenseNextToSources ? (
+                    <TextWrapSvg
+                        textWrap={licenseAndOriginUrl}
+                        x={targetX + maxWidth - licenseAndOriginUrl.width}
+                        y={targetY}
+                        id={makeFigmaId("origin-url")}
+                    />
+                ) : (
+                    <TextWrapSvg
+                        textWrap={licenseAndOriginUrl}
+                        x={targetX}
+                        y={
+                            targetY +
+                            sources.height +
+                            (this.showNote
+                                ? note.height + this.verticalPadding
+                                : 0) +
+                            this.verticalPadding
                         }
-                    )}
-                {showLicenseNextToSources
-                    ? licenseAndOriginUrl.renderSVG(
-                          targetX + maxWidth - licenseAndOriginUrl.width,
-                          targetY,
-                          { id: makeIdForHumanConsumption("origin-url") }
-                      )
-                    : licenseAndOriginUrl.renderSVG(
-                          targetX,
-                          targetY +
-                              sources.height +
-                              (this.showNote
-                                  ? note.height + this.verticalPadding
-                                  : 0) +
-                              this.verticalPadding,
-                          { id: makeIdForHumanConsumption("origin-url") }
-                      )}
+                        id={makeFigmaId("origin-url")}
+                    />
+                )}
             </g>
         )
     }

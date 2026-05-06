@@ -1,0 +1,368 @@
+import type {
+    SearchResponse,
+    BaseHit,
+    Hit,
+    HitHighlightResult,
+} from "instantsearch.js"
+import { OwidGdocType } from "../gdocTypes/Gdoc.js"
+import { GrapherTabName } from "../grapherTypes/GrapherTypes.js"
+import * as z from "zod/mini"
+
+export const PagesIndexRecordSchema = z.object({
+    objectID: z.string(),
+    importance: z.number(),
+    type: z.enum(OwidGdocType),
+    slug: z.string(),
+    title: z.string(),
+    content: z.string(),
+    views_7d: z.number(),
+    score: z.number(),
+    excerpt: z.optional(z.string()),
+    excerptLong: z.optional(z.array(z.string())),
+    authors: z.optional(z.array(z.string())),
+    date: z.optional(z.string()),
+    modifiedDate: z.optional(z.string()),
+    tags: z.optional(z.array(z.string())),
+    thumbnailUrl: z.string(),
+    availableEntities: z.optional(z.array(z.string())),
+})
+
+export type PageRecord = z.infer<typeof PagesIndexRecordSchema>
+
+// Lightweight record for the chronological pages index (one per page, no chunked content)
+export type PageChronologicalRecord = {
+    objectID: string
+    type: string
+    slug: string
+    title: string
+    excerpt: string
+    date: string
+    modifiedDate: string
+    authors: string[]
+    tags: string[]
+    thumbnailUrl: string
+}
+
+export const PagesIndexRecordsResponseSchema = z.object({
+    records: z.array(PagesIndexRecordSchema),
+    count: z.number(),
+    message: z.optional(z.string()),
+})
+
+export type PagesIndexRecordsResponse = z.infer<
+    typeof PagesIndexRecordsResponseSchema
+>
+
+export type IPageHit = PageRecord & Hit<BaseHit>
+
+export enum ChartRecordType {
+    Chart = "chart",
+    ExplorerView = "explorerView",
+    MultiDimView = "multiDimView",
+}
+
+export enum ExplorerType {
+    Grapher = "grapher",
+    Indicator = "indicator",
+    Csv = "csv",
+}
+
+export interface ChartRecord {
+    type: ChartRecordType
+    objectID: string
+    chartId: number
+    chartConfigId?: string
+    slug: string
+    queryParams?: string
+    title: string
+    containerTitle?: string
+    subtitle: string | undefined
+    variantName: string
+    availableTabs: GrapherTabName[]
+    keyChartForTags: string[]
+    tags: string[]
+    availableEntities: string[]
+    /** ETL namespace/provider of the variables used in this chart (e.g., "who", "faostat") */
+    datasetNamespaces: string[]
+    /** ETL version dates of the variables used in this chart (e.g., "2024-08-06") */
+    datasetVersions: string[]
+    /** ETL dataset product names of the variables used in this chart (e.g., "ghe", "faostat_tcl") */
+    datasetProducts: string[]
+    /** Data producers of the variables used in this chart (e.g., "World Bank") */
+    datasetProducers: string[]
+    /**
+     * Only present for income group-specific FMs: availableEntities before it gets filtered down.
+     * Without this, searching for charts with data for "Uganda" OR "United States" would return
+     * the FM version of the chart that only has Uganda in its available entities, and thus we
+     * wouldn't plot the data for the US, even though the chart has data for the US.
+     */
+    originalAvailableEntities?: string[]
+    /**
+     * Also only set for FMs: used so that we can filter out income group-specific FMs on a plain data catalog view.
+     */
+    isIncomeGroupSpecificFM: boolean
+    isFM: boolean
+    publishedAt: string
+    updatedAt: string
+    numDimensions: number
+    titleLength: number
+    numRelatedArticles: number
+    views_7d: number
+    score: number
+    // we set attributeForDistinct on this, so we can use it to deduplicate
+    // when we have multiple records for the same chart (e.g. with featured metrics)
+    id: string
+}
+
+export type IChartHit = Hit<BaseHit> & ChartRecord
+
+export enum SearchIndexName {
+    Pages = "pages",
+    PagesChronological = "pages-chronological",
+    ExplorerViewsMdimViewsAndCharts = "explorer-views-and-charts",
+}
+
+interface BaseSearchChartHit {
+    title: string
+    containerTitle?: string
+    slug: string
+    availableEntities: string[]
+    originalAvailableEntities?: string[]
+    objectID: string
+    variantName?: string
+    subtitle?: string
+    availableTabs: GrapherTabName[]
+    __position: number
+    _highlightResult?: HitHighlightResult
+    _snippetResult?: HitHighlightResult
+}
+
+type SearchChartViewHit = BaseSearchChartHit & {
+    type: ChartRecordType.Chart
+}
+
+type SearchExplorerViewHit = BaseSearchChartHit & {
+    type: ChartRecordType.ExplorerView
+    explorerType: ExplorerType
+    queryParams: string
+}
+
+type SearchMultiDimViewHit = BaseSearchChartHit & {
+    type: ChartRecordType.MultiDimView
+    queryParams: string
+    chartConfigId: string
+}
+
+/**
+ * This is the type for the hits that we get back from algolia when we search
+ * response.results[0].hits is an array of these
+ */
+export type SearchChartHit =
+    | SearchChartViewHit
+    | SearchExplorerViewHit
+    | SearchMultiDimViewHit
+
+export interface SearchChartHitComponentProps {
+    hit: SearchChartHit
+    selectedRegionNames?: string[] | undefined
+    // Search uses a global onClick handler to track analytics
+    // But the data catalog passes a function to this component explicitly
+    onClick: (vizType: string | null) => void
+}
+
+export type SearchChartHitComponentVariant = "large" | "medium" | "small"
+
+// SearchResponse adds the extra fields from Algolia: page, nbHits, etc
+export type SearchChartsResponse = SearchResponse<SearchChartHit>
+
+export type SearchDataTopicsResponse = {
+    title: string
+    charts: SearchResponse<SearchChartHit>
+}
+
+export type ScoredFilter = Filter & {
+    name: string
+    score: number
+}
+
+export type ScoredFilterPositioned = ScoredFilter & {
+    positions: number[]
+}
+
+export type DataInsightHit = {
+    title: string
+    thumbnailUrl: string
+    date: string
+    slug: string
+    type: OwidGdocType.DataInsight
+    objectID: string
+    __position: number
+}
+
+export type SearchDataInsightResponse = SearchResponse<DataInsightHit>
+
+export type FlatArticleHit = {
+    title: string
+    thumbnailUrl: string
+    date: string
+    slug: string
+    type: OwidGdocType.Article | OwidGdocType.AboutPage
+    content: string
+    authors: string[]
+    objectID: string
+    __position: number
+}
+
+export type StackedArticleHit = {
+    title: string
+    thumbnailUrl: string
+    slug: string
+    type: OwidGdocType.Article | OwidGdocType.AboutPage
+    content: string
+    objectID: string
+    __position: number
+}
+
+export type SearchStackedArticleResponse = SearchResponse<StackedArticleHit>
+export type SearchFlatArticleResponse = SearchResponse<FlatArticleHit>
+
+export type TopicPageHit = {
+    title: string
+    type: OwidGdocType.TopicPage | OwidGdocType.LinearTopicPage
+    slug: string
+    excerpt: string
+    excerptLong?: string[]
+    objectID: string
+    __position: number
+}
+
+export type SearchTopicPageResponse = SearchResponse<TopicPageHit>
+
+export type ProfileHit = {
+    title: string
+    thumbnailUrl: string
+    slug: string
+    excerpt: string
+    type: OwidGdocType.Profile
+    availableEntities: string[]
+    objectID: string
+    __position: number
+}
+
+export type SearchProfileResponse = SearchResponse<ProfileHit>
+
+export type SearchWritingTopicsResponse = {
+    title: string
+    articles: SearchStackedArticleResponse
+    topicPages: SearchTopicPageResponse
+    totalCount: number
+}
+
+export enum FilterType {
+    COUNTRY = "country",
+    TOPIC = "topic",
+    QUERY = "query",
+    DATASET_PRODUCT = "datasetProduct",
+    DATASET_NAMESPACE = "datasetNamespace",
+    DATASET_VERSION = "datasetVersion",
+    DATASET_PRODUCER = "datasetProducer",
+}
+
+export enum SearchResultType {
+    ALL = "all",
+    DATA = "data",
+    WRITING = "writing",
+}
+
+export type Filter = {
+    type: FilterType
+    name: string
+}
+
+export enum SearchUrlParam {
+    COUNTRY = "countries",
+    TOPIC = "topics",
+    QUERY = "q",
+    REQUIRE_ALL_COUNTRIES = "requireAllCountries",
+    RESULT_TYPE = "resultType",
+    DATASET_PRODUCT = "datasetProducts",
+    DATASET_NAMESPACE = "datasetNamespaces",
+    DATASET_VERSION = "datasetVersions",
+    DATASET_PRODUCER = "datasetProducers",
+}
+
+export type SearchState = Readonly<{
+    query: string
+    filters: Filter[]
+    requireAllCountries: boolean
+    resultType: SearchResultType
+}>
+
+export interface SearchActions {
+    setQuery: (query: string) => void
+    addCountry: (country: string) => void
+    addCountryAndSetQuery: (country: string, query: string) => void
+    removeCountry: (country: string) => void
+    setTopic: (topic: string) => void
+    setTopicAndClearQuery: (topic: string) => void
+    removeTopic: (topic: string) => void
+    addFilter: (filter: Filter) => void
+    removeFilter: (filter: Filter) => void
+    toggleRequireAllCountries: () => void
+    setResultType: (resultType: SearchResultType) => void
+    replaceQueryWithFilter: (filter: ScoredFilterPositioned) => void
+    reset: () => void
+}
+
+export enum SearchTopicType {
+    Topic = "topic",
+    Area = "area",
+}
+
+export interface TemplateConfig {
+    resultType: SearchResultType
+    topicType: SearchTopicType | null
+    hasCountry: boolean
+    hasQuery: boolean
+    hasDatasetFilters: boolean
+}
+
+export type SearchFacetFilters = (string | string[])[]
+
+export type SynonymMap = Map<string, string[]>
+
+export interface WordPositioned {
+    word: string
+    position: number
+}
+
+export type Ngram = WordPositioned[]
+
+/**
+ * Context object containing shared enrichment data needed for Algolia indexing of chart, explorer and multi-dim views.
+ */
+export interface IndexingContext {
+    /** Pageview data by URL (e.g., "/grapher/life-expectancy" -> { views_7d: 1234 }) */
+    pageviews: Record<string, { views_7d: number }>
+
+    /**
+     * Topic tag hierarchies for computing parent topic tags.
+     * Maps tag name -> array of parent tag paths (each path is an array of tags with id, name, slug).
+     */
+    topicHierarchies: Record<
+        string,
+        Array<Array<{ id: number; name: string; slug: string | null }>>
+    >
+}
+
+export type ChartsIndexingContext = IndexingContext & {
+    redirectsByChartId: Map<number, string[]>
+}
+
+export const CHRONOLOGICAL_INDEX_TYPES = new Set<string>([
+    OwidGdocType.Article,
+    OwidGdocType.LinearTopicPage,
+    OwidGdocType.TopicPage,
+    OwidGdocType.DataInsight,
+    OwidGdocType.Announcement,
+])

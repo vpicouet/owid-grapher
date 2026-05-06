@@ -1,5 +1,4 @@
 import * as _ from "lodash-es"
-/* eslint-disable react-refresh/only-export-components */
 
 import { Component, createContext, Fragment, useState } from "react"
 import { observer } from "mobx-react"
@@ -10,6 +9,7 @@ import {
 } from "./ChartEditor.js"
 import { computed, action, observable, runInAction, makeObservable } from "mobx"
 import {
+    BAKED_BASE_URL,
     BAKED_GRAPHER_URL,
     GRAPHER_DYNAMIC_THUMBNAIL_URL,
 } from "../settings/clientSettings.js"
@@ -34,6 +34,7 @@ import { ReuploadImageForDataInsightModal } from "./ReuploadImageForDataInsightM
 import { ImageUploadResponse } from "./imagesHelpers.js"
 import { DataInsightMinimalInformation } from "../adminShared/AdminTypes.js"
 import { notification } from "antd"
+import { getCanonicalUrl } from "@ourworldindata/components"
 
 const BASE_URL = BAKED_GRAPHER_URL.replace(/^https?:\/\//, "")
 
@@ -75,56 +76,68 @@ export class EditorReferencesTabForChart extends Component<{
         return this.props.editor.redirects || []
     }
 
-    @computed get pageviews() {
-        return this.props.editor.pageviews
+    @computed get views() {
+        return this.props.editor.views
     }
 
     @action.bound appendRedirect(redirect: ChartRedirect) {
         this.props.editor.manager.redirects.push(redirect)
     }
 
-    renderPageview(views: number | undefined) {
-        return views !== undefined
-            ? formatValue(views, { unit: "views" })
-            : "No data"
+    renderViewCount(views?: number, rank?: number, total?: number) {
+        if (views === undefined) return "No data"
+        const viewsStr = formatValue(views, { unit: "views" })
+        if (rank !== undefined && total !== undefined) {
+            return `${viewsStr} (#${formatValue(rank, {})} of ${formatValue(total, {})})`
+        }
+        return viewsStr
     }
 
     override render() {
         return (
             <div className="EditorReferencesTab">
                 <section>
-                    <h5>Pageviews</h5>
+                    <h5>Chart views</h5>
                     <div>
                         <div>
                             <strong>Last 7 days:</strong>{" "}
-                            {this.renderPageview(this.pageviews?.views_7d)}
+                            {this.renderViewCount(
+                                this.views?.views_7d,
+                                this.views?.rank_7d,
+                                this.views?.total_charts
+                            )}
                         </div>
                         <div>
                             <strong>Last 14 days:</strong>{" "}
-                            {this.renderPageview(this.pageviews?.views_14d)}
+                            {this.renderViewCount(
+                                this.views?.views_14d,
+                                this.views?.rank_14d,
+                                this.views?.total_charts
+                            )}
                         </div>
                         <div>
                             <strong>Last 365 days:</strong>{" "}
-                            {this.renderPageview(this.pageviews?.views_365d)}
+                            {this.renderViewCount(
+                                this.views?.views_365d,
+                                this.views?.rank_365d,
+                                this.views?.total_charts
+                            )}
                         </div>
                         <div>
                             <strong>
-                                Average pageviews per day over the last year:
+                                Average views per day over the last year:
                             </strong>{" "}
-                            {this.renderPageview(
-                                this.pageviews?.views_365d
-                                    ? _.round(
-                                          this.pageviews?.views_365d / 365,
-                                          1
-                                      )
+                            {this.renderViewCount(
+                                this.views?.views_365d
+                                    ? _.round(this.views?.views_365d / 365, 1)
                                     : undefined
                             )}
                         </div>
                     </div>
                     <small className="form-text text-muted">
-                        Pageview numbers are inaccurate when the chart has been
-                        published or renamed recently. The numbers are updated
-                        nightly.
+                        Chart view numbers include all views of this chart
+                        (direct, embedded, and in articles). The numbers are
+                        updated nightly.
                     </small>
                 </section>
                 <section>
@@ -143,6 +156,7 @@ export class EditorReferencesTabForChart extends Component<{
                             <ReferencesDataInsights
                                 references={this.references}
                             />
+                            <ReferencesStaticViz references={this.references} />
                         </>
                     ) : (
                         <p>No references found</p>
@@ -421,16 +435,26 @@ const ReferencesWordpressPosts = (props: {
 }
 
 const ReferencesGdocPosts = (props: {
-    references: Pick<References, "postsGdocs">
+    references: Pick<References, "postsGdocs" | "dataInsights">
 }) => {
     if (!props.references.postsGdocs?.length) return null
+
     return (
         <>
-            <p>Public gdocs pages that embed or reference this chart:</p>
+            <p>Published content that references this chart</p>
             <ul className="list-group">
                 {props.references.postsGdocs.map((post) => (
                     <li key={post.id} className="list-group-item">
-                        <a href={post.url} target="_blank" rel="noopener">
+                        <a
+                            href={getCanonicalUrl(BAKED_BASE_URL, {
+                                slug: post.slug,
+                                content: {
+                                    type: post.type,
+                                },
+                            })}
+                            target="_blank"
+                            rel="noopener"
+                        >
                             <strong>{post.title}</strong>
                         </a>{" "}
                         (
@@ -506,6 +530,30 @@ const ReferencesNarrativeCharts = (props: {
     )
 }
 
+const ReferencesStaticViz = (props: {
+    references: Pick<References, "staticViz">
+}) => {
+    if (!props.references.staticViz?.length) return null
+    return (
+        <>
+            <p>Static visualizations created from this chart:</p>
+            <ul className="list-group">
+                {props.references.staticViz.map((staticViz) => (
+                    <li key={staticViz.id} className="list-group-item">
+                        <a
+                            href={`/admin/static-viz/${staticViz.id}`}
+                            target="_blank"
+                            rel="noopener"
+                        >
+                            <strong>{staticViz.name}</strong>
+                        </a>
+                    </li>
+                ))}
+            </ul>
+        </>
+    )
+}
+
 const NotificationContext = createContext(null)
 
 const ReferencesDataInsights = (props: {
@@ -542,7 +590,9 @@ const ReferencesDataInsights = (props: {
         <div className="ReferencesDataInsights">
             <NotificationContext.Provider value={null}>
                 {notificationContextHolder}
-                <p>Data insights based on this chart</p>
+                <p>
+                    Published and unpublished data insights based on this chart
+                </p>
                 <ul className="list-group">
                     {props.references.dataInsights.map((dataInsight) => (
                         <Fragment key={dataInsight.gdocId}>

@@ -1,26 +1,11 @@
 import { Fragment } from "react"
 import { BreadcrumbItem } from "@ourworldindata/utils"
-import { SubNavId } from "@ourworldindata/types"
-import { subnavs } from "../SiteConstants.js"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { faAngleRight } from "@fortawesome/free-solid-svg-icons"
-import { getBreadcrumbItems } from "./breadcrumbUtils.js"
+import { BAKED_BASE_URL, IS_ARCHIVE } from "../../settings/clientSettings.js"
+import { PROD_URL } from "../SiteConstants.js"
 
-export const BreadcrumbsFromSubnav = ({
-    subnavId,
-    subnavCurrentId,
-}: {
-    subnavId?: SubNavId
-    subnavCurrentId?: string
-}) => {
-    const breadcrumbItems = subnavId
-        ? getBreadcrumbItems(subnavCurrentId, subnavs[subnavId])
-        : null
-
-    return breadcrumbItems ? (
-        <Breadcrumbs items={breadcrumbItems} className="breadcrumb" />
-    ) : null
-}
+const BASE_URL = IS_ARCHIVE ? PROD_URL : BAKED_BASE_URL
 
 const BreadcrumbSeparator = () => (
     <span className="separator">
@@ -36,7 +21,7 @@ export const Breadcrumbs = ({
     className: string
 }) => (
     <div className={className}>
-        <a href="/">Home</a>
+        <a href={`${BASE_URL}/`}>Home</a>
         <BreadcrumbSeparator />
         {items.map((item, idx) => {
             const isLast = idx === items.length - 1

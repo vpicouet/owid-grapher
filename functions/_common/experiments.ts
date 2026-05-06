@@ -1,11 +1,13 @@
 import {
     experiments,
+    EXPERIMENT_ARM_SEPARATOR,
     ExperimentArm,
     Experiment,
     validateUniqueExperimentIds,
 } from "@ourworldindata/utils"
 import * as cookie from "cookie"
 import { SerializeOptions } from "cookie"
+import { Env } from "./env.js"
 
 export interface ServerCookie {
     name: string
@@ -13,42 +15,49 @@ export interface ServerCookie {
     options?: SerializeOptions
 }
 
-export const experimentsMiddleware = (context) => {
+export const experimentsMiddleware = async (
+    context: EventContext<Env, string, Record<string, unknown>>
+) => {
+    if (context.request.method !== "GET") {
+        return context.next()
+    }
+
     if (shouldSkipExperiments(context.request.url)) {
         return context.next()
     }
 
+    const response = await context.next()
+    const contentType = response.headers.get("content-type")
+    if (!contentType?.includes("text/html")) {
+        return response
+    }
+
     const cookies = cookie.parse(context.request.headers.get("cookie") || "")
     const cookiesToSet: ServerCookie[] = []
+    const requestPath = new URL(context.request.url).pathname
 
     const activeExperiments = experiments.filter((e) => !e.isExpired())
-    if (activeExperiments && activeExperiments.length) {
+    const activeExperimentsOnPath = activeExperiments.filter((exp) =>
+        exp.isUrlInPaths(requestPath)
+    )
+
+    if (activeExperimentsOnPath.length) {
         if (!validateUniqueExperimentIds(activeExperiments)) {
             throw new Error(`Experiment IDs are not unique`)
         }
 
-        for (const exp of activeExperiments) {
-            if (
-                !cookies ||
-                !Object.prototype.hasOwnProperty.call(cookies, exp.id)
-            ) {
-                // Check if the current request URL matches any of the experiment paths.
-                // If so, then assign the same experimental arm to all paths in the experiment
-                const requestPath = new URL(context.request.url).pathname
-                const isOnExperimentPath = exp.isUrlInPaths(requestPath)
-
-                if (isOnExperimentPath) {
-                    const assignedArm = assignToArm(exp)
-                    cookiesToSet.push({
-                        name: exp.id,
-                        value: assignedArm.id,
-                        options: {
-                            expires: exp.expires,
-                            path: "/",
-                        },
-                    })
-                    cookies[exp.id] = assignedArm.id
-                }
+        for (const exp of activeExperimentsOnPath) {
+            if (!Object.prototype.hasOwnProperty.call(cookies, exp.id)) {
+                const assignedArm = assignToArm(exp)
+                cookiesToSet.push({
+                    name: exp.id,
+                    value: assignedArm.id,
+                    options: {
+                        expires: exp.expires,
+                        path: "/",
+                    },
+                })
+                cookies[exp.id] = assignedArm.id
             }
         }
 
@@ -57,7 +66,72 @@ export const experimentsMiddleware = (context) => {
         }
     }
 
-    return context.next()
+    const combinedCookies = {
+        ...cookies,
+        ...Object.fromEntries(cookiesToSet.map((c) => [c.name, c.value])),
+    }
+    const experimentClassNames = Array.from(
+        new Set(
+            activeExperimentsOnPath
+                .map((exp) => [exp.id, combinedCookies[exp.id]] as const)
+                .filter(([_id, value]) => Boolean(value))
+                .map(
+                    ([key, value]) =>
+                        `${key}${EXPERIMENT_ARM_SEPARATOR}${value}`
+                )
+        )
+    )
+
+    if (!cookiesToSet.length && !experimentClassNames.length) {
+        return response
+    }
+
+    let responseWithBodyClasses = response
+    if (experimentClassNames.length && response.status === 200) {
+        responseWithBodyClasses = addClassNamesToBody(
+            response,
+            experimentClassNames
+        )
+    }
+
+    if (!cookiesToSet.length) {
+        return responseWithBodyClasses
+    }
+
+    const headers = new Headers(responseWithBodyClasses.headers)
+    for (const serverCookie of cookiesToSet) {
+        const cookieString = cookie.serialize(
+            serverCookie.name,
+            serverCookie.value,
+            serverCookie.options
+        )
+        headers.append("Set-Cookie", cookieString)
+    }
+    return new Response(responseWithBodyClasses.body, {
+        status: responseWithBodyClasses.status,
+        statusText: responseWithBodyClasses.statusText,
+        headers,
+    })
+}
+
+function addClassNamesToBody(page: Response, classNames: string[]) {
+    const rewriter = new HTMLRewriter().on("body", {
+        element(element) {
+            const existingClass = element.getAttribute("class")
+            const existingClassNames = new Set(
+                (existingClass ?? "").split(/\s+/).filter(Boolean)
+            )
+            for (const className of classNames) {
+                existingClassNames.add(className)
+            }
+            element.setAttribute(
+                "class",
+                Array.from(existingClassNames).join(" ")
+            )
+        },
+    })
+
+    return rewriter.transform(page)
 }
 
 /**
@@ -98,7 +172,7 @@ function assignToArm(experiment: Experiment): ExperimentArm {
 function shouldSkipExperiments(url: string): boolean {
     const pathname = new URL(url).pathname
     if (
-        /\.(js|css|svg|png|jpg|jpeg|gif|woff2?|ttf|eot|otf|json|csv|ico|map)$/.test(
+        /\.(js|mjs|css|svg|png|jpg|jpeg|gif|webp|woff2?|ttf|eot|otf|json|csv|ico|map)$/.test(
             pathname
         )
     ) {

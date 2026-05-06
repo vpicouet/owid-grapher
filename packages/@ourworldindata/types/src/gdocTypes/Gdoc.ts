@@ -21,6 +21,7 @@ import { TagGraphRoot } from "../domainTypes/ContentGraph.js"
 import { DbRawImage } from "../dbTypes/Images.js"
 import { DbPlainNarrativeChart } from "../dbTypes/NarrativeCharts.js"
 import { ArchivedPageVersion } from "../domainTypes/Archive.js"
+import { GrapherValuesJson } from "../endpointTypes/GrapherValuesJson.js"
 
 export enum OwidGdocPublicationContext {
     unlisted = "unlisted",
@@ -40,6 +41,7 @@ export interface LinkedAuthor {
     slug: string
     featuredImage: string | null
     updatedAt: Date
+    role?: string
 }
 
 export enum ChartConfigType {
@@ -70,6 +72,17 @@ export interface NarrativeChartInfo {
     chartConfigId: string
     parentChartSlug: string
     queryParamsForParentChart: QueryParams
+    latestArchivedParent?: ArchivedPageVersion
+}
+
+// An object containing metadata needed for embedded static visualizations
+export interface LinkedStaticViz {
+    desktop: ImageMetadata
+    mobile?: ImageMetadata
+    name: string
+    grapherUrl?: string
+    sourceUrl?: string
+    description: string
 }
 
 /**
@@ -84,6 +97,18 @@ export interface LinkedIndicator {
     attributionShort?: string
 }
 
+/**
+ * A linked callout stores the data values needed to populate a data-callout block.
+ * The key is generated from the normalized URL + entity name.
+ */
+export interface LinkedCallout {
+    url: string
+    /** The data values for this chart/entity combination */
+    values: GrapherValuesJson
+}
+
+export type LinkedCallouts = Record<string, LinkedCallout>
+
 export enum OwidGdocType {
     Article = "article",
     TopicPage = "topic-page",
@@ -94,13 +119,19 @@ export enum OwidGdocType {
     AboutPage = "about-page",
     Author = "author",
     Announcement = "announcement",
+    Profile = "profile",
 }
+
+export const ALL_GDOC_TYPES: OwidGdocType[] = Object.values(
+    OwidGdocType
+) as OwidGdocType[]
 
 export interface OwidGdocBaseInterface {
     id: string
     slug: string
     // TODO: should we type this as a union of the possible content types instead?
     content: OwidGdocContent
+    contentMd5: string
     published: boolean
     createdAt: Date
     publishedAt: Date | null
@@ -112,7 +143,9 @@ export interface OwidGdocBaseInterface {
     linkedDocuments?: Record<string, OwidGdocMinimalPostInterface>
     linkedCharts?: Record<string, LinkedChart>
     linkedNarrativeCharts?: Record<string, NarrativeChartInfo>
+    linkedStaticViz?: Record<string, LinkedStaticViz>
     linkedIndicators?: Record<number, LinkedIndicator>
+    linkedCallouts?: LinkedCallouts
     imageMetadata?: Record<string, ImageMetadata>
     relatedCharts?: RelatedChart[]
     tags?: MinimalTag[] | null
@@ -139,6 +172,7 @@ export interface OwidGdocMinimalPostInterface {
     "featured-image"?: string // used in prominent links and research & writing block
     kicker?: string // used in homepage announcements
     cta?: { text: string; url: string } // used in homepage announcements
+    availableEntityCodes?: string[] // used for profile-type docs to resolve ?country=X links
 }
 
 export type OwidGdocIndexItem = Pick<
@@ -165,6 +199,7 @@ export function extractGdocIndexItem(
 export interface OwidGdocDataInsightContent {
     title: string
     authors: string[]
+    authorRoles?: Record<string, string>
     ["narrative-chart"]?: string
     ["grapher-url"]?: string
     ["figma-url"]?: string
@@ -221,6 +256,7 @@ export interface OwidGdocAnnouncementContent {
     title: string
     excerpt: string
     authors: string[]
+    authorRoles?: Record<string, string>
     "featured-image"?: string
     kicker?: string
     body: OwidEnrichedGdocBlock[]
@@ -235,10 +271,42 @@ export interface OwidGdocAnnouncementInterface extends OwidGdocBaseInterface {
     content: OwidGdocAnnouncementContent
 }
 
+export type OwidGdocProfileScope = "countries" | "continents" | "all"
+
+export interface OwidGdocProfileContent {
+    type: OwidGdocType.Profile
+    title: string
+    authors: string[]
+    authorRoles?: Record<string, string>
+    scope: OwidGdocProfileScope
+    exclude?: string
+    subtitle?: string
+    excerpt?: string
+    "featured-image"?: string
+    "sidebar-toc"?: boolean
+    toc?: TocHeadingWithTitleSupertitle[]
+    body: OwidEnrichedGdocBlock[]
+    refs?: { definitions: RefDictionary; errors: OwidGdocErrorMessage[] }
+    instantiatedEntity?: OwidGdocProfileEntitySummary
+}
+
+export interface OwidGdocProfileEntitySummary {
+    name: string
+    code: string
+    slug?: string
+    regionType?: string
+    isCountry: boolean
+}
+
+export interface OwidGdocProfileInterface extends OwidGdocBaseInterface {
+    content: OwidGdocProfileContent
+}
+
 export interface OwidGdocHomepageContent {
     type: OwidGdocType.Homepage
     title?: string
     authors: string[]
+    authorRoles?: Record<string, string>
     body: OwidEnrichedGdocBlock[]
 }
 
@@ -265,6 +333,7 @@ export interface OwidGdocAuthorContent {
     socials?: EnrichedBlockSocials
     "featured-image"?: string
     authors: string[]
+    authorRoles?: Record<string, string>
     body: OwidEnrichedGdocBlock[]
 }
 
@@ -279,6 +348,7 @@ export interface OwidGdocAboutContent {
     excerpt?: string
     "featured-image"?: string
     authors: string[]
+    authorRoles?: Record<string, string>
     "hide-nav"?: boolean
     // By default, all about pages render with the title "About" even if they have a title set
     // (which we use in the gdocs index page in the admin)
@@ -300,6 +370,7 @@ export type OwidGdocContent =
     | OwidGdocAuthorContent
     | OwidGdocAboutContent
     | OwidGdocAnnouncementContent
+    | OwidGdocProfileContent
 
 export type OwidGdoc =
     | OwidGdocPostInterface
@@ -308,6 +379,7 @@ export type OwidGdoc =
     | OwidGdocAuthorInterface
     | OwidGdocAboutInterface
     | OwidGdocAnnouncementInterface
+    | OwidGdocProfileInterface
 
 export enum OwidGdocErrorMessageType {
     Error = "error",
@@ -325,6 +397,8 @@ export type OwidGdocProperty =
     | keyof OwidGdocAuthorContent
     | keyof OwidGdocAboutInterface
     | keyof OwidGdocAboutContent
+    | keyof OwidGdocProfileInterface
+    | keyof OwidGdocProfileContent
 
 export type OwidGdocErrorMessageProperty =
     | OwidGdocProperty
@@ -336,11 +410,10 @@ export interface OwidGdocErrorMessage {
 }
 
 // see also: getOwidGdocFromJSON()
-export interface OwidGdocJSON
-    extends Omit<
-        OwidGdocPostInterface,
-        "createdAt" | "publishedAt" | "updatedAt"
-    > {
+export interface OwidGdocJSON extends Omit<
+    OwidGdocPostInterface,
+    "createdAt" | "publishedAt" | "updatedAt"
+> {
     createdAt: string
     publishedAt: string | null
     updatedAt: string | null
@@ -362,6 +435,7 @@ export interface OwidGdocPostContent {
     supertitle?: string
     subtitle?: string
     authors: string[]
+    authorRoles?: Record<string, string>
     dateline?: string
     excerpt?: string
     refs?: { definitions: RefDictionary; errors: OwidGdocErrorMessage[] }
@@ -374,6 +448,7 @@ export interface OwidGdocPostContent {
     "atom-title"?: string
     "atom-excerpt"?: string
     "sidebar-toc"?: boolean
+    "heading-variant"?: "heavy" | "light"
     "hide-subscribe-banner"?: boolean
     "cover-color"?:
         | "sdg-color-1"

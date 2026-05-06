@@ -1,98 +1,73 @@
-import { MultiDimDataPageConfigEnriched } from "@ourworldindata/types"
-import {
-    Url,
-    fetchWithRetry,
-    searchParamsToMultiDimView,
-    MultiDimDataPageConfig,
-} from "@ourworldindata/utils"
-import { useState, useEffect } from "react"
-import {
-    MULTI_DIM_DYNAMIC_CONFIG_URL,
-    GRAPHER_DYNAMIC_CONFIG_URL,
-} from "../settings/clientSettings.js"
-import { GrapherWithFallback } from "./GrapherWithFallback.js"
-import MultiDim from "./multiDim/MultiDim.js"
+import { useIntersectionObserver, useIsClient } from "usehooks-ts"
 import { GrapherProgrammaticInterface } from "@ourworldindata/grapher"
+import {
+    GRAPHER_PREVIEW_CLASS,
+    HIDE_IF_JS_ENABLED_CLASSNAME,
+} from "@ourworldindata/types"
+import { Url, MultiDimDataPageConfig } from "@ourworldindata/utils"
+import GrapherImage from "./GrapherImage.js"
+import { useMultiDimConfig } from "./multiDim/hooks.js"
+import MultiDim from "./multiDim/MultiDim.js"
 
-interface MultiDimEmbedProps {
+export function MultiDimEmbed({
+    url,
+    chartConfig,
+    isPreviewing,
+}: {
     url: string
     chartConfig: Partial<GrapherProgrammaticInterface>
     isPreviewing?: boolean
-}
-
-export const MultiDimEmbed: React.FC<MultiDimEmbedProps> = (
-    props: MultiDimEmbedProps
-) => {
-    const { url, isPreviewing } = props
-    const [config, setConfig] = useState<MultiDimDataPageConfigEnriched | null>(
-        null
-    )
-    const [error, setError] = useState<string | null>(null)
+}) {
+    const isClient = useIsClient()
+    const { ref, isIntersecting: hasBeenVisible } = useIntersectionObserver({
+        rootMargin: "400px",
+        freezeOnceVisible: true,
+    })
 
     const embedUrl = Url.fromURL(url)
     const { queryStr, slug } = embedUrl
+    const {
+        data: config,
+        error,
+        isError,
+    } = useMultiDimConfig({
+        slug,
+        isPreviewing,
+        enabled: hasBeenVisible,
+    })
 
-    useEffect(() => {
-        let ignore = false
-        if (!slug) {
-            setError("No slug found in URL")
-            return
-        }
-
-        const fetchConfig = async () => {
-            try {
-                const mdimConfigUrl = `${MULTI_DIM_DYNAMIC_CONFIG_URL}/${slug}.json${isPreviewing ? "?nocache" : ""}`
-                const multiDimConfig = await fetchWithRetry(mdimConfigUrl).then(
-                    (res) => res.json()
-                )
-                if (ignore) return
-                setConfig(multiDimConfig)
-            } catch {
-                setError("Failed to load chart configuration")
-            }
-        }
-
-        void fetchConfig()
-
-        return () => {
-            ignore = true
-        }
-    }, [isPreviewing, slug])
-
-    if (error) {
-        return <div>Error: {error}</div>
+    if (!slug) {
+        return <div>Error: No slug found in URL</div>
     }
 
-    if (!config || !slug) {
-        return <div>Loading...</div>
-    }
-
-    if (embedUrl.queryParams.hideControls === "true") {
-        const view = searchParamsToMultiDimView(
-            config,
-            new URLSearchParams(queryStr)
-        )
-        const configUrl = `${GRAPHER_DYNAMIC_CONFIG_URL}/by-uuid/${view.fullConfigId}.config.json${isPreviewing ? "?nocache" : ""}`
-
-        return (
-            <GrapherWithFallback
-                configUrl={configUrl}
-                queryStr={queryStr}
-                config={props.chartConfig}
-                isEmbeddedInAnOwidPage={true}
-                isEmbeddedInADataPage={false}
-                isPreviewing={isPreviewing}
-            />
-        )
-    }
+    const shouldRenderMultiDim = isClient && hasBeenVisible && config
 
     return (
-        <MultiDim
-            slug={slug}
-            config={MultiDimDataPageConfig.fromObject(config)}
-            localGrapherConfig={props.chartConfig}
-            queryStr={queryStr}
-            isPreviewing={isPreviewing}
-        />
+        <div className="multi-dim-embed" ref={ref}>
+            {shouldRenderMultiDim ? (
+                <MultiDim
+                    slug={slug}
+                    config={MultiDimDataPageConfig.fromObject(config)}
+                    localGrapherConfig={chartConfig}
+                    queryStr={queryStr}
+                    isPreviewing={isPreviewing}
+                />
+            ) : (
+                <>
+                    <figure
+                        className={`${GRAPHER_PREVIEW_CLASS} GrapherWithFallback__fallback`}
+                        aria-hidden={isClient}
+                    >
+                        {!isClient && (
+                            <GrapherImage
+                                className={HIDE_IF_JS_ENABLED_CLASSNAME}
+                                url={url}
+                            />
+                        )}
+                    </figure>
+                    {isError ? <div>Error: {error.message}</div> : null}
+                </>
+            )}
+        </div>
     )
 }

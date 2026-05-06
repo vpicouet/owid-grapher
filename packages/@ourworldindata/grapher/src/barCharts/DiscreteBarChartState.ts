@@ -1,10 +1,12 @@
 import * as _ from "lodash-es"
 import { computed, makeObservable } from "mobx"
+import { match } from "ts-pattern"
 import { ChartState } from "../chart/ChartInterface"
 import {
     DiscreteBarChartManager,
     DiscreteBarItem,
     DiscreteBarSeries,
+    YColumnMode,
 } from "./DiscreteBarChartConstants"
 import {
     CoreColumn,
@@ -14,21 +16,28 @@ import {
 import { ColorScale, ColorScaleManager } from "../color/ColorScale"
 import { SelectionArray } from "../selection/SelectionArray"
 import {
+    sortByConfig,
     autoDetectSeriesStrategy,
     autoDetectYColumnSlugs,
+    combineHistoricalAndProjectionColumns,
     getDefaultFailMessage,
     getShortNameForEntity,
     makeSelectionArray,
 } from "../chart/ChartUtils"
 import {
+    AnnotationsMap,
+    getAnnotationsForSeries,
+    getAnnotationsMap,
+} from "../lineCharts/LineChartHelpers"
+import {
     ChartErrorInfo,
     ColorScaleConfigInterface,
     ColorSchemeName,
     FacetStrategy,
+    ProjectionColumnInfo,
     SeriesStrategy,
     SortBy,
     SortConfig,
-    SortOrder,
 } from "@ourworldindata/types"
 import { OWID_ERROR_COLOR, OWID_NO_DATA_GRAY } from "../color/ColorConstants"
 import { ColorScheme } from "../color/ColorScheme"
@@ -67,14 +76,15 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
             this.selectionArray.selectedEntityNames
         )
 
-        // TODO: remove this filter once we don't have mixed type columns in datasets
-        table = table.replaceNonNumericCellsWithErrorValues(this.yColumnSlugs)
-
-        table = table.dropRowsWithErrorValuesForAllColumns(this.yColumnSlugs)
-
-        this.yColumnSlugs.forEach((slug) => {
-            table = table.interpolateColumnWithTolerance(slug)
-        })
+        // Combine historical and projected columns if needed
+        table = match(this.yColumnMode)
+            .with({ type: "independent" }, () =>
+                this.transformTableForIndependentColumns(table)
+            )
+            .with({ type: "combined" }, ({ info }) =>
+                this.transformTableForCombinedColumn(table, info)
+            )
+            .exhaustive()
 
         if (this.colorColumnSlug) {
             table = table
@@ -87,6 +97,46 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
         return table
     }
 
+    private transformTableForIndependentColumns(table: OwidTable): OwidTable {
+        // TODO: remove this filter once we don't have mixed type columns in datasets
+        table = table.replaceNonNumericCellsWithErrorValues(this.yColumnSlugs)
+
+        table = table.dropRowsWithErrorValuesForAllColumns(this.yColumnSlugs)
+
+        this.yColumnSlugs.forEach((slug) => {
+            table = table.interpolateColumnWithTolerance(slug)
+        })
+
+        return table
+    }
+
+    private transformTableForCombinedColumn(
+        table: OwidTable,
+        info: ProjectionColumnInfo
+    ): OwidTable {
+        const { historicalSlug, projectedSlug, combinedSlug } = info
+
+        // TODO: remove this filter once we don't have mixed type columns in datasets
+        table = table.replaceNonNumericCellsWithErrorValues([
+            historicalSlug,
+            projectedSlug,
+        ])
+
+        // Interpolate both columns separately
+        table = table
+            .interpolateColumnWithTolerance(projectedSlug)
+            .interpolateColumnWithTolerance(historicalSlug)
+
+        table = combineHistoricalAndProjectionColumns(table, info, {
+            shouldAddIsProjectionColumn: true,
+        })
+
+        // Drop rows with error values for the combined column
+        table = table.dropRowsWithErrorValuesForColumn(combinedSlug)
+
+        return table
+    }
+
     @computed get selectionArray(): SelectionArray {
         return makeSelectionArray(this.manager.selection)
     }
@@ -95,13 +145,52 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
         return this.manager.focusArray ?? new FocusArray()
     }
 
+    /**
+     * Determines how Y columns should be processed for this chart.
+     *
+     * Returns "combined" mode when there is exactly one historical column and
+     * one projection column that form a valid pair. In this mode, they are merged
+     * into a single series.
+     *
+     * Falls back to "independent" mode otherwise, where each Y column is treated as
+     * an independent series.
+     */
+    @computed get yColumnMode(): YColumnMode {
+        const { projectionColumnInfoBySlug } = this.manager
+
+        const ySlugs = autoDetectYColumnSlugs(this.manager)
+
+        if (!projectionColumnInfoBySlug)
+            return { type: "independent", slugs: ySlugs }
+
+        const projectionSlugs = ySlugs.filter(
+            (slug) => this.inputTable.get(slug).isProjection
+        )
+
+        // We only support combining projected and historical data
+        // if there is exactly one column pair to combine
+        if (ySlugs.length !== 2 || projectionSlugs.length !== 1)
+            return { type: "independent", slugs: ySlugs }
+
+        // Get info for the projection column
+        const projectionSlug = projectionSlugs[0]
+        const info = projectionColumnInfoBySlug.get(projectionSlug)
+        if (!info) return { type: "independent", slugs: ySlugs }
+
+        // Verify the other slug is the matching historical column
+        const otherSlug = ySlugs.find((slug) => slug !== projectionSlug)
+        if (otherSlug !== info.historicalSlug)
+            return { type: "independent", slugs: ySlugs }
+
+        return { type: "combined", slugs: [info.combinedSlug], info }
+    }
+
     @computed get yColumnSlugs(): string[] {
-        return autoDetectYColumnSlugs(this.manager)
+        return this.yColumnMode.slugs
     }
 
     @computed get colorColumnSlug(): string | undefined {
-        // Discrete bar charts only support numeric variables as color dimension
-        return this.manager.numericColorColumnSlug
+        return this.manager.colorColumnSlug
     }
 
     @computed get colorColumn(): CoreColumn {
@@ -116,8 +205,28 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
         return this.yColumns[0]
     }
 
+    @computed get annotationsMap(): AnnotationsMap | undefined {
+        const yColumnSlug =
+            this.yColumnMode.type === "combined"
+                ? this.yColumnMode.info.historicalSlug
+                : this.yColumnSlugs[0]
+        if (!yColumnSlug) return undefined
+        return getAnnotationsMap(this.inputTable, yColumnSlug)
+    }
+
     @computed get hasProjectedData(): boolean {
-        return this.series.some((series) => series.yColumn.isProjection)
+        return this.series.some((series) => series.isProjection)
+    }
+
+    /**
+     * The column that indicates whether each row is a projection.
+     * Only set when in combined mode.
+     */
+    @computed private get isProjectionColumn(): CoreColumn | undefined {
+        if (this.yColumnMode.type !== "combined") return undefined
+        return this.transformedTable.get(
+            this.yColumnMode.info.slugForIsProjectionColumn
+        )
     }
 
     @computed private get colorScheme(): ColorScheme {
@@ -184,12 +293,19 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
         col: CoreColumn,
         indexes: number[]
     ): DiscreteBarItem[] {
-        const { transformedTable, colorColumn, hasColorScale } = this
+        const {
+            transformedTable,
+            colorColumn,
+            hasColorScale,
+            isProjectionColumn,
+        } = this
         const values = col.valuesIncludingErrorValues
         const originalTimes = col.originalTimeColumn.valuesIncludingErrorValues
         const entityNames =
             transformedTable.entityNameColumn.valuesIncludingErrorValues
         const colorValues = colorColumn.valuesIncludingErrorValues
+        const isProjectionValues =
+            isProjectionColumn?.valuesIncludingErrorValues
         return indexes.map((index): DiscreteBarItem => {
             const isColumnStrategy =
                 this.seriesStrategy === SeriesStrategy.column
@@ -206,6 +322,9 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
                   : transformedTable.getColorForEntityName(
                         entityNames[index] as string
                     )
+            const isProjection = isProjectionValues
+                ? (isProjectionValues[index] as boolean)
+                : col.isProjection
             return {
                 yColumn: col,
                 seriesName,
@@ -213,6 +332,7 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
                 time: originalTimes[index] as number,
                 colorValue,
                 color,
+                isProjection,
             }
         })
     }
@@ -238,31 +358,19 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
                 ? this.entitiesAsSeries
                 : this.columnsAsSeries
 
-        let sortByFunc: (item: DiscreteBarItem) => number | string | undefined
-        switch (this.sortConfig.sortBy) {
-            case SortBy.custom:
-                if (this.seriesStrategy === SeriesStrategy.entity) {
-                    sortByFunc = (item: DiscreteBarItem): number =>
-                        this.selectionArray.selectedEntityNames.indexOf(
-                            item.seriesName
-                        )
-                } else {
-                    sortByFunc = (): undefined => undefined
-                }
-                break
-            case SortBy.entityName:
-                sortByFunc = (item: DiscreteBarItem): string => item.seriesName
-                break
-            default:
-            case SortBy.total:
-            case SortBy.column: // we only have one yColumn, so total and column are the same
-                sortByFunc = (item: DiscreteBarItem): number => item.value
-                break
-        }
-        const sortedSeries = _.sortBy(raw, sortByFunc)
-        const sortOrder = this.sortConfig.sortOrder ?? SortOrder.desc
-        if (sortOrder === SortOrder.desc) return sortedSeries.toReversed()
-        else return sortedSeries
+        return sortByConfig(raw, this.sortConfig, {
+            [SortBy.custom]:
+                this.seriesStrategy === SeriesStrategy.entity
+                    ? (item): number =>
+                          this.selectionArray.selectedEntityNames.indexOf(
+                              item.seriesName
+                          )
+                    : (): undefined => undefined,
+            [SortBy.entityName]: (item): string => item.seriesName,
+            // We only have one yColumn, so total and column are the same
+            [SortBy.column]: (item): number => item.value,
+            [SortBy.total]: (item): number => item.value,
+        })
     }
 
     @computed private get valuesToColorsMap(): Map<number, string> {
@@ -276,8 +384,15 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
 
     @computed get series(): DiscreteBarSeries[] {
         const series = this.sortedRawSeries.map((rawSeries) => {
-            const { value, time, colorValue, seriesName, color, yColumn } =
-                rawSeries
+            const {
+                value,
+                time,
+                colorValue,
+                seriesName,
+                color,
+                yColumn,
+                isProjection,
+            } = rawSeries
             const series: DiscreteBarSeries = {
                 yColumn,
                 value,
@@ -286,12 +401,17 @@ export class DiscreteBarChartState implements ChartState, ColorScaleManager {
                 seriesName,
                 entityName: seriesName,
                 shortEntityName: getShortNameForEntity(seriesName),
+                annotation: getAnnotationsForSeries(
+                    this.annotationsMap,
+                    seriesName
+                ),
                 // the error color should never be used but I prefer it here instead of throwing an exception if something goes wrong
                 color:
                     color ??
                     this.valuesToColorsMap.get(value) ??
                     OWID_ERROR_COLOR,
                 focus: this.focusArray.state(seriesName),
+                isProjection,
             }
             return series
         })

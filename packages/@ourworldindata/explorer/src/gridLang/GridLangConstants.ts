@@ -1,4 +1,7 @@
-import { GrapherInterface } from "@ourworldindata/types"
+import {
+    GrapherInterface,
+    ORIGIN_URL_REGEX_PATTERNS,
+} from "@ourworldindata/types"
 
 export const CellHasErrorsClass = "CellHasErrorsClass"
 
@@ -9,7 +12,6 @@ export enum GridBoolean {
 
 export const GRID_NODE_DELIMITER = "\n"
 export const GRID_CELL_DELIMITER = "\t"
-export const GRID_EDGE_DELIMITER = "\t"
 
 export type CellCoordinate = number // An integer >= 0
 
@@ -39,7 +41,7 @@ export interface GrapherCellDef extends CellDef {
 }
 
 export interface ColumnCellDef extends CellDef {
-    display?: boolean
+    isDisplayProperty?: boolean
 }
 
 export interface ParsedCell {
@@ -135,6 +137,16 @@ export const IntegerCellDef: CellDef = {
     parse: (value: any) => parseInt(value),
 }
 
+export const PositiveIntegerCellDef: CellDef = {
+    keyword: "",
+    cssClass: "IntegerCellDef",
+    description: "",
+    regex: /^[0-9]+$/,
+    requirementsDescription: `Must be a positive integer`,
+    valuePlaceholder: "1",
+    parse: (value: any) => parseInt(value),
+}
+
 export const PositiveIntegersCellDef: CellDef = {
     keyword: "",
     cssClass: "IntegerCellDef",
@@ -164,6 +176,18 @@ export const UrlCellDef: CellDef = {
     cssClass: "UrlCellDef",
     description: "",
     regex: MatchUrlsOnlyRegex,
+}
+
+// Combines the patterns from ORIGIN_URL_REGEX_PATTERNS into a single regex for cell validation
+const AbsoluteOrRelativeUrlRegex = new RegExp(
+    ORIGIN_URL_REGEX_PATTERNS.map((regex) => regex.source).join("|")
+)
+
+export const AbsoluteOrRelativeUrlCellDef: CellDef = {
+    keyword: "",
+    cssClass: "UrlCellDef",
+    description: "",
+    regex: AbsoluteOrRelativeUrlRegex,
 }
 
 export const QueryStringCellDef: CellDef = {
@@ -225,6 +249,14 @@ export const IndicatorIdOrEtlPathCellDef: CellDef = {
     description: "A single indicator ID or a path to an ETL indicator.",
     regex: /^\d+|[\w\d_/-]+#[\w\d_/-]+$/,
     requirementsDescription: `Can only contain the characters a-zA-Z0-9-_/#`,
+}
+
+export const SlugOrIndicatorIdOrEtlPathCellDef: CellDef = {
+    keyword: "",
+    cssClass: "SlugOrIndicatorIdOrEtlPath",
+    description: "A column slug, indicator ID, or catalog path.",
+    regex: /^[a-zA-Z0-9-_]+$|^\d+$|^[\w\d_/-]+#[\w\d_/-]+$/,
+    requirementsDescription: `Can be a slug (a-zA-Z0-9-_), an indicator ID (digits), or a catalog path (a-zA-Z0-9-_/#)`,
 }
 
 export const IndicatorIdsOrEtlPathsCellDef: CellDef = {

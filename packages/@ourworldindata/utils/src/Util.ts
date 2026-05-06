@@ -1,11 +1,9 @@
 import * as _ from "lodash-es"
 import * as R from "remeda"
-import { extent, pairs } from "d3-array"
-export { pairs }
+import { extent } from "d3-array"
 import dayjs from "./dayjs.js"
 import { formatLocale, FormatLocaleObject } from "d3-format"
 import striptags from "striptags"
-import parseUrl from "url-parse"
 import {
     type Integer,
     IDEAL_PLOT_ASPECT_RATIO,
@@ -21,7 +19,6 @@ import {
     type EnrichedTopicPageIntroRelatedTopic,
     type EnrichedTopicPageIntroDownloadButton,
     type EnrichedHybridLink,
-    type EnrichedScrollerItem,
     type OwidGdocPostInterface,
     type OwidGdocDataInsightInterface,
     type OwidGdocAuthorInterface,
@@ -44,10 +41,18 @@ import {
     OwidGdocHomepageInterface,
     PrimitiveType,
     GrapherTrendArrowDirection,
+    TocHeadingWithTitleSupertitle,
+    ALL_CHARTS_ID,
+    FEATURED_DATA_INSIGHTS_ID,
+    EXPLORE_DATA_SECTION_DEFAULT_TITLE,
+    EXPLORE_DATA_SECTION_ID,
+    OwidGdocAnnouncementInterface,
+    CHRONOLOGICAL_INDEX_TYPES,
 } from "@ourworldindata/types"
-import { PointVector } from "./PointVector.js"
+import { Point, PointVector } from "./PointVector.js"
 import * as React from "react"
 import { match, P } from "ts-pattern"
+import urlSlug from "url-slug"
 
 export type NoUndefinedValues<T> = {
     [P in keyof T]: Required<NonNullable<T[P]>>
@@ -129,7 +134,11 @@ const getRootSVG = (
 
 export const getRelativeMouse = (
     node: Element | SVGGraphicsElement | SVGSVGElement,
-    event: React.TouchEvent | TouchEvent | { clientX: number; clientY: number }
+    event:
+        | React.TouchEvent
+        | TouchEvent
+        | PointerEvent
+        | { clientX: number; clientY: number }
 ): PointVector => {
     const eventOwner = checkIsTouchEvent(event) ? event.targetTouches[0] : event
 
@@ -185,9 +194,7 @@ function makeSafeForFigma(name: string): string {
  *
  * Note that these IDs are not meant to be used in CSS!
  */
-export function makeIdForHumanConsumption(
-    ...unsafeKeys: (string | undefined)[]
-): string {
+export function makeFigmaId(...unsafeKeys: (string | undefined)[]): string {
     return makeSafeForFigma(unsafeKeys.filter((key) => key).join("__"))
 }
 
@@ -328,9 +335,6 @@ export const cagr = (
     )
 }
 
-export const makeAnnotationsSlug = (columnSlug: string): string =>
-    `${columnSlug}-annotations`
-
 // Take an arbitrary string and turn it into a nice url slug
 export const slugify = (str: string, allowSlashes?: boolean): string => {
     // Convert subscript and superscript numbers to regular numbers
@@ -389,12 +393,12 @@ export const guid = (): number => (_guidsDisabledForTesting ? 1 : ++_guid)
 export const TESTING_ONLY_disable_guid = (): boolean =>
     (_guidsDisabledForTesting = true)
 
-// Take an array of points and make it into an SVG path specification string
-export const pointsToPath = (points: Array<[number, number]>): string => {
+/** Create an SVG path from an array of points */
+export const pointsToPath = (points: Point[]): string => {
     let path = ""
     for (let i = 0; i < points.length; i++) {
-        if (i === 0) path += `M${points[i][0]} ${points[i][1]}`
-        else path += `L${points[i][0]} ${points[i][1]}`
+        if (i === 0) path += `M${points[i].x} ${points[i].y}`
+        else path += `L${points[i].x} ${points[i].y}`
     }
     return path
 }
@@ -465,13 +469,6 @@ export const csvEscape = (value: unknown): string => {
         : valueStr
 }
 
-export const urlToSlug = (url: string): string =>
-    R.last(
-        parseUrl(url)
-            .pathname.split("/")
-            .filter((x) => x)
-    ) as string
-
 // Removes all undefineds from an object.
 export const trimObject = <Obj>(
     obj: Obj,
@@ -516,7 +513,8 @@ export async function fetchJson<TResult>(
 // Adapted from https://github.com/sindresorhus/ky/blob/main/source/utils/timeout.ts
 export async function fetchWithTimeout(
     url: string,
-    timeoutMs: number
+    timeoutMs: number,
+    options?: RequestInit
 ): Promise<Response> {
     const abortController = new AbortController()
 
@@ -526,7 +524,7 @@ export async function fetchWithTimeout(
             reject(new Error(`Request timed out: ${url}`))
         }, timeoutMs)
 
-        void fetch(url, { signal: abortController.signal })
+        void fetch(url, { ...options, signal: abortController.signal })
             .then(resolve)
             .catch(reject)
             .finally(() => clearTimeout(timeoutId))
@@ -536,7 +534,7 @@ export async function fetchWithTimeout(
 const _getUserCountryInformation = async (): Promise<
     UserCountryInformation | undefined
 > =>
-    await fetchWithRetry("https://detect-country.owid.io")
+    await fetchWithRetry("https://ourworldindata.org/api/detect-country")
         .then((res) => res.json())
         .then((res) => res.country)
         .catch(() => undefined)
@@ -609,32 +607,37 @@ export const getIdealGridParams = ({
 }
 
 export const findClosestTimeIndex = (
-    times: Time[],
+    timesAsc: Time[],
     targetTime: Time,
-    tolerance?: number
+    tolerance?: number // When not specified, the tolerance is infinite
 ): Time | undefined => {
-    let closest: Time | undefined
-    let closestIndex: number | undefined
-    for (let index = 0; index < times.length; index++) {
-        const time = times[index]
-        const currentTimeDist = Math.abs(time - targetTime)
-        if (currentTimeDist === 0) return index // Found the winner, stop searching.
-        if (tolerance !== undefined && currentTimeDist > tolerance) continue
+    const closestIndex = R.sortedIndex(timesAsc, targetTime)
 
-        const closestTimeDist =
-            closest !== undefined ? Math.abs(closest - targetTime) : Infinity
+    // This value is >= targetTime, or undefined in case there is no such value in the arr
+    const higherOrEqualVal = timesAsc.at(closestIndex)
+    if (higherOrEqualVal === targetTime) return closestIndex
 
-        if (
-            closest === undefined ||
-            closestTimeDist > currentTimeDist ||
-            // Prefer later times, e.g. if targetTime is 2010, prefer 2011 to 2009
-            (closestTimeDist === currentTimeDist && time > closest)
-        ) {
-            closest = time
-            closestIndex = index
-        }
+    // if tolerance is set to 0, and no exact match was found, return undefined
+    if (tolerance === 0) return undefined
+
+    // This value is < targetTime, or undefined in case there is no such value in the arr
+    const lowerVal = timesAsc[closestIndex - 1] as Time | undefined
+    const lowerDiff = lowerVal !== undefined ? targetTime - lowerVal : Infinity
+    const higherDiff =
+        higherOrEqualVal !== undefined
+            ? higherOrEqualVal - targetTime
+            : Infinity
+
+    if (lowerDiff === Infinity && higherDiff === Infinity) return undefined
+
+    // Prefer later times, e.g. if targetTime is 2010, prefer 2011 to 2009
+    if (higherDiff <= lowerDiff) {
+        if (tolerance !== undefined && higherDiff > tolerance) return undefined
+        return closestIndex
+    } else {
+        if (tolerance !== undefined && lowerDiff > tolerance) return undefined
+        return closestIndex - 1
     }
-    return closestIndex
 }
 
 export const isNegativeInfinity = (
@@ -646,14 +649,14 @@ export const isPositiveInfinity = (
 ): timeBound is TimeBoundValue => timeBound === TimeBoundValue.positiveInfinity
 
 export const findClosestTime = (
-    times: Time[],
+    timesAsc: Time[],
     targetTime: Time,
     tolerance?: number
 ): Time | undefined => {
-    if (isNegativeInfinity(targetTime)) return _.min(times)
-    if (isPositiveInfinity(targetTime)) return _.max(times)
-    const index = findClosestTimeIndex(times, targetTime, tolerance)
-    return index !== undefined ? times[index] : undefined
+    if (isNegativeInfinity(targetTime)) return timesAsc.at(0)
+    if (isPositiveInfinity(targetTime)) return timesAsc.at(-1)
+    const index = findClosestTimeIndex(timesAsc, targetTime, tolerance)
+    return index !== undefined ? timesAsc[index] : undefined
 }
 
 // _.mapValues() equivalent for ES6 Maps
@@ -662,7 +665,7 @@ export const es6mapValues = <K, V, M>(
     mapper: (value: V, key: K) => M
 ): Map<K, M> =>
     new Map(
-        Array.from(input, ([key, value]) => {
+        input.entries().map(([key, value]) => {
             return [key, mapper(value, key)]
         })
     )
@@ -677,9 +680,9 @@ const valuesAtTimes = (
     targetTimes: Time[],
     tolerance = 0
 ): { time: number | undefined; value: string | number | undefined }[] => {
-    const times = Array.from(valueByTime.keys())
+    const timesAsc = sortNumeric(Array.from(valueByTime.keys()))
     return targetTimes.map((targetTime) => {
-        const time = findClosestTime(times, targetTime, tolerance)
+        const time = findClosestTime(timesAsc, targetTime, tolerance)
         const value = time === undefined ? undefined : valueByTime.get(time)
         return {
             time,
@@ -791,7 +794,7 @@ export const anyToString = (value: unknown): string => {
 // Borrowed from: https://github.com/JedWatson/react-select/blob/32ad5c040b/packages/react-select/src/utils.js
 
 function isDocumentElement(el: HTMLElement): boolean {
-    return [document.documentElement, document.body].indexOf(el) > -1
+    return [document.documentElement, document.body].includes(el)
 }
 
 function scrollTo(el: HTMLElement, top: number): void {
@@ -853,43 +856,11 @@ export function keyMap<Key, Value>(
 
 export const intersectionOfSets = <T>(sets: Set<T>[]): Set<T> => {
     if (!sets.length) return new Set<T>()
-    const intersection = new Set<T>(sets[0])
-
-    sets.slice(1).forEach((set) => {
-        for (const elem of intersection) {
-            if (!set.has(elem)) {
-                intersection.delete(elem)
-            }
-        }
-    })
-    return intersection
-}
-
-export const differenceOfSets = <T>(sets: Set<T>[]): Set<T> => {
-    if (!sets.length) return new Set<T>()
-    const diff = new Set<T>(sets[0])
-
-    sets.slice(1).forEach((set) => {
-        for (const elem of set) {
-            diff.delete(elem)
-        }
-    })
-    return diff
+    return sets.reduce((a, b) => a.intersection(b))
 }
 
 export const areSetsEqual = <T>(setA: Set<T>, setB: Set<T>): boolean =>
-    setA.size === setB.size && [...setA].every((value) => setB.has(value))
-
-/** Tests whether the first argument is a strict subset of the second. The arguments do not have
-    to be sets yet, they can be any iterable. Sets will be created by the function internally */
-export function isSubsetOf<T>(
-    subsetIter: Iterable<T>,
-    supersetIter: Iterable<T>
-): boolean {
-    const subset = new Set(subsetIter)
-    const superset = new Set(supersetIter)
-    return intersectionOfSets([subset, superset]).size === subset.size
-}
+    setA.size === setB.size && setA.isSubsetOf(setB)
 
 // ES6 is now significantly faster than lodash's intersection
 export const intersection = <T>(...arrs: T[][]): T[] => {
@@ -942,21 +913,6 @@ export const sortNumeric = <T>(
             ? (a: T, b: T): number => sortByFn(a) - sortByFn(b)
             : (a: T, b: T): number => sortByFn(b) - sortByFn(a)
     )
-
-// Adapted from lodash baseFindIndex which is ~2x as fast as the wrapped findIndex
-export const findIndexFast = (
-    array: unknown[],
-    predicate: (value: unknown, index: number) => boolean,
-    fromIndex = 0,
-    toIndex = array.length
-): number => {
-    let index = fromIndex
-    while (index < toIndex) {
-        if (predicate(array[index], index)) return index
-        index++
-    }
-    return -1
-}
 
 export function getClosestTimePairs(
     sortedTimesA: Time[],
@@ -1202,28 +1158,6 @@ export function checkIsTouchEvent(
     return false
 }
 
-export const triggerDownloadFromBlob = (filename: string, blob: Blob): void => {
-    const objectUrl = URL.createObjectURL(blob)
-    triggerDownloadFromUrl(filename, objectUrl)
-    URL.revokeObjectURL(objectUrl)
-}
-
-export const triggerDownloadFromUrl = (filename: string, url: string): void => {
-    const downloadLink = document.createElement("a")
-    downloadLink.setAttribute("href", url)
-    downloadLink.setAttribute("download", filename)
-    downloadLink.click()
-}
-
-export async function downloadImage(
-    url: string,
-    filename: string
-): Promise<void> {
-    const response = await fetch(url)
-    const blob = await response.blob()
-    triggerDownloadFromBlob(filename, blob)
-}
-
 export const removeAllWhitespace = (text: string): string => {
     return text.replace(/\s+|\n/g, "")
 }
@@ -1243,13 +1177,13 @@ export const getIndexableKeys = Object.keys as <T extends object>(
     obj: T
 ) => Array<keyof T>
 
-/** Formats a date like this: "October 10, 2024"
+/** Formats a date like this: "October 6, 2024"
  */
 export const formatDate = (date: Date): string => {
     return date.toLocaleDateString("en-US", {
         year: "numeric",
         month: "long",
-        day: "2-digit",
+        day: "numeric",
     })
 }
 
@@ -1275,25 +1209,37 @@ export const getOwidGdocFromJSON = (json: OwidGdocJSON): OwidGdoc => {
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function extractGdocPageData(gdoc: OwidGdoc) {
     // Generic properties every gdoc has
-    const commonProps = R.pick(gdoc, [
+    const gdocProps = R.pick(gdoc, [
         "id",
         "slug",
         "content",
+        "contentMd5",
         "createdAt",
         "updatedAt",
         "published",
         "publishedAt",
         "breadcrumbs",
         "manualBreadcrumbs",
+        "tags",
+    ])
+
+    // Also generic properties. A separate function call because R.pick can only take so many arguments before TS complains
+    const attachmentProps = R.pick(gdoc, [
         "linkedAuthors",
         "linkedDocuments",
+        "linkedStaticViz",
         "linkedCharts",
         "linkedNarrativeCharts",
         "linkedIndicators",
+        "linkedCallouts",
         "imageMetadata",
         "relatedCharts",
-        "tags",
     ])
+
+    const commonProps = {
+        ...gdocProps,
+        ...attachmentProps,
+    }
 
     return match(gdoc)
         .when(checkIsAboutPage, (aboutGdoc) => {
@@ -1500,7 +1446,7 @@ export function bind<This, Args extends any[], Return>(
     context.addInitializer(function (this: This) {
         const boundMethod = target.bind(this)
         // Store the bound method on the instance
-        Object.defineProperty(this, name as string | symbol, {
+        Object.defineProperty(this, name, {
             value: boundMethod,
             writable: false,
             enumerable: false,
@@ -1520,7 +1466,6 @@ export type NodeWithUrl =
     | EnrichedHybridLink
     | EnrichedTopicPageIntroRelatedTopic
     | EnrichedTopicPageIntroDownloadButton
-    | EnrichedScrollerItem
     | EnrichedBlockKeyInsightsSlide
 
 export function recursivelyMapArticleContent(
@@ -1535,6 +1480,10 @@ export function recursivelyMapArticleContent(
         }
     } else if (node.type === "gray-section") {
         node.items.map((block) => recursivelyMapArticleContent(block, callback))
+    } else if (node.type === "conditional-section") {
+        node.content.map((block) =>
+            recursivelyMapArticleContent(block, callback)
+        )
     } else if (
         node.type === "sticky-left" ||
         node.type === "sticky-right" ||
@@ -1559,8 +1508,6 @@ export function recursivelyMapArticleContent(
         if (downloadButton) callback(downloadButton)
         if (relatedTopics) relatedTopics.forEach(callback)
         content.forEach(callback)
-    } else if (node.type === "scroller") {
-        node.blocks.forEach(callback)
     } else if (node.type === "key-insights") {
         node.insights.forEach((insight) => {
             callback(insight)
@@ -1593,7 +1540,7 @@ export function traverseEnrichedSpan(
 
 // If your node is a OwidEnrichedGdocBlock, the callback will apply to it
 // If your node has children that are Spans, the spanCallback will apply to them
-// If your node has children that aren't OwidEnrichedGdocBlocks or Spans, e.g. EnrichedBlockScroller & EnrichedScrollerItem
+// If your node has children that aren't OwidEnrichedGdocBlocks or Spans
 // you'll have to handle those children yourself in your callback
 export function traverseEnrichedBlock(
     node: OwidEnrichedGdocBlock,
@@ -1616,6 +1563,18 @@ export function traverseEnrichedBlock(
         .with({ type: "gray-section" }, (graySection) => {
             callback(graySection)
             graySection.items.forEach((node) =>
+                traverseEnrichedBlock(node, callback, spanCallback)
+            )
+        })
+        .with({ type: "explore-data-section" }, (exploreDataSection) => {
+            callback(exploreDataSection)
+            exploreDataSection.content.forEach((node) =>
+                traverseEnrichedBlock(node, callback, spanCallback)
+            )
+        })
+        .with({ type: "conditional-section" }, (conditional) => {
+            callback(conditional)
+            conditional.content.forEach((node) =>
                 traverseEnrichedBlock(node, callback, spanCallback)
             )
         })
@@ -1768,6 +1727,32 @@ export function traverseEnrichedBlock(
                 traverseEnrichedBlock(node, callback, spanCallback)
             }
         })
+        .with({ type: "data-callout" }, (dataCallout) => {
+            callback(dataCallout)
+            for (const node of dataCallout.content) {
+                traverseEnrichedBlock(node, callback, spanCallback)
+            }
+        })
+        .with({ type: "data-callout-group" }, (dataCalloutGroup) => {
+            callback(dataCalloutGroup)
+            for (const node of dataCalloutGroup.content) {
+                traverseEnrichedBlock(node, callback, spanCallback)
+            }
+        })
+        .with({ type: "chart-rows" }, (block) => {
+            callback(block)
+            for (const row of block.rows) {
+                for (const node of row.content) {
+                    traverseEnrichedBlock(node, callback, spanCallback)
+                }
+            }
+        })
+        .with({ type: "pull-chart" }, (block) => {
+            callback(block)
+            for (const node of block.content) {
+                traverseEnrichedBlock(node, callback, spanCallback)
+            }
+        })
         .with(
             {
                 type: P.union(
@@ -1780,7 +1765,6 @@ export function traverseEnrichedBlock(
                     "donors",
                     "horizontal-rule",
                     "html",
-                    "script",
                     "image",
                     "video",
                     "missing-data",
@@ -1790,9 +1774,9 @@ export function traverseEnrichedBlock(
                     "subscribe-banner",
                     "resource-panel",
                     "research-and-writing",
-                    "scroller",
                     "sdg-grid",
                     "sdg-toc",
+                    "ltp-toc",
                     "topic-page-intro",
                     "all-charts",
                     "entry-summary",
@@ -1800,8 +1784,13 @@ export function traverseEnrichedBlock(
                     "pill-row",
                     "homepage-search",
                     "homepage-intro",
+                    "featured-metrics",
+                    "featured-data-insights",
                     "latest-data-insights",
-                    "socials"
+                    "socials",
+                    "static-viz",
+                    "country-profile-selector",
+                    "bespoke-component"
                 ),
             },
             callback
@@ -1822,6 +1811,7 @@ export function spansToUnformattedPlainText(spans: Span[]): string {
                     {
                         spanType: P.union(
                             "span-link",
+                            "span-callout",
                             "span-italic",
                             "span-bold",
                             "span-fallback",
@@ -1840,6 +1830,77 @@ export function spansToUnformattedPlainText(spans: Span[]): string {
                 .exhaustive()
         )
         .join("")
+}
+
+export function generateToc(
+    body: OwidEnrichedGdocBlock[] | undefined,
+    isTocForLinearTopicPage: boolean = false
+): TocHeadingWithTitleSupertitle[] {
+    if (!body) return []
+
+    // For linear topic pages, we record only h1s
+    // For the sdg-toc, we record h2s & h3s (as it was developed before we decided to use h1s as our top level heading)
+    // It would be nice to standardise this but it would require a migration, updating CSS, updating Gdocs, etc.
+    const [primary, secondary] = isTocForLinearTopicPage
+        ? [1, undefined]
+        : [2, 3]
+    const toc: TocHeadingWithTitleSupertitle[] = []
+
+    body.forEach((block) =>
+        traverseEnrichedBlock(block, (child) => {
+            if (child.type === "heading") {
+                const { level, text, supertitle } = child
+                const titleString = spansToUnformattedPlainText(text)
+                const supertitleString = supertitle
+                    ? spansToUnformattedPlainText(supertitle)
+                    : ""
+                if (titleString && (level === primary || level === secondary)) {
+                    toc.push({
+                        title: titleString,
+                        supertitle: supertitleString,
+                        text: titleString,
+                        slug: urlSlug(`${supertitleString} ${titleString}`),
+                        isSubheading: level === secondary,
+                    })
+                }
+            }
+            if (!isTocForLinearTopicPage) return
+
+            if (child.type === "all-charts") {
+                toc.push({
+                    title: child.heading,
+                    text: child.heading,
+                    slug: ALL_CHARTS_ID,
+                    isSubheading: false,
+                })
+                return
+            }
+
+            if (child.type === "featured-data-insights") {
+                const title = "Data insights"
+                toc.push({
+                    title,
+                    text: title,
+                    slug: FEATURED_DATA_INSIGHTS_ID,
+                    isSubheading: false,
+                })
+                return
+            }
+
+            if (child.type === "explore-data-section") {
+                const title = child.title || EXPLORE_DATA_SECTION_DEFAULT_TITLE
+                toc.push({
+                    title,
+                    text: title,
+                    slug: EXPLORE_DATA_SECTION_ID,
+                    isSubheading: false,
+                })
+                return
+            }
+        })
+    )
+
+    return toc
 }
 
 export function checkIsOwidGdocType(
@@ -1880,6 +1941,17 @@ export function lowercaseObjectKeys(
 export const detailOnDemandRegex = /#dod:([\w\-_]+)/
 
 export const guidedChartRegex = /#guide:(https?:\/\/[^\s]+)/
+
+/**
+ * Matches plaintext callout token syntax:
+ * $latestTime(shortName)
+ * $latestValue(shortName)
+ *
+ * Group 1: function name (e.g., "latestTime", "latestValue")
+ * Group 2: parameters (e.g., "shortName")
+ */
+export const plaintextCalloutRegex =
+    /\$(latestValueWithUnit|latestValue|latestTime)\(([^)]*)\)/g
 
 export function extractDetailsFromSyntax(str: string): string[] {
     return [...str.matchAll(new RegExp(detailOnDemandRegex, "g"))].map(
@@ -1940,6 +2012,19 @@ export function checkIsHomepage(
     gdoc: OwidGdoc
 ): gdoc is OwidGdocHomepageInterface {
     return gdoc.content.type === OwidGdocType.Homepage
+}
+
+/**
+ * Posts that should show up in the chronological algolia index
+ * for dynamic RSS feeds & /latest page
+ */
+export function checkIsChronologicalFeedPost(gdoc: {
+    content: { type?: OwidGdocType }
+}): gdoc is
+    | OwidGdocPostInterface
+    | OwidGdocDataInsightInterface
+    | OwidGdocAnnouncementInterface {
+    return CHRONOLOGICAL_INDEX_TYPES.has(gdoc.content.type as string)
 }
 
 /**
@@ -2007,6 +2092,7 @@ export function createTagGraph(
         name: TagGraphRootName,
         slug: null,
         isTopic: false,
+        isSearchable: false,
         path: [rootId],
         weight: 0,
         children: [],
@@ -2023,6 +2109,7 @@ export function createTagGraph(
                 name: child.name,
                 slug: child.slug,
                 isTopic: child.isTopic,
+                isSearchable: child.isSearchable,
                 weight: child.weight,
                 children: [],
             }
@@ -2045,20 +2132,21 @@ export const getAllChildrenOfArea = (area: TagGraphNode): TagGraphNode[] => {
 }
 
 /**
- * topicTagGraph.json includes sub-areas: non-topic tags that have topic children
+ * topicTagGraph.json includes sub-areas: non-searchable tags that have searchable children
  * e.g. "Health" is an area, "Life & Death" is a sub-area, and "Life Expectancy" is a topic,
  * This function flattens the graph by removing sub-areas and moving their children up to the area level
  * e.g. "Life Expectancy" becomes a child of "Health" instead of "Life & Death"
  * We need this because the all-topics section on the homepage renders sub-areas, but the site nav doesn't
  * Note that topics can have children (e.g. "Air Pollution" is a topic, and "Indoor Air Pollution" is a sub-topic)
  * Such cases are not flattened here, but in the frontend with getAllChildrenOfArea
+ * Searchable tags include both topics (tags with a topic page) and tags with searchableInAlgolia set
  */
 export function flattenNonTopicNodes(tagGraph: TagGraphRoot): TagGraphRoot {
     const flattenNodes = (nodes: TagGraphNode[]): TagGraphNode[] =>
         nodes.flatMap((node) =>
-            !node.isTopic && node.children.length
+            !node.isSearchable && node.children.length
                 ? flattenNodes(node.children)
-                : node.isTopic
+                : node.isSearchable
                   ? [{ ...node, children: flattenNodes(node.children) }]
                   : []
         )
@@ -2240,6 +2328,20 @@ export function calculateTrendDirection(
           : "right"
 }
 
+/**
+ * Removes a single pair of outer parentheses from a string, if present.
+ *
+ * For example:
+ *   "(example)" => "example"
+ *   "no parentheses" => "no parentheses"
+ *   "(example (with inner))" => "example (with inner)"
+ *
+ * Leading and trailing whitespace is trimmed before checking for parentheses.
+ */
+export function stripOuterParentheses(input: string): string {
+    return input.trim().replace(/^\((.*)\)$/, "$1")
+}
+
 export function getDisplayUnit(
     column: { unit?: string; shortUnit?: string },
     { allowTrivial = false }: { allowTrivial?: boolean } = {}
@@ -2251,7 +2353,17 @@ export function getDisplayUnit(
     const unit = allowTrivial || !isTrivial ? column.unit : undefined
 
     // Remove parentheses from the beginning and end of the unit
-    const strippedUnit = unit?.replace(/(^\(|\)$)/g, "")
+    const strippedUnit = unit ? stripOuterParentheses(unit) : undefined
 
     return strippedUnit
+}
+
+export function dimensionsToViewId(
+    dimensions: Record<string, string> // Keys: dimension slugs, values: choice slugs
+): string {
+    return Object.entries(dimensions)
+        .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+        .map(([key, value]) => `${slugify(key)}=${slugify(value)}`)
+        .join("__")
+        .toLowerCase()
 }

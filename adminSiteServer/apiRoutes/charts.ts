@@ -1,3 +1,4 @@
+import * as R from "remeda"
 import { migrateGrapherConfigToLatestVersionAndFailOnError } from "@ourworldindata/grapher"
 import {
     GrapherInterface,
@@ -11,6 +12,10 @@ import {
     DbRawChartConfig,
     ChartConfigsTableName,
     DbChartTagJoin,
+    ContentGraphLinkType,
+    StaticVizTableName,
+    DbPlainAnalyticsGrapherView,
+    AnalyticsGrapherViewWithRank,
 } from "@ourworldindata/types"
 import {
     diffGrapherConfigs,
@@ -18,13 +23,15 @@ import {
     parseIntOrUndefined,
     omitUndefinedValues,
 } from "@ourworldindata/utils"
-import Papa from "papaparse"
 import { uuidv7 } from "uuidv7"
-import { References } from "../../adminSiteClient/AbstractChartEditor.js"
+import {
+    References,
+    StaticVizReference,
+} from "../../adminSiteClient/AbstractChartEditor.js"
 import { NarrativeChartMinimalInformation } from "../../adminSiteClient/ChartEditor.js"
-import { denormalizeLatestCountryData } from "../../baker/countryProfiles.js"
 import {
     getChartConfigById,
+    getForceDatapageByChartId,
     getPatchConfigByChartId,
     getParentByChartConfig,
     isInheritanceEnabledForChart,
@@ -44,10 +51,6 @@ import { UpdatedChartInheritanceRecord } from "../../db/model/Variable.js"
 import { enqueueExplorerRefreshJobsForDependencies } from "../../db/model/Explorer.js"
 import { expectInt } from "../../serverUtils/serverUtil.js"
 import {
-    BAKED_BASE_URL,
-    ADMIN_BASE_URL,
-} from "../../settings/clientSettings.js"
-import {
     retrieveChartConfigFromDbAndSaveToR2,
     updateChartConfigInDbAndR2,
 } from "../chartConfigHelpers.js"
@@ -59,12 +62,15 @@ import {
 import { triggerStaticBuild } from "../../baker/GrapherBakingUtils.js"
 import * as db from "../../db/db.js"
 import { getLogsByChartId } from "../getLogsByChartId.js"
-import { getPublishedLinksTo } from "../../db/model/Link.js"
+import { getChartsRecords } from "../../baker/algolia/utils/charts.js"
 
 import { Request } from "../authentication.js"
-import e from "express"
+import { HandlerResponse } from "../FunctionalRouter.js"
 import { DataInsightMinimalInformation } from "../../adminShared/AdminTypes.js"
-import { validateNewGrapherSlug } from "../validation.js"
+import {
+    validateNewGrapherSlug,
+    validateDraftGrapherSlug,
+} from "../validation.js"
 
 export const getReferencesByChartId = async (
     chartId: number,
@@ -94,6 +100,40 @@ export const getReferencesByChartId = async (
         WHERE nc.parentChartId = ?`,
         [chartId]
     )
+    const chartSlugsPromise = db.knexRaw<{ targetSlug: string }>(
+        knex,
+        `-- sql
+        SELECT cc.slug AS targetSlug
+        FROM charts c
+        JOIN chart_configs cc ON c.configId = cc.id
+        WHERE c.id = ?
+
+        UNION ALL
+
+        SELECT cr.slug AS targetSlug
+        FROM chart_slug_redirects cr
+        WHERE cr.chart_id = ?`,
+        [chartId, chartId]
+    )
+    const staticVizPromise = chartSlugsPromise.then((slugRows) => {
+        const uniqueSlugs = Array.from(
+            new Set(slugRows.map((row) => row.targetSlug).filter(Boolean))
+        )
+        if (!uniqueSlugs.length) return [] as StaticVizReference[]
+        const placeholders = uniqueSlugs.map(() => "?").join(", ")
+        return db.knexRaw<StaticVizReference>(
+            knex,
+            `-- sql
+            SELECT
+                sv.id,
+                sv.name,
+                sv.grapherSlug,
+                '${ContentGraphLinkType.StaticViz}' AS type
+            FROM ${StaticVizTableName} sv
+            WHERE sv.grapherSlug IN (${placeholders})`,
+            uniqueSlugs
+        )
+    })
     const dataInsightsPromise = db.knexRaw<DataInsightMinimalInformation>(
         knex,
         `-- sql
@@ -101,18 +141,20 @@ export const getReferencesByChartId = async (
             SELECT cc.slug as main_slug, c.id as chart_id
             FROM charts c
             JOIN chart_configs cc ON c.configId = cc.id
-            WHERE c.id = ?
+            WHERE c.id = ? AND cc.slug != '' AND cc.slug IS NOT NULL
 
             UNION ALL
 
             SELECT cr.slug as main_slug, c.id as chart_id
             FROM charts c
             JOIN chart_slug_redirects cr ON cr.chart_id = c.id
-            WHERE c.id = ?
+            WHERE c.id = ? AND cr.slug != '' AND cr.slug IS NOT NULL
         ),
         gdoc_grapher_slugs AS (
             SELECT
                 pg.id,
+                pg.slug,
+                pg.type,
                 pg.content ->> '$.title' AS title,
                 pg.published,
                 pg.content ->> '$."narrative-chart"' AS narrativeChart,
@@ -125,6 +167,8 @@ export const getReferencesByChartId = async (
         )
         SELECT
             ggs.id AS gdocId,
+            ggs.slug,
+            ggs.type,
             ggs.title,
             ggs.published,
             ggs.narrativeChart,
@@ -146,12 +190,14 @@ export const getReferencesByChartId = async (
         explorerSlugs,
         narrativeCharts,
         dataInsights,
+        staticVizReferences,
     ] = await Promise.all([
         postsWordpressPromise,
         postGdocsPromise,
         explorerSlugsPromise,
         narrativeChartsPromise,
         dataInsightsPromise,
+        staticVizPromise,
     ])
 
     return {
@@ -162,6 +208,7 @@ export const getReferencesByChartId = async (
         ),
         narrativeCharts,
         dataInsights,
+        staticViz: staticVizReferences,
     }
 }
 
@@ -191,9 +238,15 @@ const saveNewChart = async (
     {
         config,
         user,
+        forceDatapage = false,
         // new charts inherit by default
         shouldInherit = true,
-    }: { config: GrapherInterface; user: DbPlainUser; shouldInherit?: boolean }
+    }: {
+        config: GrapherInterface
+        user: DbPlainUser
+        forceDatapage?: boolean
+        shouldInherit?: boolean
+    }
 ): Promise<{
     chartConfigId: Base64String
     patchConfig: GrapherInterface
@@ -229,10 +282,10 @@ const saveNewChart = async (
     const result = await db.knexRawInsert(
         knex,
         `-- sql
-            INSERT INTO charts (configId, isInheritanceEnabled, lastEditedAt, lastEditedByUserId)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO charts (configId, isInheritanceEnabled, forceDatapage, lastEditedAt, lastEditedByUserId)
+            VALUES (?, ?, ?, ?, ?)
         `,
-        [chartConfigId, shouldInherit, new Date(), user.id]
+        [chartConfigId, shouldInherit, forceDatapage, new Date(), user.id]
     )
 
     // The chart config itself has an id field that should store the id of the chart - update the chart now so this is true
@@ -263,6 +316,7 @@ const updateExistingChart = async (
         config: GrapherInterface
         user: DbPlainUser
         chartId: number
+        forceDatapage?: boolean
         // if undefined, keep inheritance as is.
         // if true or false, enable or disable inheritance
         shouldInherit?: boolean
@@ -305,15 +359,18 @@ const updateExistingChart = async (
         fullConfig
     )
 
+    const forceDatapage =
+        params.forceDatapage ?? (await getForceDatapageByChartId(knex, chartId))
+
     // update charts row
     await db.knexRaw(
         knex,
         `-- sql
             UPDATE charts
-            SET isInheritanceEnabled=?, updatedAt=?, lastEditedAt=?, lastEditedByUserId=?
+            SET isInheritanceEnabled=?, forceDatapage=?, updatedAt=?, lastEditedAt=?, lastEditedByUserId=?
             WHERE id = ?
         `,
-        [shouldInherit, now, now, user.id, chartId]
+        [shouldInherit, forceDatapage, now, now, user.id, chartId]
     )
 
     return { chartConfigId, patchConfig, fullConfig }
@@ -325,24 +382,24 @@ export const saveGrapher = async (
         user,
         newConfig,
         existingConfig,
+        forceDatapage,
         shouldInherit,
-        referencedVariablesMightChange = true,
     }: {
         user: DbPlainUser
         newConfig: GrapherInterface
         existingConfig?: GrapherInterface
+        forceDatapage?: boolean
         // if undefined, keep inheritance as is.
         // if true or false, enable or disable inheritance
         shouldInherit?: boolean
-        // if the variables a chart uses can change then we need
-        // to update the latest country data which takes quite a long time (hundreds of ms)
-        referencedVariablesMightChange?: boolean
     }
 ) => {
     // Try to migrate the new config to the latest version
     newConfig = migrateGrapherConfigToLatestVersionAndFailOnError(newConfig)
 
-    // When a chart is published, check for conflicts
+    // Validate slug if:
+    // 1. Publishing - slug is required
+    // 2. Draft with non-empty slug - prevent duplicates (empty slugs are allowed for drafts)
     if (newConfig.isPublished) {
         await validateNewGrapherSlug(knex, newConfig.slug, existingConfig?.id)
         if (
@@ -367,6 +424,10 @@ export const saveGrapher = async (
                 `${existingConfig.slug}.json`
             )
         }
+    } else if (newConfig.slug && newConfig.slug.length > 0) {
+        // Only validate non-empty slugs for drafts (empty slugs are allowed for drafts)
+        // Use draft-specific validation that skips redirect checks
+        await validateDraftGrapherSlug(knex, newConfig.slug, existingConfig?.id)
     }
 
     if (existingConfig)
@@ -394,6 +455,7 @@ export const saveGrapher = async (
             config: newConfig,
             user,
             chartId,
+            forceDatapage,
             shouldInherit,
         })
         chartConfigId = configs.chartConfigId
@@ -403,6 +465,7 @@ export const saveGrapher = async (
         const configs = await saveNewChart(knex, {
             config: newConfig,
             user,
+            forceDatapage,
             shouldInherit,
         })
         chartConfigId = configs.chartConfigId
@@ -413,7 +476,7 @@ export const saveGrapher = async (
 
     // Record this change in version history
     const chartRevisionLog = {
-        chartId: chartId as number,
+        chartId: chartId,
         userId: user.id,
         config: serializeChartConfig(patchConfig),
         createdAt: new Date(),
@@ -445,14 +508,6 @@ export const saveGrapher = async (
             [chartId, dim.variableId, dim.property, i]
         )
     }
-
-    // So we can generate country profiles including this chart data
-    if (fullConfig.isPublished && referencedVariablesMightChange)
-        // TODO: remove this ad hoc knex transaction context when we switch the function to knex
-        await denormalizeLatestCountryData(
-            knex,
-            newDimensions.map((d) => d.variableId)
-        )
 
     if (fullConfig.isPublished) {
         await retrieveChartConfigFromDbAndSaveToR2(knex, chartConfigId, {
@@ -520,21 +575,18 @@ export async function updateGrapherConfigsInR2(
 
 export async function getChartsJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const limit = parseIntOrUndefined(req.query.limit as string) ?? 10000
     const charts = await db.knexRaw<OldChartFieldList>(
         trx,
         `-- sql
-            SELECT ${oldChartFieldList},
-                round(views_365d / 365, 1) as pageviewsPerDay,
-                crv.narrativeChartsCount,
-                crv.referencesCount
+            SELECT ${oldChartFieldList}
             FROM charts
             JOIN chart_configs ON chart_configs.id = charts.configId
             JOIN users lastEditedByUser ON lastEditedByUser.id = charts.lastEditedByUserId
-            LEFT JOIN analytics_pageviews on (analytics_pageviews.url = CONCAT("https://ourworldindata.org/grapher/", chart_configs.slug) AND chart_configs.full ->> '$.isPublished' = "true" )
+            LEFT JOIN analytics_grapher_views agv ON (agv.grapher_slug = chart_configs.slug AND chart_configs.full ->> '$.isPublished' = "true")
             LEFT JOIN users publishedByUser ON publishedByUser.id = charts.publishedByUserId
             LEFT JOIN chart_references_view crv ON crv.chartId = charts.id
             ORDER BY charts.lastEditedAt DESC LIMIT ?
@@ -547,69 +599,9 @@ export async function getChartsJson(
     return { charts }
 }
 
-export async function getChartsCsv(
-    req: Request,
-    res: e.Response<any, Record<string, any>>,
-    trx: db.KnexReadonlyTransaction
-) {
-    const limit = parseIntOrUndefined(req.query.limit as string) ?? 10000
-
-    // note: this query is extended from OldChart.listFields.
-    const charts = await db.knexRaw(
-        trx,
-        `-- sql
-            SELECT
-                charts.id,
-                chart_configs.full->>"$.version" AS version,
-                CONCAT("${BAKED_BASE_URL}/grapher/", chart_configs.full->>"$.slug") AS url,
-                CONCAT("${ADMIN_BASE_URL}", "/admin/charts/", charts.id, "/edit") AS editUrl,
-                chart_configs.full->>"$.slug" AS slug,
-                chart_configs.full->>"$.title" AS title,
-                chart_configs.full->>"$.subtitle" AS subtitle,
-                chart_configs.full->>"$.sourceDesc" AS sourceDesc,
-                chart_configs.full->>"$.note" AS note,
-                chart_configs.chartType AS type,
-                chart_configs.full->>"$.internalNotes" AS internalNotes,
-                chart_configs.full->>"$.variantName" AS variantName,
-                chart_configs.full->>"$.isPublished" AS isPublished,
-                chart_configs.full->>"$.tab" AS tab,
-                chart_configs.chartType IS NOT NULL AS hasChartTab,
-                JSON_EXTRACT(chart_configs.full, "$.hasMapTab") = true AS hasMapTab,
-                chart_configs.full->>"$.originUrl" AS originUrl,
-                charts.lastEditedAt,
-                charts.lastEditedByUserId,
-                lastEditedByUser.fullName AS lastEditedBy,
-                charts.publishedAt,
-                charts.publishedByUserId,
-                publishedByUser.fullName AS publishedBy
-            FROM charts
-            JOIN chart_configs ON chart_configs.id = charts.configId
-            JOIN users lastEditedByUser ON lastEditedByUser.id = charts.lastEditedByUserId
-            LEFT JOIN users publishedByUser ON publishedByUser.id = charts.publishedByUserId
-            ORDER BY charts.lastEditedAt DESC
-            LIMIT ?
-        `,
-        [limit]
-    )
-    // note: retrieving references is VERY slow.
-    // await Promise.all(
-    //     charts.map(async (chart: any) => {
-    //         const references = await getReferencesByChartId(chart.id)
-    //         chart.references = references.length
-    //             ? references.map((ref) => ref.url)
-    //             : ""
-    //     })
-    // )
-    // await Chart.assignTagsForCharts(charts)
-    res.setHeader("Content-disposition", "attachment; filename=charts.csv")
-    res.setHeader("content-type", "text/csv")
-    const csv = Papa.unparse(charts)
-    return csv
-}
-
 export async function getChartConfigJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     return expectChartById(trx, req.params.chartId)
@@ -617,7 +609,7 @@ export async function getChartConfigJson(
 
 export async function getChartParentJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const chartId = expectInt(req.params.chartId)
@@ -633,9 +625,19 @@ export async function getChartParentJson(
     })
 }
 
+export async function getChartSettingsJson(
+    req: Request,
+    res: HandlerResponse,
+    trx: db.KnexReadonlyTransaction
+) {
+    const chartId = expectInt(req.params.chartId)
+    const forceDatapage = await getForceDatapageByChartId(trx, chartId)
+    return { forceDatapage }
+}
+
 export async function getChartPatchConfigJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const chartId = expectInt(req.params.chartId)
@@ -645,25 +647,22 @@ export async function getChartPatchConfigJson(
 
 export async function getChartLogsJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     return {
-        logs: await getLogsByChartId(
-            trx,
-            parseInt(req.params.chartId as string)
-        ),
+        logs: await getLogsByChartId(trx, parseInt(req.params.chartId)),
     }
 }
 
 export async function getChartReferencesJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const references = {
         references: await getReferencesByChartId(
-            parseInt(req.params.chartId as string),
+            parseInt(req.params.chartId),
             trx
         ),
     }
@@ -672,47 +671,71 @@ export async function getChartReferencesJson(
 
 export async function getChartRedirectsJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     return {
         redirects: await getRedirectsByChartId(
             trx,
-            parseInt(req.params.chartId as string)
+            parseInt(req.params.chartId)
         ),
     }
 }
 
-export async function getChartPageviewsJson(
+export async function getChartViewsJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
-    const slug = await getChartSlugById(
-        trx,
-        parseInt(req.params.chartId as string)
-    )
+    const slug = await getChartSlugById(trx, parseInt(req.params.chartId))
     if (!slug) return {}
 
-    const pageviewsByUrl = await db.knexRawFirst(
+    const viewsBySlug = await db.knexRawFirst<
+        DbPlainAnalyticsGrapherView & {
+            total_charts: number | null
+            rank_7d: number | null
+            rank_14d: number | null
+            rank_365d: number | null
+        }
+    >(
         trx,
         `-- sql
-        SELECT *
-        FROM
-            analytics_pageviews
-        WHERE
-            url = ?`,
-        [`https://ourworldindata.org/grapher/${slug}`]
+        SELECT
+            v.*,
+            ranked.total_charts,
+            ranked.rank_7d,
+            ranked.rank_14d,
+            ranked.rank_365d
+        FROM analytics_grapher_views v
+        LEFT JOIN (
+            SELECT
+                v.grapher_slug,
+                COUNT(*) OVER () AS total_charts,
+                RANK() OVER (ORDER BY v.views_7d DESC) AS rank_7d,
+                RANK() OVER (ORDER BY v.views_14d DESC) AS rank_14d,
+                RANK() OVER (ORDER BY v.views_365d DESC) AS rank_365d
+            FROM analytics_grapher_views v
+            JOIN chart_configs cc
+                ON cc.slug = v.grapher_slug
+                AND cc.full ->> "$.isPublished" = "true"
+            JOIN charts c ON c.configId = cc.id
+        ) ranked ON ranked.grapher_slug = v.grapher_slug
+        WHERE v.grapher_slug = ?`,
+        [slug]
     )
 
-    return {
-        pageviews: pageviewsByUrl ?? undefined,
-    }
+    if (!viewsBySlug) return {}
+
+    const views: AnalyticsGrapherViewWithRank = R.omitBy(
+        viewsBySlug,
+        (value): value is null => value === null
+    )
+    return { views }
 }
 
 export async function getChartTagsJson(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const chartId = expectInt(req.params.chartId)
@@ -732,18 +755,23 @@ export async function getChartTagsJson(
 
 export async function createChart(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     let shouldInherit: boolean | undefined
     if (req.query.inheritance) {
         shouldInherit = req.query.inheritance === "enable"
     }
+    let forceDatapage: boolean | undefined
+    if (req.query.forceDatapage) {
+        forceDatapage = req.query.forceDatapage === "true"
+    }
 
     try {
         const { chartId } = await saveGrapher(trx, {
             user: res.locals.user,
             newConfig: req.body,
+            forceDatapage,
             shouldInherit,
         })
 
@@ -755,7 +783,7 @@ export async function createChart(
 
 export async function setChartTagsHandler(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const chartId = expectInt(req.params.chartId)
@@ -767,12 +795,16 @@ export async function setChartTagsHandler(
 
 export async function updateChart(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     let shouldInherit: boolean | undefined
     if (req.query.inheritance) {
         shouldInherit = req.query.inheritance === "enable"
+    }
+    let forceDatapage: boolean | undefined
+    if (req.query.forceDatapage) {
+        forceDatapage = req.query.forceDatapage === "true"
     }
 
     const existingConfig = await expectChartById(trx, req.params.chartId)
@@ -782,6 +814,7 @@ export async function updateChart(
             user: res.locals.user,
             newConfig: req.body,
             existingConfig,
+            forceDatapage,
             shouldInherit,
         })
 
@@ -802,16 +835,18 @@ export async function updateChart(
 
 export async function deleteChart(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const chart = await expectChartById(trx, req.params.chartId)
-    if (chart.slug) {
-        const links = await getPublishedLinksTo(trx, [chart.slug])
-        if (links.length) {
-            const sources = links.map((link) => link.slug).join(", ")
-            throw new Error(
-                `Cannot delete chart in-use in the following published documents: ${sources}`
+    if (chart.id) {
+        const references = await getReferencesByChartId(chart.id, trx).then(
+            (references) => Object.values(references).flat()
+        )
+        if (references.length) {
+            throw new JsonError(
+                `Cannot delete chart in-use in the following places:` +
+                    references.join(", ")
             )
         }
     }
@@ -851,4 +886,18 @@ export async function deleteChart(
         )
 
     return { success: true }
+}
+
+/**
+ * Generate a preview of Algolia index records for a chart.
+ * Returns the records that would be created when indexing this chart.
+ */
+export async function getChartRecordsJson(
+    req: Request,
+    _res: HandlerResponse,
+    trx: db.KnexReadonlyTransaction
+) {
+    const chartId = expectInt(req.params.chartId)
+    const records = await getChartsRecords(trx, { chartIds: [chartId] })
+    return { records }
 }

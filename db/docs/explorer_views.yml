@@ -10,6 +10,10 @@ fields:
         description: Unique identifier for the explorer view
     explorerSlug:
         description: The slug of the explorer this view belongs to. References explorers.slug
+    viewId:
+        description: |
+            Canonical identifier for this specific view within the explorer,
+            derived from the full dimensions object using sorted key=value pairs.
     dimensions:
         description: |
             JSON object containing the specific parameter choices for this view (e.g., {"energySource": "solar", "metric": "absolute energy"}).

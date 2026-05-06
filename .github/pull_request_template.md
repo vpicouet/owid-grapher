@@ -10,6 +10,7 @@ Add if relevant, i.e. might not be necessary when there are no UI changes.
 
 Step-by-step instructions on how to test this change
 
+- [ ] Does the change work in the archive?
 - [ ] Does the staging experience have sign-off from product stakeholders?
 
 **Reminder to annotate the PR diff with design notes, alternatives you considered, and any other helpful context.**
@@ -26,10 +27,9 @@ Step-by-step instructions on how to test this change
 
 If DB migrations exists:
 
-- [ ] If columns have been added/deleted, all necessary views were recreated
+- [ ] If columns have been added/deleted, all necessary views were recreated and ETL and Analytics team members have been informed of the incoming changes
 - [ ] The DB type definitions have been updated
 - [ ] The DB types in the ETL have been updated
-- [ ] If tables/views were added/removed, the Datasette export has been updated to take this into account
 - [ ] Update the documentation in db/docs
 
 ### After merging

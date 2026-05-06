@@ -1,8 +1,10 @@
 {
     "recommendations": [
-        "esbenp.prettier-vscode",
-        "dbaeumer.vscode-eslint",
         "editorconfig.editorconfig",
-        "vitest.explorer"
+        "oxc.oxc-vscode",
+        "mrmlnc.vscode-scss",
+        "vitest.explorer",
+        "ms-playwright.playwright",
+        "cucumberopen.cucumber-official"
     ]
 }

@@ -21,11 +21,11 @@ import { triggerStaticBuild } from "../../baker/GrapherBakingUtils.js"
 import * as db from "../../db/db.js"
 import * as lodash from "lodash-es"
 import { Request } from "express"
-import * as e from "express"
+import { HandlerResponse } from "../FunctionalRouter.js"
 
 export async function getDatasets(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const datasets = await db.knexRaw<Record<string, any>>(
@@ -85,7 +85,7 @@ export async function getDatasets(
 
 export async function getDataset(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const datasetId = expectInt(req.params.datasetId)
@@ -195,20 +195,17 @@ export async function getDataset(
     const charts = await db.knexRaw<OldChartFieldList>(
         trx,
         `-- sql
-            SELECT ${oldChartFieldList},
-                round(views_365d / 365, 1) as pageviewsPerDay,
-                crv.narrativeChartsCount,
-                crv.referencesCount
+            SELECT ${oldChartFieldList}
             FROM charts
             JOIN chart_configs ON chart_configs.id = charts.configId
             JOIN chart_dimensions AS cd ON cd.chartId = charts.id
             JOIN variables AS v ON cd.variableId = v.id
             JOIN users lastEditedByUser ON lastEditedByUser.id = charts.lastEditedByUserId
             LEFT JOIN users publishedByUser ON publishedByUser.id = charts.publishedByUserId
-            LEFT JOIN analytics_pageviews on (analytics_pageviews.url = CONCAT("https://ourworldindata.org/grapher/", chart_configs.slug) AND chart_configs.full ->> '$.isPublished' = "true" )
+            LEFT JOIN analytics_grapher_views agv ON (agv.grapher_slug = chart_configs.slug AND chart_configs.full ->> '$.isPublished' = "true")
             LEFT JOIN chart_references_view crv ON crv.chartId = charts.id
             WHERE v.datasetId = ?
-            GROUP BY charts.id, views_365d, crv.narrativeChartsCount, crv.referencesCount
+            GROUP BY charts.id, agv.views_365d, crv.narrativeChartsCount, crv.referencesCount
         `,
         [datasetId]
     )
@@ -232,23 +229,103 @@ export async function getDataset(
     const availableTags = await db.knexRaw<{
         id: number
         name: string
-        parentName: string
     }>(
         trx,
+        `-- sql
+        SELECT t.id, t.name
+        FROM tags t
         `
-    SELECT t.id, t.name, p.name AS parentName
-    FROM tags AS t
-    JOIN tags AS p ON t.parentId=p.id
-    `
     )
     dataset.availableTags = availableTags
+
+    // Fetch explorers that use variables or charts from this dataset
+    const explorers = await db.knexRaw<{
+        slug: string
+        title: string
+        isPublished: boolean
+        createdAt: string
+        lastEditedAt: string
+        lastEditedByUserName: string
+        pageviewsPerDay: number
+    }>(
+        trx,
+        `-- sql
+            SELECT DISTINCT
+                e.slug,
+                e.config->>'$.explorerTitle' as title,
+                e.isPublished,
+                e.createdAt,
+                e.lastEditedAt,
+                u.fullName as lastEditedByUserName,
+                ROUND(COALESCE(ap.views_365d, 0) / 365, 1) as pageviewsPerDay
+            FROM explorers e
+            LEFT JOIN users u ON u.id = e.lastEditedByUserId
+            LEFT JOIN analytics_pageviews ap ON ap.url = CONCAT('https://ourworldindata.org/explorers/', e.slug)
+            WHERE e.slug IN (
+                -- Indicator-based explorers
+                SELECT DISTINCT ev.explorerSlug
+                FROM explorer_variables ev
+                JOIN variables v ON v.id = ev.variableId
+                WHERE v.datasetId = ?
+
+                UNION
+
+                -- Chart-based explorers
+                SELECT DISTINCT ec.explorerSlug
+                FROM explorer_charts ec
+                JOIN charts c ON c.id = ec.chartId
+                JOIN chart_dimensions cd ON cd.chartId = c.id
+                JOIN variables v ON v.id = cd.variableId
+                WHERE v.datasetId = ?
+            )
+            ORDER BY pageviewsPerDay DESC
+        `,
+        [datasetId, datasetId]
+    )
+    dataset.explorers = explorers
+
+    // Fetch multi-dimensional data pages that use variables from this dataset
+    const multiDims = await db.knexRaw<{
+        id: number
+        slug: string
+        catalogPath: string
+        title: string
+        titleVariant: string
+        published: boolean
+        createdAt: string
+        updatedAt: string
+        grapherViewsPerDay: number
+    }>(
+        trx,
+        `-- sql
+        SELECT
+            mdp.id,
+            mdp.slug,
+            mdp.catalogPath,
+            mdp.config->>'$.title.title' as title,
+            mdp.config->>'$.title.titleVariant' as titleVariant,
+            mdp.published,
+            mdp.createdAt,
+            mdp.updatedAt,
+            ROUND(COALESCE(agv.views_365d, 0) / 365, 1) as grapherViewsPerDay
+        FROM multi_dim_data_pages mdp
+        JOIN multi_dim_x_chart_configs mdxcc ON mdxcc.multiDimId = mdp.id
+        JOIN variables v ON v.id = mdxcc.variableId
+        LEFT JOIN analytics_grapher_views agv ON agv.grapher_slug = mdp.slug
+        WHERE v.datasetId = ?
+        GROUP BY mdp.id, agv.views_365d
+        ORDER BY grapherViewsPerDay DESC
+        `,
+        [datasetId]
+    )
+    dataset.multiDims = multiDims
 
     return { dataset: dataset }
 }
 
 export async function updateDataset(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     // Only updates `nonRedistributable` and `tags`, other fields come from ETL
@@ -294,7 +371,7 @@ export async function updateDataset(
 
 export async function setArchived(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const datasetId = expectInt(req.params.datasetId)
@@ -329,7 +406,7 @@ export async function setArchived(
 
 export async function setTags(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const datasetId = expectInt(req.params.datasetId)
@@ -341,7 +418,7 @@ export async function setTags(
 
 export async function republishCharts(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const datasetId = expectInt(req.params.datasetId)

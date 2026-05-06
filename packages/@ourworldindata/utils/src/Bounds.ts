@@ -1,6 +1,6 @@
 import * as _ from "lodash-es"
 import { PointVector } from "./PointVector.js"
-import pixelWidth from "string-pixel-width"
+import { getPixelWidth, FontFamily } from "./stringWidth.js"
 import {
     Box,
     GridParameters,
@@ -22,26 +22,9 @@ export interface GridBounds {
     bounds: Bounds
 }
 
-export enum FontFamily {
-    "andale mono" = "andale mono",
-    "arial" = "arial",
-    "avenir next" = "avenir next",
-    "avenir" = "avenir",
-    "comic sans ms" = "comic sans ms",
-    "courier new" = "courier new",
-    "georgia" = "georgia",
-    "impact" = "impact",
-    "open sans" = "open sans",
-    "tahoma" = "tahoma",
-    "times new roman" = "times new roman",
-    "trebuchet ms" = "trebuchet ms",
-    "verdana" = "verdana",
-    "webdings" = "webdings",
-}
+export { FontFamily }
 
 export class Bounds {
-    static ctx: CanvasRenderingContext2D
-
     static fromProps(props: Box): Bounds {
         const { x, y, width, height } = props
         return new Bounds(x, y, width, height)
@@ -97,7 +80,7 @@ export class Bounds {
             y = 0,
             fontSize = 16,
             fontWeight = 400,
-            fontFamily = FontFamily.arial,
+            fontFamily = FontFamily.Lato,
             isItalic = false,
         }: {
             x?: number
@@ -119,7 +102,7 @@ export class Bounds {
             // pixelWidth uses a precomputed character width table to quickly give a
             // rough estimate of string width based on characters in a string - it is probably not
             // worth caching further
-            const width = pixelWidth(str, {
+            const width = getPixelWidth(str, {
                 font: fontFamily,
                 size: fontSize,
                 bold: isBold,
@@ -349,6 +332,10 @@ export class Bounds {
             [this.left, this.top],
             [this.right, this.bottom],
         ]
+    }
+
+    toViewBox(): string {
+        return `${this.x} ${this.y} ${this.width} ${this.height}`
     }
 
     xRange(): [number, number] {

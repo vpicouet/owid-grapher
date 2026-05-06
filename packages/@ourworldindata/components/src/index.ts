@@ -1,10 +1,20 @@
-export { TextWrap, shortenForTargetWidth } from "./TextWrap/TextWrap.js"
+export {
+    type ITextWrap,
+    TextWrap,
+    shortenWithEllipsis,
+} from "./TextWrap/TextWrap.js"
+export { TextWrapSvg, TextWrapHtml } from "./TextWrap/TextWrapComponents.js"
 
 export {
     MarkdownTextWrap,
     sumTextWrapHeights,
     toPlaintext,
+    canAppendTextToLastLine,
 } from "./MarkdownTextWrap/MarkdownTextWrap.js"
+export {
+    MarkdownTextWrapSvg,
+    MarkdownTextWrapHtml,
+} from "./MarkdownTextWrap/MarkdownTextWrapComponents.js"
 
 export {
     SimpleMarkdownText,
@@ -51,6 +61,13 @@ export { CodeSnippet } from "./CodeSnippet/CodeSnippet.js"
 export { hydrateCodeSnippets } from "./CodeSnippet/hydrateCodeSnippets.js"
 
 export { DataCitation } from "./DataCitation/DataCitation.js"
+export { DownloadButton } from "./DownloadButton/DownloadButton.js"
+export { DownloadButtonLink } from "./DownloadButton/DownloadButtonLink.js"
+export { DownloadApiOptions } from "./DownloadApiOptions/DownloadApiOptions.js"
+export {
+    makeFilteredDownloadDescription,
+    makeFullDownloadDescription,
+} from "@ourworldindata/utils"
 
 export {
     DATAPAGE_ABOUT_THIS_DATA_SECTION_ID,
@@ -62,9 +79,10 @@ export { Button } from "./Button/Button.js"
 
 export { Halo } from "./Halo/Halo.js"
 
-export { BodyDiv } from "./bodyDiv/BodyDiv.js"
+export { BodyPortal } from "./BodyPortal/BodyPortal.js"
 
 export { LoadingIndicator } from "./loadingIndicator/LoadingIndicator.js"
+export { NonRedistributableDataNotice } from "./NonRedistributableDataNotice/NonRedistributableDataNotice.js"
 
 export { reactRenderToStringClientOnly } from "./reactUtil.js"
 

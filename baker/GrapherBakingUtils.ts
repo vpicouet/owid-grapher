@@ -1,29 +1,13 @@
 import * as _ from "lodash-es"
 import fs from "fs-extra"
 import { glob } from "glob"
-import * as R from "remeda"
 
 import * as db from "../db/db.js"
-import {
-    DbPlainTag,
-    DbPlainUser,
-    Url,
-    PostsGdocsTableName,
-    OwidGdocType,
-} from "@ourworldindata/utils"
+import { DbPlainTag, DbPlainUser } from "@ourworldindata/utils"
 import { isPathRedirectedToExplorer } from "../explorerAdminServer/ExplorerRedirects.js"
 import { hashMd5 } from "../serverUtils/hash.js"
 import { BAKE_ON_CHANGE } from "../settings/serverSettings.js"
 import { DeployQueueServer } from "./DeployQueueServer.js"
-
-// Splits a grapher URL like https://ourworldindata.org/grapher/soil-lifespans?tab=chart
-// into its slug (soil-lifespans) and queryStr (?tab=chart)
-export const grapherUrlToSlugAndQueryStr = (grapherUrl: string) => {
-    const url = Url.fromURL(grapherUrl)
-    const slug = R.last(url.pathname?.split("/") ?? []) as string // todo / refactor: use Url.slug
-    const queryStr = url.queryStr
-    return { slug, queryStr }
-}
 
 // Combines a grapher slug, and potentially its query string, to _part_ of an export file
 // name. It's called fileKey and not fileName because the actual export filename also includes
@@ -67,50 +51,14 @@ export async function getTagToSlugMap(
 }
 
 /**
- * Returns a set of tags that have at least one published data insight.
- * e.g.
- *   "Women's Rights" -> true
- *   123 -> true
- */
-export async function getTagsWithDataInsights(
-    knex: db.KnexReadonlyTransaction
-): Promise<Set<string>> {
-    // Query for tags that have any published data insights
-    const rows = await db.knexRaw<{ name: string }>(
-        knex,
-        `
-        SELECT DISTINCT t.name
-        FROM tags t
-        JOIN ${PostsGdocsTableName}_x_tags pgt ON t.id = pgt.tagId
-        JOIN ${PostsGdocsTableName} pg ON pgt.gdocId = pg.id
-        WHERE
-            t.slug IS NOT NULL
-            AND pg.type = "${OwidGdocType.DataInsight}"
-            AND pg.published = 1
-            AND pg.publishedAt <= NOW()
-        `
-    )
-
-    return new Set(rows.map((row) => row.name))
-}
-
-/**
- * Given a topic tag's name or ID, return its slug
- * Throws an error if no slug is found so we can log it in Sentry
+ * Given a topic tag's name or ID, return its slug.
  */
 export async function getSlugForTopicTag(
     knex: db.KnexReadonlyTransaction,
     identifier: string | number
-): Promise<string> {
-    const propertyToMatch = typeof identifier === "string" ? "slug" : "id"
+): Promise<string | undefined> {
     const tagsByIdAndName = await getTagToSlugMap(knex)
     const slug = tagsByIdAndName[identifier]
-
-    if (!slug) {
-        throw new Error(
-            `No slug found for tag with ${propertyToMatch}: "${identifier}"`
-        )
-    }
 
     return slug
 }

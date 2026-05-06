@@ -2,8 +2,7 @@
     "extends": "./devTools/tsconfigs/tsconfig.base.json",
     "compilerOptions": {
         "outDir": "./itsJustJavascript",
-        "composite": false,
-        "baseUrl": "./"
+        "composite": false
     },
     "files": [],
     "references": [
@@ -13,10 +12,12 @@
         { "path": "./packages/@ourworldindata/grapher" },
         { "path": "./packages/@ourworldindata/types" },
         { "path": "./packages/@ourworldindata/utils" },
+        { "path": "./functions" },
 
         { "path": "./adminShared" },
         { "path": "./adminSiteClient" },
         { "path": "./adminSiteServer" },
+        { "path": "./bespoke/shared" },
         { "path": "./devTools/markdownTest" },
         { "path": "./devTools/regionsUpdater" },
         { "path": "./devTools/schema" },

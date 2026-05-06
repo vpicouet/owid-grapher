@@ -1,4 +1,3 @@
-import { SubNavId } from "@ourworldindata/types"
 import {
     CellDef,
     BooleanCellDef,
@@ -9,7 +8,6 @@ import {
     IntegerCellDef,
     SlugsDeclarationCellDef,
     Grammar,
-    EnumCellDef,
     StringDeclarationDef,
 } from "./gridLang/GridLangConstants.js"
 import { GrapherGrammar } from "./GrapherGrammar.js"
@@ -110,22 +108,6 @@ export const ExplorerGrammar: Grammar = {
         keyword: "hideControls",
         description: "Whether to hide the controls. Default is false.",
     },
-    subNavId: {
-        ...EnumCellDef,
-        terminalOptions: Object.values(SubNavId).map((keyword) => ({
-            keyword,
-            description: "",
-            cssClass: "",
-        })),
-        keyword: "subNavId",
-        description: "A subnav to show, if any.",
-    },
-    subNavCurrentId: {
-        // todo: add options here
-        ...EnumCellDef,
-        keyword: "subNavCurrentId",
-        description: "The current page in the subnav.",
-    },
     thumbnail: {
         ...UrlCellDef,
         keyword: "thumbnail",
@@ -151,11 +133,6 @@ export const ExplorerGrammar: Grammar = {
         valuePlaceholder: "gdp population gdp_per_capita",
         description:
             "You can manually set the column slug(s) to show in the entity picker or else they will be automatically chosen.",
-    },
-    hideAlertBanner: {
-        ...BooleanCellDef,
-        keyword: "hideAlertBanner",
-        description: "Set to true to hide the alert banner.",
     },
     ...GrapherGrammar,
 } as const

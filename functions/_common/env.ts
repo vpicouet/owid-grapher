@@ -1,10 +1,10 @@
 export interface Env {
     ASSETS: Fetcher
     url: URL
-    GRAPHER_CONFIG_R2_BUCKET_URL: string
-    GRAPHER_CONFIG_R2_BUCKET_FALLBACK_URL: string
-    GRAPHER_CONFIG_R2_BUCKET_PATH: string
-    GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH: string
+    GRAPHER_CONFIG_R2_BUCKET?: R2Bucket
+    GRAPHER_CONFIG_R2_BUCKET_FALLBACK?: R2Bucket
+    GRAPHER_CONFIG_R2_BUCKET_PATH?: string
+    GRAPHER_CONFIG_R2_BUCKET_FALLBACK_PATH?: string
     MAILGUN_SENDING_KEY: string
     MAILGUN_DOMAIN: string
     MAILCHIMP_API_KEY: string
@@ -26,6 +26,11 @@ export interface Env {
     STRIPE_WEBHOOK_SECRET: string
     STRIPE_API_KEY: string
     RECAPTCHA_SECRET_KEY: string
+    ALGOLIA_ID: string
+    ALGOLIA_SEARCH_KEY: string
+    ALGOLIA_INDEX_PREFIX?: string
+    CATALOG_URL: string
+    USER_SURVEYS_R2?: R2Bucket
 }
 // We collect the possible extensions here so we can easily take them into account
 // when handling redirects

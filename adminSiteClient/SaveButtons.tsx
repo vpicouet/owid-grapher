@@ -78,6 +78,10 @@ class SaveButtonsForChart extends Component<SaveButtonsProps<ChartEditor>> {
         else this.props.editor.publishGrapher()
     }
 
+    @action.bound onDeleteChart() {
+        void this.props.editor.deleteGrapher()
+    }
+
     @computed get editingErrors(): string[] {
         const { errorMessages, errorMessagesForDimensions } = this.props
         return excludeUndefined([
@@ -143,6 +147,12 @@ class SaveButtonsForChart extends Component<SaveButtonsProps<ChartEditor>> {
                                 {grapherState.isPublished
                                     ? "Unpublish"
                                     : "Publish"}
+                            </button>{" "}
+                            <button
+                                className="btn btn-danger"
+                                onClick={this.onDeleteChart}
+                            >
+                                Delete
                             </button>
                         </>
                     )}
@@ -256,6 +266,19 @@ class SaveButtonsForNarrativeChart extends Component<
         void this.props.editor.createGrapher()
     }
 
+    @action.bound async onCreateDataInsight() {
+        const { editor } = this.props
+        // Save the narrative chart first if there are unsaved changes
+        if (editor.isModified) {
+            const shouldSave = window.confirm(
+                "You have unsaved changes to this narrative chart. The Data Insight will use the saved version. Do you want to save your changes now before creating the DI?"
+            )
+            if (!shouldSave) return
+            await editor.saveGrapher()
+        }
+        this.isCreateDataInsightModalOpen = true
+    }
+
     @computed get editingErrors(): string[] {
         const { errorMessages, errorMessagesForDimensions } = this.props
         return excludeUndefined([
@@ -306,9 +329,7 @@ class SaveButtonsForNarrativeChart extends Component<
                 {!editor.isNewGrapher && (
                     <button
                         className="btn btn-secondary"
-                        onClick={() =>
-                            (this.isCreateDataInsightModalOpen = true)
-                        }
+                        onClick={this.onCreateDataInsight}
                         disabled={isSavingDisabled}
                     >
                         Create DI

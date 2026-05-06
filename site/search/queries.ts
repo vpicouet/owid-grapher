@@ -1,7 +1,8 @@
 import * as R from "remeda"
-import { EntityName, OwidGdocType, TagGraphRoot } from "@ourworldindata/types"
-import { type LiteClient } from "algoliasearch/lite"
 import {
+    EntityName,
+    OwidGdocType,
+    TagGraphRoot,
     SearchState,
     SearchChartsResponse,
     SearchChartHit,
@@ -13,16 +14,21 @@ import {
     StackedArticleHit,
     TopicPageHit,
     FilterType,
-    SearchIndexName,
     SearchFlatArticleResponse,
-} from "./searchTypes.js"
+    SearchProfileResponse,
+    ProfileHit,
+} from "@ourworldindata/types"
+import { type LiteClient } from "algoliasearch/lite"
 import {
     getFilterNamesOfType,
     formatCountryFacetFilters,
+    formatTopicFacetFilters,
+    formatFeaturedMetricFacetFilter,
     getSelectableTopics,
     CHARTS_INDEX,
+    PAGES_INDEX,
     DATA_CATALOG_ATTRIBUTES,
-    formatTopicFacetFilters,
+    formatDisjunctiveFacetFilters,
 } from "./searchUtils.js"
 import { RichDataComponentVariant } from "./SearchChartHitRichDataTypes.js"
 
@@ -37,29 +43,19 @@ function makeStateForKey(state: SearchState) {
 export const searchQueryKeys = {
     topicTagGraph: ["topicTagGraph"] as const,
     charts: (state: SearchState) =>
-        [
-            SearchIndexName.ExplorerViewsMdimViewsAndCharts,
-            "charts",
-            makeStateForKey(state),
-        ] as const,
+        [CHARTS_INDEX, "charts", makeStateForKey(state)] as const,
     dataTopics: (state: SearchState) =>
-        [
-            SearchIndexName.ExplorerViewsMdimViewsAndCharts,
-            "topics",
-            makeStateForKey(state),
-        ] as const,
+        [CHARTS_INDEX, "topics", makeStateForKey(state)] as const,
     dataInsights: (state: SearchState) =>
-        [
-            SearchIndexName.Pages,
-            "data-insights",
-            makeStateForKey(state),
-        ] as const,
+        [PAGES_INDEX, "data-insights", makeStateForKey(state)] as const,
     articles: (state: SearchState) =>
-        [SearchIndexName.Pages, "articles", makeStateForKey(state)] as const,
+        [PAGES_INDEX, "articles", makeStateForKey(state)] as const,
     topicPages: (state: SearchState) =>
-        [SearchIndexName.Pages, "topic-pages", makeStateForKey(state)] as const,
+        [PAGES_INDEX, "topic-pages", makeStateForKey(state)] as const,
     writingTopics: (state: SearchState) =>
-        [SearchIndexName.Pages, "topics", makeStateForKey(state)] as const,
+        [PAGES_INDEX, "topics", makeStateForKey(state)] as const,
+    profiles: (state: SearchState) =>
+        [PAGES_INDEX, "profiles", makeStateForKey(state)] as const,
 } as const
 
 export const chartHitQueryKeys = {
@@ -132,14 +128,39 @@ export async function queryCharts(
     const topicFacetFilters = formatTopicFacetFilters(
         getFilterNamesOfType(state.filters, FilterType.TOPIC)
     )
-    const facetFilters = [...countryFacetFilters, ...topicFacetFilters]
+    const datasetProductFacetFilters = formatDisjunctiveFacetFilters(
+        getFilterNamesOfType(state.filters, FilterType.DATASET_PRODUCT),
+        "datasetProducts"
+    )
+    const datasetNamespaceFacetFilters = formatDisjunctiveFacetFilters(
+        getFilterNamesOfType(state.filters, FilterType.DATASET_NAMESPACE),
+        "datasetNamespaces"
+    )
+    const datasetVersionFacetFilters = formatDisjunctiveFacetFilters(
+        getFilterNamesOfType(state.filters, FilterType.DATASET_VERSION),
+        "datasetVersions"
+    )
+    const datasetProducerFacetFilters = formatDisjunctiveFacetFilters(
+        getFilterNamesOfType(state.filters, FilterType.DATASET_PRODUCER),
+        "datasetProducers"
+    )
+    const fmFacetFilter = formatFeaturedMetricFacetFilter(state.query)
+    const facetFilters = [
+        ...countryFacetFilters,
+        ...topicFacetFilters,
+        ...datasetProductFacetFilters,
+        ...datasetNamespaceFacetFilters,
+        ...datasetVersionFacetFilters,
+        ...datasetProducerFacetFilters,
+        ...fmFacetFilter,
+    ]
 
     const searchParams = [
         {
             indexName: CHARTS_INDEX,
             attributesToRetrieve: DATA_CATALOG_ATTRIBUTES,
             query: state.query,
-            facetFilters: facetFilters,
+            facetFilters,
             highlightPreTag: "<mark>",
             highlightPostTag: "</mark>",
             hitsPerPage: 9,
@@ -155,7 +176,8 @@ export async function queryCharts(
 export async function queryDataInsights(
     liteSearchClient: LiteClient,
     state: SearchState,
-    page: number = 0
+    page: number = 0,
+    hitsPerPage: number = 4
 ): Promise<SearchDataInsightResponse> {
     const selectedCountryNames = getFilterNamesOfType(
         state.filters,
@@ -168,14 +190,14 @@ export async function queryDataInsights(
     const query = [
         state.query,
         // Use advanced syntax to search for countries as exact phrases
-        ...Array.from(selectedCountryNames).map((c) => `"${c}"`),
+        ...selectedCountryNames.keys().map((c) => `"${c}"`),
     ]
         .filter(Boolean)
         .join(" ")
 
     const searchParams = [
         {
-            indexName: SearchIndexName.Pages,
+            indexName: PAGES_INDEX,
             query,
             filters: `type:${OwidGdocType.DataInsight}`,
             facetFilters: formatTopicFacetFilters(selectedTopics),
@@ -196,7 +218,7 @@ export async function queryDataInsights(
             ],
             highlightPreTag: "<mark>",
             highlightPostTag: "</mark>",
-            hitsPerPage: 4,
+            hitsPerPage,
             page,
         },
     ]
@@ -223,14 +245,14 @@ export async function queryArticles(
     const query = [
         state.query,
         // Use advanced syntax to search for countries as exact phrases
-        ...Array.from(selectedCountryNames).map((c) => `"${c}"`),
+        ...selectedCountryNames.keys().map((c) => `"${c}"`),
     ]
         .filter(Boolean)
         .join(" ")
 
     const searchParams = [
         {
-            indexName: SearchIndexName.Pages,
+            indexName: PAGES_INDEX,
             query,
             filters: `type:${OwidGdocType.Article} OR type:${OwidGdocType.AboutPage}`,
             facetFilters: formatTopicFacetFilters(selectedTopics),
@@ -273,7 +295,7 @@ export async function queryTopicPages(
 
     const searchParams = [
         {
-            indexName: SearchIndexName.Pages,
+            indexName: PAGES_INDEX,
             query: state.query,
             filters: `type:${OwidGdocType.TopicPage} OR type:${OwidGdocType.LinearTopicPage}`,
             facetFilters: formatTopicFacetFilters(selectedTopics),
@@ -296,6 +318,52 @@ export async function queryTopicPages(
         .then((response) => response.results[0] as SearchTopicPageResponse)
 }
 
+export async function queryProfiles(
+    liteSearchClient: LiteClient,
+    state: SearchState,
+    offset: number = 0,
+    length: number
+): Promise<SearchProfileResponse> {
+    const selectedCountryNames = getFilterNamesOfType(
+        state.filters,
+        FilterType.COUNTRY
+    )
+    const selectedTopics = getFilterNamesOfType(state.filters, FilterType.TOPIC)
+
+    const facetFilters = [
+        ...formatCountryFacetFilters(
+            selectedCountryNames,
+            state.requireAllCountries
+        ),
+        ...formatTopicFacetFilters(selectedTopics),
+    ]
+
+    const searchParams = [
+        {
+            indexName: PAGES_INDEX,
+            query: state.query,
+            filters: `type:${OwidGdocType.Profile}`,
+            facetFilters,
+            attributesToRetrieve: [
+                "title",
+                "thumbnailUrl",
+                "slug",
+                "excerpt",
+                "type",
+                "availableEntities",
+            ],
+            highlightPreTag: "<mark>",
+            highlightPostTag: "</mark>",
+            offset,
+            length,
+        },
+    ]
+
+    return liteSearchClient
+        .search<ProfileHit>(searchParams)
+        .then((response) => response.results[0] as SearchProfileResponse)
+}
+
 export async function queryWritingTopics(
     liteSearchClient: LiteClient,
     tagGraph: TagGraphRoot,
@@ -309,7 +377,7 @@ export async function queryWritingTopics(
 
         return [
             {
-                indexName: SearchIndexName.Pages,
+                indexName: PAGES_INDEX,
                 attributesToRetrieve: [
                     "title",
                     "slug",
@@ -324,7 +392,7 @@ export async function queryWritingTopics(
                 hitsPerPage: 3,
             },
             {
-                indexName: SearchIndexName.Pages,
+                indexName: PAGES_INDEX,
                 attributesToRetrieve: ["title", "slug", "type"],
                 filters: `type:${OwidGdocType.TopicPage} OR type:${OwidGdocType.LinearTopicPage}`,
                 facetFilters: topicFacetFilters,

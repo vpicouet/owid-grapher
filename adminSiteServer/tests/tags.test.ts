@@ -23,7 +23,7 @@ import {
 const env = getAdminTestEnv()
 
 describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
-    // prettier-ignore
+    // oxfmt-ignore
     const dummyTags: DbInsertTag[] = [
         { name: TagGraphRootName, id: 1  },
         { name: "Energy and Environment", id: 2  },
@@ -69,10 +69,10 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
     ]
 
     beforeEach(async () => {
-        await env.testKnex!(TagsTableName).insert(dummyTags)
-        await env.testKnex!(TagGraphTableName).insert(dummyTagGraph)
-        await env.testKnex!(PostsGdocsTableName).insert(dummyTopicPages)
-        await env.testKnex!(PostsGdocsXTagsTableName).insert(dummyPostTags)
+        await env.testKnex(TagsTableName).insert(dummyTags)
+        await env.testKnex(TagGraphTableName).insert(dummyTagGraph)
+        await env.testKnex(PostsGdocsTableName).insert(dummyTopicPages)
+        await env.testKnex(PostsGdocsXTagsTableName).insert(dummyPostTags)
     })
 
     it("should be able to see all the tags", async () => {
@@ -84,36 +84,42 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     isTopic: 0,
                     name: "Climate & Air",
                     slug: null,
+                    isSearchable: 0,
                 },
                 {
                     id: 5,
                     isTopic: 1,
                     name: "CO2 & Greenhouse Gas Emissions",
                     slug: "co2-and-greenhouse-gas-emissions",
+                    isSearchable: 1,
                 },
                 {
                     id: 3,
                     isTopic: 1,
                     name: "Energy",
                     slug: "energy",
+                    isSearchable: 1,
                 },
                 {
                     id: 2,
                     isTopic: 0,
                     name: "Energy and Environment",
                     slug: null,
+                    isSearchable: 0,
                 },
                 {
                     id: 4,
                     isTopic: 1,
                     name: "Nuclear Energy",
                     slug: "nuclear-energy",
+                    isSearchable: 1,
                 },
                 {
                     id: 1,
                     isTopic: 0,
                     name: "tag-graph-root",
                     slug: null,
+                    isSearchable: 0,
                 },
             ],
         })
@@ -193,6 +199,7 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     slug: null,
                     parentId: 1,
                     weight: 100,
+                    isSearchable: 0,
                 },
             ],
             "2": [
@@ -203,6 +210,7 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     slug: "energy",
                     parentId: 2,
                     weight: 110,
+                    isSearchable: 1,
                 },
                 {
                     childId: 6,
@@ -211,6 +219,7 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     slug: null,
                     parentId: 2,
                     weight: 100,
+                    isSearchable: 0,
                 },
             ],
             "3": [
@@ -221,6 +230,7 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     slug: "nuclear-energy",
                     parentId: 3,
                     weight: 100,
+                    isSearchable: 1,
                 },
             ],
             "5": [
@@ -231,6 +241,7 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     slug: "nuclear-energy",
                     parentId: 5,
                     weight: 100,
+                    isSearchable: 1,
                 },
             ],
             "6": [
@@ -241,6 +252,7 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                     parentId: 6,
                     slug: "co2-and-greenhouse-gas-emissions",
                     weight: 100,
+                    isSearchable: 1,
                 },
             ],
             __rootId: 1,
@@ -330,25 +342,27 @@ describe("Tag graph and breadcrumbs", { timeout: 15000 }, () => {
                 // Here, Women's Employment has 2 paths:
                 // 1. Poverty and Economic Development > Women's Employment
                 // 2. Human Rights > Women's Rights > Women's Employment
-                // prettier-ignore
-                await env.testKnex!(TagsTableName).insert([
+                // oxfmt-ignore
+                await env.testKnex(TagsTableName).insert([
                     { name: "Human Rights", id: 7 },
                     { name: "Women's Rights", slug: "womens-rights", id: 8 },
                     { name: "Women's Employment", slug: "womens-employment", id: 9 },
                     { name: "Poverty and Economic Development", id: 10 },
                 ])
-                await env.testKnex!(TagGraphTableName).insert([
+                await env.testKnex(TagGraphTableName).insert([
                     { parentId: 1, childId: 7 },
                     { parentId: 7, childId: 8 },
                     { parentId: 8, childId: 9 },
                     { parentId: 1, childId: 10 },
                     { parentId: 10, childId: 9 },
                 ])
-                await env.testKnex!(PostsGdocsTableName).insert([
-                    makeDummyTopicPage("womens-rights"),
-                    makeDummyTopicPage("womens-employment"),
-                ])
-                await env.testKnex!(PostsGdocsXTagsTableName).insert([
+                await env
+                    .testKnex(PostsGdocsTableName)
+                    .insert([
+                        makeDummyTopicPage("womens-rights"),
+                        makeDummyTopicPage("womens-employment"),
+                    ])
+                await env.testKnex(PostsGdocsXTagsTableName).insert([
                     { gdocId: "womens-rights", tagId: 8 },
                     { gdocId: "womens-employment", tagId: 9 },
                 ])

@@ -7,6 +7,7 @@ export {
     EMBEDDED_EXPLORER_DELIMITER,
     EMBEDDED_EXPLORER_GRAPHER_CONFIGS,
     EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS,
+    EMBEDDED_EXPLORER_VIEW_CONFIG_IDS,
     EXPLORER_CONSTANTS_DELIMITER,
     EXPLORER_EMBEDDED_FIGURE_SELECTOR,
     ExplorerChartCreationMode,
@@ -65,3 +66,5 @@ export {
     type CellPosition,
     type ParsedCell,
 } from "./gridLang/GridLangConstants.js"
+
+export { GrapherGrammar } from "./GrapherGrammar.js"

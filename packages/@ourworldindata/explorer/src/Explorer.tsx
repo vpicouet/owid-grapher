@@ -12,11 +12,12 @@ import {
     GrapherQueryParams,
     EntityName,
     GRAPHER_TAB_QUERY_PARAMS,
+    DimensionProperty,
 } from "@ourworldindata/types"
 import {
     OwidTable,
     BlankOwidTable,
-    extractPotentialDataSlugsFromTransform,
+    parseTransformString,
 } from "@ourworldindata/core-table"
 import {
     EntityPicker,
@@ -32,16 +33,18 @@ import {
     GrapherAnalytics,
     GrapherState,
     fetchInputTableForConfig,
-    loadVariableDataAndMetadata,
+    FetchInputTableForConfigFn,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import {
     Bounds,
     ColumnSlug,
-    DimensionProperty,
     excludeUndefined,
     exposeInstanceOnWindow,
     isInIFrame,
     keyMap,
+    dimensionsToViewId,
+    merge,
     mergeGrapherConfigs,
     omitUndefinedValues,
     parseIntOrUndefined,
@@ -52,7 +55,10 @@ import {
     Tippy,
     Url,
 } from "@ourworldindata/utils"
-import { MarkdownTextWrap } from "@ourworldindata/components"
+import {
+    MarkdownTextWrap,
+    MarkdownTextWrapHtml,
+} from "@ourworldindata/components"
 import classNames from "classnames"
 import { action, computed, makeObservable, observable, reaction } from "mobx"
 import { observer } from "mobx-react"
@@ -75,26 +81,30 @@ import {
     explorerUrlMigrationsById,
     migrateExplorerUrl,
 } from "./urlMigrations/ExplorerUrlMigrations.js"
+import { match } from "ts-pattern"
+import { TransformParamType } from "@ourworldindata/core-table/src/Transforms.js"
 
 export interface ExplorerProps extends SerializedGridProgram {
     grapherConfigs?: GrapherInterface[]
     partialGrapherConfigs?: GrapherInterface[]
+    chartConfigIdByViewId?: Record<string, string>
     queryStr?: string
     isEmbeddedInAnOwidPage?: boolean
     isInStandalonePage?: boolean
     isPreview?: boolean
-    canonicalUrl?: string
     selection?: SelectionArray
     adminBaseUrl: string
     bakedBaseUrl: string
     bakedGrapherUrl: string
     dataApiUrl: string
+    catalogUrl: string
     bounds?: Bounds
     staticBounds?: Bounds
     loadMetadataOnly?: boolean
     throwOnMissingGrapher?: boolean
     setupGrapher?: boolean
     archiveContext?: ArchiveContext
+    loadInputTableForConfig?: FetchInputTableForConfigFn
 }
 
 const LivePreviewComponent = (props: ExplorerProps) => {
@@ -238,15 +248,15 @@ export class Explorer
             isEmbeddedInAnOwidPage: this.props.isEmbeddedInAnOwidPage,
             adminBaseUrl: this.adminBaseUrl,
             canHideExternalControlsInEmbed: true,
+            // Iframe embeds are 600px tall when external controls are hidden.
+            // Explorer controls need another 96px, so the embed code we
+            // recommend for explorers with controls is 696px tall.
+            recommendedIframeEmbedHeight: 696,
             archiveContext: props.archiveContext,
-            additionalDataLoaderFn: (
-                varId: number,
-                loadMetadataOnly?: boolean
-            ) =>
-                loadVariableDataAndMetadata(varId, this.dataApiUrl, {
+            additionalDataLoaderFn: (catalogKey) =>
+                loadCatalogData(catalogKey, {
+                    baseUrl: this.props.catalogUrl,
                     assetMap: assetMaps?.runtime,
-                    noCache: props.isPreview,
-                    loadMetadataOnly,
                 }),
         })
 
@@ -258,6 +268,7 @@ export class Explorer
         program: ExplorerProps,
         grapherConfigs: GrapherInterface[],
         partialGrapherConfigs: GrapherInterface[],
+        chartConfigIdByViewId: Record<string, string> | undefined,
         explorerConstants: Record<string, string>,
         urlMigrationSpec?: ExplorerPageUrlMigrationSpec,
         archiveContext?: ArchiveContext
@@ -270,6 +281,7 @@ export class Explorer
             isEmbeddedInAnOwidPage: false,
             isInStandalonePage: true,
             archiveContext,
+            chartConfigIdByViewId,
         }
 
         if (window.location.href.includes(EXPLORERS_PREVIEW_ROUTE)) {
@@ -309,8 +321,9 @@ export class Explorer
         root.render(<Explorer {...props} queryStr={url.queryStr} />)
     }
 
-    private initialQueryParams = Url.fromQueryStr(this.props.queryStr ?? "")
-        .queryParams as ExplorerFullQueryParams
+    private readonly initialQueryParams = Url.fromQueryStr(
+        this.props.queryStr ?? ""
+    ).queryParams as ExplorerFullQueryParams
 
     explorerProgram = ExplorerProgram.fromJson(this.props).initDecisionMatrix(
         this.initialQueryParams
@@ -318,6 +331,7 @@ export class Explorer
 
     bakedBaseUrl = this.props.bakedBaseUrl
     dataApiUrl = this.props.dataApiUrl
+    catalogUrl = this.props.catalogUrl
     adminBaseUrl = this.props.adminBaseUrl
     bakedGrapherUrl = this.props.bakedGrapherUrl
 
@@ -348,13 +362,20 @@ export class Explorer
     }
 
     @computed get partialGrapherConfigsBySlug() {
+        const { columnDefsWithoutTableSlug } = this.explorerProgram
+
         const configsBySlug = new Map<string, GrapherInterface>()
-        for (const columnDef of this.explorerProgram
-            .columnDefsWithoutTableSlug) {
-            if (columnDef.transform?.startsWith("duplicate")) {
-                const indicatorId = +columnDef.transform
-                    .replace("duplicate", "")
-                    .trim()
+        for (const columnDef of columnDefsWithoutTableSlug) {
+            if (!columnDef.transform) continue
+
+            const { transformName, params: transformParams = [] } =
+                parseTransformString(columnDef.transform) ?? {}
+            const dataSlugsForTransform = transformParams
+                .filter(({ type }) => type === TransformParamType.DataSlug)
+                .map(({ value }) => value)
+
+            if (transformName === "duplicate") {
+                const indicatorId = +dataSlugsForTransform[0]
                 const partialGrapherConfig =
                     this.partialGrapherConfigsByVariableId.get(indicatorId)
                 if (partialGrapherConfig)
@@ -371,7 +392,8 @@ export class Explorer
                     if (entry.isIntersecting) {
                         this.analytics.logExplorerView(
                             this.explorerProgram.slug,
-                            this.explorerProgram.decisionMatrix.currentParams
+                            this.explorerProgram.decisionMatrix.currentParams,
+                            this.getChartConfigIdForCurrentParams()
                         )
                         observer.disconnect()
                     }
@@ -384,7 +406,7 @@ export class Explorer
 
     disposers: (() => void)[] = []
     override async componentDidMount() {
-        this.setGrapher(this.grapherRef!.current!)
+        this.setGrapher(this.grapherRef.current!)
 
         let url = Url.fromQueryParams({
             ...this.initialQueryParams,
@@ -470,15 +492,13 @@ export class Explorer
         )
     }
 
-    private persistedGrapherQueryParamsBySelectedRow: Map<
+    private readonly persistedGrapherQueryParamsBySelectedRow: Map<
         number,
         Partial<GrapherQueryParams>
     > = new Map()
 
     // todo: break this method up and unit test more. this is pretty ugly right now.
-    @action.bound private async reactToUserChangingSelection(
-        oldSelectedRow: number
-    ) {
+    @action.bound async reactToUserChangingSelection(oldSelectedRow: number) {
         if (!this.explorerProgram.currentlySelectedGrapherRow) return
         this.initSlideshow()
 
@@ -516,18 +536,32 @@ export class Explorer
         // When switching between explorer views, we usually preserve the tab.
         // However, if the new chart doesn't support the previously selected tab,
         // Grapher automatically switches to a supported one. In such cases,
-        // we call onChartSwitching to make adjustments that ensure the new view
+        // we call adjustStateForTab to make adjustments that ensure the new view
         // is sensible (e.g. updating the time selection when switching from a
         // single-time chart like a discrete bar chart to a multi-time chart like
         // a line chart).
         const currentTab = this.grapherState.activeTab
         if (previousTab !== currentTab)
-            this.grapherState.onChartSwitching(previousTab, currentTab)
+            this.grapherState.adjustStateForTab(currentTab)
 
         this.analytics.logExplorerView(
             this.explorerProgram.slug,
-            this.explorerProgram.decisionMatrix.currentParams
+            this.explorerProgram.decisionMatrix.currentParams,
+            this.getChartConfigIdForCurrentParams()
         )
+    }
+
+    private getChartConfigIdForCurrentParams() {
+        // We get the params this way to match the logic on the backend.
+        // `this.currentChoiceParams` gives a different result.
+        const decisionMatrix = this.explorerProgram.decisionMatrix
+        const selectedRow = decisionMatrix.table.rowsAt([
+            decisionMatrix.selectedRowIndex,
+        ])[0]
+        if (!selectedRow) return undefined
+        const params = decisionMatrix.getChoiceParamsForRow(selectedRow)
+        const viewId = dimensionsToViewId(params)
+        return this.props.chartConfigIdByViewId?.[viewId]
     }
 
     @action.bound private setGrapherTable(table: OwidTable) {
@@ -543,7 +577,7 @@ export class Explorer
         return !this.isNarrow
     }
 
-    private futureGrapherTable = new PromiseSwitcher<OwidTable>({
+    private readonly futureGrapherTable = new PromiseSwitcher<OwidTable>({
         onResolve: (table) => this.setGrapherTable(table),
         onReject: (error) => this.grapher?.setError(error),
     })
@@ -563,52 +597,6 @@ export class Explorer
         }
     }
 
-    @computed private get columnDefsWithoutTableSlugByIdOrSlug(): Record<
-        number | string,
-        OwidColumnDef
-    > {
-        const { columnDefsWithoutTableSlug } = this.explorerProgram
-        return _.keyBy(
-            columnDefsWithoutTableSlug,
-            (def: OwidColumnDef) => def.owidVariableId ?? def.slug
-        )
-    }
-
-    // gets the slugs of all base and intermediate columns that a
-    // transformed column depends on; for example, if a column's transform
-    // is 'divideBy 170775 other_slug' and 'other_slug' is also a transformed
-    // column defined by 'multiplyBy 539022 2', then this function
-    // returns ['539022', '170775', 'other_slug']
-    private getBaseColumnsForColumnWithTransform(slug: string): string[] {
-        const def = this.columnDefsWithoutTableSlugByIdOrSlug[slug]
-        if (!def?.transform) return []
-        const dataSlugs =
-            extractPotentialDataSlugsFromTransform(def.transform) ?? []
-        return dataSlugs.flatMap((dataSlug) => [
-            ...this.getBaseColumnsForColumnWithTransform(dataSlug),
-            dataSlug,
-        ])
-    }
-
-    // gets the IDs of all variables that a transformed column depends on;
-    // for example, if a there are two columns, 'slug' and 'other_slug', that
-    // are defined by the transforms 'divideBy 170775 other_slug' and 'multiplyBy 539022 2',
-    // respectively, then getBaseVariableIdsForColumnWithTransform('slug')
-    // returns ['539022', '170775'] as these are the IDs of the two variables
-    // that the 'slug' column depends on
-    private getBaseVariableIdsForColumnWithTransform(slug: string): string[] {
-        const { columnDefsWithoutTableSlug } = this.explorerProgram
-        const baseVariableIdsAndColumnSlugs =
-            this.getBaseColumnsForColumnWithTransform(slug)
-        const slugsInColumnBlock: string[] = columnDefsWithoutTableSlug
-            .filter((def) => !def.owidVariableId)
-            .map((def) => def.slug)
-        return baseVariableIdsAndColumnSlugs.filter(
-            (variableIdOrColumnSlug) =>
-                !slugsInColumnBlock.includes(variableIdOrColumnSlug)
-        )
-    }
-
     @action.bound async updateGrapherFromExplorerUsingGrapherId() {
         const grapherState = this.grapherState
 
@@ -626,6 +614,7 @@ export class Explorer
                 finalGrapherConfig,
                 this.explorerProgram.grapherConfig
             ),
+            baseUrl: this.baseUrl,
             bakedGrapherURL: this.bakedBaseUrl,
             adminBaseUrl: this.adminBaseUrl,
             hideEntityControls: this.showExplorerControls,
@@ -642,7 +631,9 @@ export class Explorer
         grapherState.inputTable = BlankOwidTable()
         grapherState.updateFromObject(config)
         if (!config.table) {
-            const inputTable = fetchInputTableForConfig({
+            const loadFn =
+                this.props.loadInputTableForConfig ?? fetchInputTableForConfig
+            const inputTable = loadFn({
                 dimensions: config.dimensions,
                 selectedEntityColors: config.selectedEntityColors,
                 dataApiUrl: this.props.dataApiUrl,
@@ -660,30 +651,26 @@ export class Explorer
     }
 
     @action.bound async updateGrapherFromExplorerUsingVariableIds() {
-        const grapherState = this.grapherState
-        const {
-            yVariableIds = "",
-            xVariableId,
-            colorVariableId,
-            sizeVariableId,
-            ySlugs = "",
-            xSlug,
-            colorSlug,
-            sizeSlug,
-        } = this.explorerProgram.explorerGrapherConfig
+        const { grapherState } = this
+        const { dimensionsOfSelectedRow, explorerGrapherConfig } =
+            this.explorerProgram
 
-        const yVariableIdsList = yVariableIds
-            .split(" ")
-            .map(parseIntOrUndefined)
-            .filter((item) => item !== undefined)
-        const ySlugList = ySlugs.split(" ")
+        const variableIdDimensions = dimensionsOfSelectedRow.filter(
+            (dim) => dim.type === "variableId"
+        )
+        const slugDimensions = dimensionsOfSelectedRow.filter(
+            (dim) => dim.type === "slug"
+        )
+
+        const yVariableIds = variableIdDimensions.map((dim) => dim.variableId)
+        const ySlugs = slugDimensions.map((dim) => dim.slug)
 
         const partialGrapherConfig =
-            this.partialGrapherConfigsByVariableId.get(yVariableIdsList[0]) ??
-            // if ySlug references a column that duplicates an indicator via the
+            this.partialGrapherConfigsByVariableId.get(yVariableIds[0]) ??
+            // If ySlug references a column that duplicates an indicator via the
             // `duplicate` transform, make sure the partial grapher config for
             // that indicator is pulled in
-            this.partialGrapherConfigsBySlug.get(ySlugList[0]) ??
+            this.partialGrapherConfigsBySlug.get(ySlugs[0]) ??
             {}
 
         const config: GrapherProgrammaticInterface = {
@@ -697,128 +684,137 @@ export class Explorer
             enableMapSelection: this.enableMapSelection,
         }
 
-        // if not empty, respect the explorer's selection
+        // If not empty, respect the explorer's selection
         if (this.selection.hasSelection) {
             config.selectedEntityNames = this.selection.selectedEntityNames
         }
 
-        // set given variable IDs as dimensions to make Grapher
+        // Indicator-based explorers support two types of dimensions for creating charts:
+        //
+        // 1. Indicator ID-based dimensions: These reference variables by their numeric IDs.
+        //    We simply add these IDs to the config's dimensions array so Grapher can
+        //    download the corresponding data and metadata.
+        //
+        // 2. Slug-based dimensions: These reference transformed columns defined by transform
+        //    operations like 'multiplyBy 539022 2' or 'duplicate 170775'.
+        //
+        //    To render charts with slug-based dimensions, we need to:
+        //    1. Identify all base variables that the transformed columns depend on
+        //    2. Add these variables to the config's dimensions array for data fetching
+        //    3. Append the transformed columns to the Grapher table
+
+        const getColumnDef = (slug: string) =>
+            this.explorerProgram.getColumnDefWithoutTableSlugByIdOrSlug(slug)
+
+        // Add the given variable IDs to the dimensions array to make Grapher
         // download the data and metadata for these variables
         const dimensions = config.dimensions?.slice() ?? []
-        yVariableIdsList.forEach((yVariableId) => {
-            dimensions.push({
-                variableId: yVariableId,
-                property: DimensionProperty.y,
-            })
-        })
-
-        if (xVariableId) {
-            const maybeXVariableId = parseIntOrUndefined(xVariableId)
-            if (maybeXVariableId !== undefined)
-                dimensions.push({
-                    variableId: maybeXVariableId,
-                    property: DimensionProperty.x,
+        for (const dimension of dimensionsOfSelectedRow) {
+            match(dimension)
+                .with({ type: "variableId" }, (dimension) => {
+                    dimensions.push(_.omit(dimension, "type"))
                 })
-        }
-        if (colorVariableId) {
-            const maybeColorVariableId = parseIntOrUndefined(colorVariableId)
-            if (maybeColorVariableId !== undefined)
-                dimensions.push({
-                    variableId: maybeColorVariableId,
-                    property: DimensionProperty.color,
+                .with({ type: "slug" }, ({ slug }) => {
+                    const def = getColumnDef(slug)
+                    if (!def) return
+
+                    // Parse the transform string to identify all variable ids
+                    // that the transformed column depends on
+                    const { transformName, params: transformParams = [] } =
+                        parseTransformString(def.transform ?? "") ?? {}
+                    const dataSlugsForTransform = transformParams
+                        .filter(
+                            ({ type }) => type === TransformParamType.DataSlug
+                        )
+                        .map(({ value }) => value)
+
+                    // It's safe to assume the extracted data slugs are variable ids
+                    // since indicator-based explorers don't support multi-step transforms
+                    const variableIds =
+                        dataSlugsForTransform
+                            .map((id) => parseIntOrUndefined(id))
+                            .filter((id) => id !== undefined) ?? []
+
+                    for (const variableId of variableIds) {
+                        // Skip if the variable id is already present as a dimension
+                        const dimensionExists = dimensions.some(
+                            (d) => d.variableId === variableId
+                        )
+                        if (dimensionExists) continue
+
+                        if (transformName === "duplicate") {
+                            // Use the original DimensionProperty if the column
+                            // has been duplicated from an existing variable
+                            dimensions.push({
+                                variableId: variableId,
+                                property: dimension.property,
+                                display: dimension.display,
+                            })
+                        } else {
+                            // Use DimensionProperty.table to prevent intermediate
+                            // variables from appearing as chart dimensions
+                            dimensions.push({
+                                variableId: variableId,
+                                property: DimensionProperty.table,
+                            })
+                        }
+                    }
                 })
-        }
-        if (sizeVariableId) {
-            const maybeSizeVariableId = parseIntOrUndefined(sizeVariableId)
-            if (maybeSizeVariableId !== undefined)
-                dimensions.push({
-                    variableId: maybeSizeVariableId,
-                    property: DimensionProperty.size,
-                })
+                .exhaustive()
         }
 
-        // Slugs that are used to create a chart refer to columns derived from variables
-        // by a transform string (e.g. 'multiplyBy 539022 2'). To render such a chart, we
-        // need to download the data for all variables the transformed columns depend on
-        // and construct an appropriate Grapher table. This is done in three steps:
-        //   1. find all variables that the transformed columns depend on and add them to
-        //      the config's dimensions array
-        //   2. download data and metadata of the variables
-        //   3. append the transformed columns to the Grapher table (note that this includes
-        //      intermediate columns that are defined for multi-step transforms but are not
-        //      referred to in any Grapher row)
+        // The ySlugs ultimately determine which dimensions are used as the y-dimensions.
+        // If there are any ySlugs defined, we want to append the variable IDs to them, so
+        // that both the slug-based dimensions and variable ID-based dimensions are plotted
+        // together. The order is arbitrary, but should be left as is for backward compatibility.
+        if (config.ySlugs && explorerGrapherConfig.yVariableIds)
+            config.ySlugs = `${config.ySlugs} ${explorerGrapherConfig.yVariableIds}`
 
-        // all slugs specified by the author in the explorer config
-        const uniqueSlugsInGrapherRow = _.uniq(
-            [...ySlugs.split(" "), xSlug, colorSlug, sizeSlug].filter(
-                _.identity
-            )
-        ) as string[]
+        const indexMap: Record<string, number> = {}
+        const ySlugList = config.ySlugs?.split(" ") ?? []
+        ySlugList.forEach((slug, index) => (indexMap[slug] = index))
 
-        // find all variables that the transformed columns depend on and add them to the dimensions array
-        if (uniqueSlugsInGrapherRow.length) {
-            const baseVariableIds = _.uniq(
-                uniqueSlugsInGrapherRow.flatMap((slug) =>
-                    this.getBaseVariableIdsForColumnWithTransform(slug)
-                )
-            )
-                .map((id) => parseInt(id, 10))
-                .filter((id) => !isNaN(id))
-            baseVariableIds.forEach((variableId) => {
-                const hasDimension = dimensions.some(
-                    (d) => d.variableId === variableId
-                )
-                if (!hasDimension) {
-                    dimensions.push({
-                        variableId: variableId,
-                        property: DimensionProperty.table, // no specific dimension
-                    })
-                }
-            })
-        }
-
-        config.dimensions = dimensions
-        if (ySlugs && yVariableIds) config.ySlugs = ySlugs + " " + yVariableIds
+        // Sort dimensions to match the order defined in config.ySlugs
+        config.dimensions = _.sortBy(
+            dimensions,
+            (dim) => indexMap[dim.slug ?? dim.variableId]
+        )
 
         this.inputTableTransformer = (table: OwidTable) => {
-            // add transformed (and intermediate) columns to the grapher table
-            if (uniqueSlugsInGrapherRow.length) {
-                const allColumnSlugs = _.uniq(
-                    uniqueSlugsInGrapherRow.flatMap((slug) => [
-                        ...this.getBaseColumnsForColumnWithTransform(slug),
-                        slug,
-                    ])
+            // All slugs specified by the author in the explorer config
+            const slugs = _.uniq(slugDimensions.map(({ slug }) => slug))
+
+            // Add transformed columns (and the variables they depend on) to the grapher table
+            if (slugs.length > 0) {
+                const baseSlugs = slugs.flatMap((slug) => {
+                    const def = getColumnDef(slug)
+                    if (!def?.transform) return []
+                    const { params: transformParams = [] } =
+                        parseTransformString(def.transform ?? "") ?? {}
+                    const dataSlugsForTransform = transformParams
+                        .filter(
+                            ({ type }) => type === TransformParamType.DataSlug
+                        )
+                        .map(({ value }) => value)
+                    return dataSlugsForTransform
+                })
+                const allRequiredSlugs = _.uniq([...baseSlugs, ...slugs])
+                const existingSlugs = new Set(table.columnSlugs)
+                const missingSlugs = allRequiredSlugs.filter(
+                    (slug) => !existingSlugs.has(slug)
                 )
-                const existingColumnSlugs = table.columnSlugs
-                const outstandingColumnSlugs = allColumnSlugs.filter(
-                    (slug) => !existingColumnSlugs.includes(slug)
-                )
-                const requiredColumnDefs = outstandingColumnSlugs
-                    .map(
-                        (slug) =>
-                            this.columnDefsWithoutTableSlugByIdOrSlug[slug]
-                    )
-                    .filter(_.identity)
-                table = table.appendColumns(requiredColumnDefs)
+                const missingColumnDefs = missingSlugs
+                    .map((slug) => getColumnDef(slug))
+                    .filter((def) => def !== undefined)
+                table = table.appendColumns(missingColumnDefs)
             }
 
-            // update column definitions with manually provided properties
+            // Update column definitions with manually provided properties
             table = table.updateDefs((def: OwidColumnDef) => {
-                const manuallyProvidedDef =
-                    this.columnDefsWithoutTableSlugByIdOrSlug[def.slug] ?? {}
-                const mergedDef = { ...def, ...manuallyProvidedDef }
-
-                // update display properties
-                mergedDef.display ??= {}
-                if (manuallyProvidedDef.name)
-                    mergedDef.display.name = manuallyProvidedDef.name
-                if (manuallyProvidedDef.unit)
-                    mergedDef.display.unit = manuallyProvidedDef.unit
-                if (manuallyProvidedDef.shortUnit)
-                    mergedDef.display.shortUnit = manuallyProvidedDef.shortUnit
-
-                return mergedDef
+                const manuallyProvidedDef = getColumnDef(def.slug) ?? {}
+                return merge(def, manuallyProvidedDef)
             })
+
             return table
         }
 
@@ -830,7 +826,9 @@ export class Explorer
             // so we don't end up confusingly showing stale data from a previous chart
             grapherState.inputTable = BlankOwidTable()
         } else {
-            const inputTable = fetchInputTableForConfig({
+            const loadFn =
+                this.props.loadInputTableForConfig ?? fetchInputTableForConfig
+            const inputTable = loadFn({
                 dimensions: config.dimensions,
                 selectedEntityColors: config.selectedEntityColors,
                 archiveContext: this.props.archiveContext,
@@ -886,7 +884,7 @@ export class Explorer
 
     @computed private get currentChoiceParams(): ExplorerChoiceParams {
         const { decisionMatrix } = this.explorerProgram
-        return decisionMatrix.currentParams
+        return decisionMatrix.toConstrainedOptions()
     }
 
     @computed get queryParams(): ExplorerFullQueryParams {
@@ -920,6 +918,10 @@ export class Explorer
         return url.queryParams as ExplorerFullQueryParams
     }
 
+    @computed get queryStr(): string {
+        return Url.fromQueryParams(this.queryParams).queryStr
+    }
+
     @computed get currentUrl(): Url {
         if (this.props.isPreview) return Url.fromQueryParams(this.queryParams)
         return Url.fromURL(window.location.href).setQueryParams(
@@ -940,7 +942,10 @@ export class Explorer
                 () =>
                     this.grapher?.debounceMode
                         ? debouncedPushParams()
-                        : pushParams()
+                        : pushParams(),
+                // Fire immediately to update the URL if initial params were
+                // invalid (e.g. an unavailable choice was requested)
+                { fireImmediately: true }
             )
         )
     }
@@ -973,15 +978,19 @@ export class Explorer
                     {this.explorerProgram.explorerTitle} Data Explorer
                 </div>
                 <div className="ExplorerSubtitle">
-                    <MarkdownTextWrap
-                        fontSize={12}
-                        text={this.explorerProgram.explorerSubtitle || ""}
+                    <MarkdownTextWrapHtml
+                        textWrap={
+                            new MarkdownTextWrap({
+                                fontSize: 12,
+                                text:
+                                    this.explorerProgram.explorerSubtitle || "",
+                            })
+                        }
                     />
                 </div>
                 {this.explorerProgram.downloadDataLink && (
                     <a
                         href={this.explorerProgram.downloadDataLink}
-                        rel="noopener"
                         className="ExplorerDownloadLink"
                     >
                         Download this dataset
@@ -1006,13 +1015,9 @@ export class Explorer
         )
     }
 
-    @computed private get downloadDataLink(): string | undefined {
-        return this.explorerProgram.downloadDataLink
-    }
+    private readonly grapherContainerRef = React.createRef<HTMLDivElement>()
 
-    private grapherContainerRef = React.createRef<HTMLDivElement>()
-
-    private grapherRef = React.createRef<Grapher>()
+    private readonly grapherRef = React.createRef<Grapher>()
 
     private renderControlBar() {
         return (
@@ -1145,13 +1150,6 @@ export class Explorer
         )
     }
 
-    @computed get canonicalUrl() {
-        return (
-            this.props.canonicalUrl ??
-            Url.fromURL(this.baseUrl).setQueryParams(this.queryParams).fullUrl
-        )
-    }
-
     @computed get grapherTable() {
         return this.grapherState?.tableAfterAuthorTimelineAndEntityFilter
     }
@@ -1163,7 +1161,7 @@ export class Explorer
     entityPickerTable: OwidTable | undefined = undefined
     entityPickerTableIsLoading: boolean = false
 
-    private futureEntityPickerTable = new PromiseSwitcher<OwidTable>({
+    private readonly futureEntityPickerTable = new PromiseSwitcher<OwidTable>({
         onResolve: (table) => {
             this.entityPickerTable = table
             this.entityPickerTableIsLoading = false

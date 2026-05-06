@@ -6,14 +6,17 @@ import {
 import { parseIntOrUndefined } from "@ourworldindata/utils"
 import { getGptTopicSuggestions } from "../../db/model/Chart.js"
 import { CLOUDFLARE_IMAGES_URL } from "../../settings/clientSettings.js"
-import { fetchGptGeneratedAltText } from "../imagesHelpers.js"
+import {
+    fetchGptGeneratedAltText,
+    fetchGptGeneratedTextFromImage,
+} from "../imagesHelpers.js"
 import * as db from "../../db/db.js"
-import e from "express"
 import { Request } from "../authentication.js"
+import { HandlerResponse } from "../FunctionalRouter.js"
 
 export async function suggestGptTopics(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ): Promise<Record<"topics", DbChartTagJoin[]>> {
     const chartId = parseIntOrUndefined(req.params.chartId)
@@ -34,7 +37,7 @@ export async function suggestGptTopics(
 
 export async function suggestGptAltTextForCloudflareImage(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ): Promise<{
     success: true
@@ -55,7 +58,7 @@ export async function suggestGptAltTextForCloudflareImage(
 
 export async function suggestGptAltText(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     _trx: db.KnexReadonlyTransaction
 ): Promise<{
     success: true
@@ -65,7 +68,7 @@ export async function suggestGptAltText(
     if (!imageUrl) throw new JsonError(`No image URL provided`, 400)
     if (typeof imageUrl !== "string")
         throw new JsonError(`Invalid image URL provided`, 400)
-    const response = await generateAltTextFromUrl(imageUrl as string)
+    const response = await generateAltTextFromUrl(imageUrl)
     return response
 }
 
@@ -73,7 +76,7 @@ export async function generateAltTextFromUrl(imageUrl: string): Promise<{
     success: true
     altText: string
 }> {
-    let altText: string | null = ""
+    let altText: string | null
     try {
         altText = await fetchGptGeneratedAltText(imageUrl)
     } catch (error) {
@@ -89,4 +92,24 @@ export async function generateAltTextFromUrl(imageUrl: string): Promise<{
     }
 
     return { success: true, altText }
+}
+
+export async function extractTextFromImage(
+    req: Request,
+    _res: HandlerResponse
+): Promise<{
+    success: true
+    text: string
+}> {
+    const imageUrl = req.query.imageUrl
+    if (!imageUrl) throw new JsonError(`No image URL provided`, 400)
+    if (typeof imageUrl !== "string")
+        throw new JsonError(`Invalid image URL provided`, 400)
+    const { text } = await fetchGptGeneratedTextFromImage(imageUrl)
+    // If a user picks an image that has no text, we return an empty string
+    // instead of throwing an error, so the user can still save the image (though this seems very unlikely as a use case)
+    if (!text && text !== "") {
+        throw new JsonError(`Unable to extract text from image`, 404)
+    }
+    return { success: true, text }
 }

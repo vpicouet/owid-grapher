@@ -20,6 +20,7 @@ import {
     MultiDimDataPageConfigRaw,
     MultiDimDataPagesTableName,
     MultiDimXChartConfigsTableName,
+    MultiDimViewDimensionsTableName,
     parseChartConfigsRow,
     R2GrapherConfigDirectory,
     View,
@@ -27,7 +28,7 @@ import {
 import {
     mergeGrapherConfigs,
     MultiDimDataPageConfig,
-    multiDimDimensionsToViewId,
+    dimensionsToViewId,
 } from "@ourworldindata/utils"
 import * as db from "../db/db.js"
 import { upsertMultiDimDataPage } from "../db/model/MultiDimDataPage.js"
@@ -292,7 +293,7 @@ export async function upsertMultiDim(
                 patchGrapherConfig
             )
             const existingChartConfigId = existingViewIdsToChartConfigIds.get(
-                multiDimDimensionsToViewId(view.dimensions)
+                dimensionsToViewId(view.dimensions)
             )
             let chartConfigId
             if (existingChartConfigId) {
@@ -313,15 +314,20 @@ export async function upsertMultiDim(
                     fullGrapherConfig
                 )
                 chartConfigId = result.chartConfigId
+                await knex(MultiDimViewDimensionsTableName).insert({
+                    chartConfigId,
+                    dimensions: JSON.stringify(view.dimensions),
+                })
                 console.debug(`Chart config created id=${chartConfigId}`)
             }
             return { ...view, fullConfigId: chartConfigId }
         })
     )
 
-    const orphanedChartConfigIds = Array.from(
-        existingViewIdsToChartConfigIds.values()
-    ).filter((id) => !reusedChartConfigIds.has(id))
+    const orphanedChartConfigIds = existingViewIdsToChartConfigIds
+        .values()
+        .filter((id) => !reusedChartConfigIds.has(id))
+        .toArray()
     await cleanUpOrphanedChartConfigs(knex, orphanedChartConfigIds)
 
     const enrichedConfig = { ...config, views: enrichedViews }
@@ -333,7 +339,7 @@ export async function upsertMultiDim(
     for (const view of enrichedConfig.views) {
         await upsertMultiDimXChartConfigs(knex, {
             multiDimId,
-            viewId: multiDimDimensionsToViewId(view.dimensions),
+            viewId: dimensionsToViewId(view.dimensions),
             variableId: view.indicators.y[0].id,
             chartConfigId: view.fullConfigId,
         })

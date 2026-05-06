@@ -24,6 +24,8 @@ export function MultiDimDataPage({
     baseUrl,
     slug,
     configObj,
+    initialViewData,
+    initialViewDimensions,
     tagToSlugMap,
     faqEntries,
     primaryTopic,
@@ -45,13 +47,14 @@ export function MultiDimDataPage({
         canonicalUrl,
         slug,
         configObj,
+        initialViewData,
+        initialViewDimensions,
         faqEntries,
         primaryTopic,
         relatedResearchCandidates,
         imageMetadata,
         tagToSlugMap,
         isPreviewing,
-        archiveContext,
     }
     const imageUrl: string = urljoin(
         baseUrl || "/",
@@ -117,6 +120,10 @@ export function MultiDimDataPage({
                                     config={MultiDimDataPageConfig.fromObject(
                                         configObj
                                     )}
+                                    initialViewData={initialViewData}
+                                    initialViewDimensions={
+                                        initialViewDimensions
+                                    }
                                     isPreviewing={isPreviewing}
                                     faqEntries={faqEntries}
                                     primaryTopic={primaryTopic}
@@ -134,7 +141,7 @@ export function MultiDimDataPage({
                 <SiteFooter
                     context={SiteFooterContext.multiDimDataPage}
                     isPreviewing={isPreviewing}
-                    archiveInfo={isOnArchivalPage ? archiveContext : undefined}
+                    archiveContext={archiveContext}
                 />
             </body>
         </Html>

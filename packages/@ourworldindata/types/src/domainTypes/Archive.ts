@@ -12,7 +12,10 @@ export interface UrlAndMaybeDate {
     date?: Date | ArchivalDateString
 }
 
+export type ArchiveContentType = "data" | "writing"
+
 export interface ArchiveSiteNavigationInfo {
+    contentType: ArchiveContentType
     liveUrl?: string
     previousVersion?: UrlAndMaybeDate
     nextVersion?: UrlAndMaybeDate
@@ -23,12 +26,15 @@ export interface ArchiveSiteNavigationInfo {
 export interface ArchivedPageVersion {
     archivalDate: ArchivalDateString
     archiveUrl: string
+    versionsFileUrl?: string
     type: "archived-page-version"
 }
 
 // Information about an archived chart that is necessary for rendering the archived page, incl. navigation and assets
-export interface ArchiveMetaInformation
-    extends Omit<ArchivedPageVersion, "type"> {
+export interface ArchiveMetaInformation extends Omit<
+    ArchivedPageVersion,
+    "type"
+> {
     archiveNavigation: ArchiveSiteNavigationInfo
     assets: {
         runtime: AssetMap
@@ -86,5 +92,62 @@ export interface ExplorerChecksums {
 export interface ExplorerChecksumsObjectWithHash {
     explorerSlug: string
     checksums: ExplorerChecksums
+    checksumsHashed: string
+}
+
+export interface NarrativeChartChecksums {
+    chartConfigMd5: string
+    queryParamsForParentChartMd5: string
+    indicators: IndicatorChecksums
+}
+
+export interface NarrativeChartChecksumsResult {
+    narrativeChartId: number
+    narrativeChartName: string
+    checksums: NarrativeChartChecksums
+}
+
+export interface PostChecksums {
+    postContentMd5: string
+    indicators: IndicatorChecksums // Shared across all chart types
+    graphers: {
+        [chartId: string]: {
+            slug: string
+            chartConfigMd5: string
+        }
+    }
+    explorers: {
+        [slug: string]: {
+            explorerConfigMd5: string
+            chartConfigs: {
+                [id: string]: string // chartConfigId -> MD5
+            }
+        }
+    }
+    multiDims: {
+        [multiDimId: string]: {
+            slug: string
+            multiDimConfigMd5: string
+            chartConfigs: {
+                [id: string]: string // chartConfigId -> MD5
+            }
+        }
+    }
+    narrativeCharts: {
+        [narrativeChartId: string]: {
+            name: string
+            chartConfigMd5: string
+            queryParamsForParentChartMd5: string
+        }
+    }
+    images: {
+        [imageId: string]: { filename: string; hash: string }
+    }
+}
+
+export interface PostChecksumsObjectWithHash {
+    postId: string
+    postSlug: string
+    checksums: PostChecksums
     checksumsHashed: string
 }

@@ -1,29 +1,24 @@
-import { TagGraphRoot } from "@ourworldindata/types"
-import { LiteClient } from "algoliasearch/lite"
-import { useReducer, useMemo, useDeferredValue } from "react"
-import { match } from "ts-pattern"
-import { useIsFetching } from "@tanstack/react-query"
-
-// Search state and types
-import { searchReducer, createActions } from "./searchState.js"
 import {
-    SearchState,
+    TagGraphRoot,
     FilterType,
     TemplateConfig,
     SearchResultType,
-} from "./searchTypes.js"
+} from "@ourworldindata/types"
+import { LiteClient } from "algoliasearch/lite"
+import { useEffect, useMemo, useState } from "react"
+import { match } from "ts-pattern"
+import { useIsFetching } from "@tanstack/react-query"
 
 // Utils and hooks
 import {
     getFilterNamesOfType,
     getSelectedTopicType,
     getEffectiveResultType,
+    hasDatasetFilters,
+    isBrowsing,
 } from "./searchUtils.js"
-import {
-    useUrlSync,
-    useTagGraphTopics,
-    useSearchStateAnalytics,
-} from "./searchHooks.js"
+import { useTagGraphTopics, useSearchAnalytics } from "./searchHooks.js"
+import { stateToSearchParams, useSearchParamsState } from "./searchState.js"
 
 // Components
 import { Searchbar } from "./Searchbar.js"
@@ -38,57 +33,69 @@ import { SearchDetectedFilters } from "./SearchDetectedFilters.js"
 import { buildSynonymMap } from "./synonymUtils.js"
 import { SiteAnalytics } from "../SiteAnalytics.js"
 import { PoweredBy } from "react-instantsearch"
+import { listedRegionsNames } from "@ourworldindata/utils"
 
 export const Search = ({
-    initialState,
     topicTagGraph,
     liteSearchClient,
 }: {
-    initialState: SearchState
     topicTagGraph: TagGraphRoot
     liteSearchClient: LiteClient
 }) => {
-    // State management
-    const [state, dispatch] = useReducer(searchReducer, initialState)
-    const actions = useMemo(() => createActions(dispatch), [dispatch])
-
     // Extract topic and area data from the graph
-    const { allAreas, allTopics } = useTagGraphTopics(topicTagGraph)
+    const { allAreas: eligibleAreas, allTopics: eligibleTopics } =
+        useTagGraphTopics(topicTagGraph)
+
+    const eligibleRegionNames = useMemo(() => listedRegionsNames(), [])
+    const eligibleTopicsAndAreas = useMemo(
+        () => [...eligibleAreas, ...eligibleTopics],
+        [eligibleAreas, eligibleTopics]
+    )
 
     const synonymMap = useMemo(() => buildSynonymMap(), [])
 
+    // State derived from URL - single source of truth (includes automatic filter detection)
+    const { state, actions } = useSearchParamsState(
+        eligibleRegionNames,
+        eligibleTopicsAndAreas,
+        synonymMap
+    )
+
     const analytics = useMemo(() => new SiteAnalytics(), [])
 
-    const deferredState = useDeferredValue(state)
-
-    // Bidirectional URL synchronization
-    const isInitialUrlStateLoaded = useUrlSync(deferredState, actions.setState)
-
-    // Handle analytics tracking
-    useSearchStateAnalytics(deferredState, analytics, isInitialUrlStateLoaded)
+    // Handle analytics tracking (skips initial page load)
+    useSearchAnalytics(state, analytics)
 
     const isFetching = useIsFetching()
 
+    // Autofocus only on the first mount if the user is browsing.
+    const [shouldAutoFocus, setShouldAutoFocus] = useState(() =>
+        isBrowsing(state.filters, state.query)
+    )
+
+    useEffect(() => {
+        setShouldAutoFocus(false)
+    }, [])
+
     // Derived state for template configuration
-    const topicType = getSelectedTopicType(deferredState.filters, allAreas)
+    const topicType = getSelectedTopicType(state.filters, eligibleAreas)
     const templateConfig: TemplateConfig = {
         resultType: getEffectiveResultType(
-            deferredState.filters,
-            deferredState.query,
-            deferredState.resultType
+            state.filters,
+            state.query,
+            state.resultType
         ),
         topicType,
         hasCountry:
-            getFilterNamesOfType(deferredState.filters, FilterType.COUNTRY)
-                .size > 0,
-        hasQuery: deferredState.query.length > 0,
+            getFilterNamesOfType(state.filters, FilterType.COUNTRY).size > 0,
+        hasQuery: state.query.length > 0,
+        hasDatasetFilters: hasDatasetFilters(state.filters),
     }
 
     return (
         <SearchContext.Provider
             value={{
                 state,
-                deferredState,
                 actions,
                 liteSearchClient,
                 templateConfig,
@@ -98,8 +105,23 @@ export const Search = ({
             }}
         >
             <div className="search-controls-container span-cols-12 col-start-2">
-                <Searchbar allTopics={allTopics} />
-                <SearchDetectedFilters allTopics={allTopics} />
+                <Searchbar
+                    // force a component re-mount to sync local query state when
+                    // global state updates. This is relevant in two cases:
+                    // - a new global query is set (e.g. via autocomplete
+                    //   selection)
+                    // - filters are added/removed while an uncommitted local
+                    //   query exists (e.g. selecting a country from the country
+                    //   selector). In this case, we want to reset the local
+                    //   query to match the global one, discarding any
+                    //   uncommitted changes.
+                    key={stateToSearchParams(state).toString()}
+                    autoFocus={shouldAutoFocus}
+                    allTopics={eligibleTopics}
+                />
+                <SearchDetectedFilters
+                    eligibleRegionNames={eligibleRegionNames}
+                />
             </div>
             <div className="search-filters span-cols-12 col-start-2">
                 <SearchTopicsRefinementList topicType={topicType} />

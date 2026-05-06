@@ -10,6 +10,7 @@ import {
     EMBEDDED_EXPLORER_DELIMITER,
     EMBEDDED_EXPLORER_GRAPHER_CONFIGS,
     EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS,
+    EMBEDDED_EXPLORER_VIEW_CONFIG_IDS,
     ExplorerContainerId,
     EXPLORERS_ROUTE_FOLDER,
     ExplorerProgram,
@@ -20,12 +21,12 @@ import { Head } from "../site/Head.js"
 import { IFrameDetector } from "../site/IframeDetector.js"
 import { SiteFooter } from "../site/SiteFooter.js"
 import { SiteHeader } from "../site/SiteHeader.js"
-import { SiteSubnavigation } from "../site/SiteSubnavigation.js"
 import { Html } from "./Html.js"
 import {
     ADMIN_BASE_URL,
     BAKED_BASE_URL,
     BAKED_GRAPHER_URL,
+    CATALOG_URL,
     DATA_API_URL,
 } from "../settings/clientSettings.js"
 
@@ -34,6 +35,7 @@ interface ExplorerPageSettings {
     wpContent?: string
     grapherConfigs: GrapherInterface[]
     partialGrapherConfigs: GrapherInterface[]
+    chartConfigIdByViewId?: Record<string, string>
     baseUrl: string
     urlMigrationSpec?: ExplorerPageUrlMigrationSpec
     isPreviewing?: boolean
@@ -67,29 +69,15 @@ export const ExplorerPage = (props: ExplorerPageSettings) => {
         program,
         grapherConfigs,
         partialGrapherConfigs,
+        chartConfigIdByViewId,
         baseUrl,
         urlMigrationSpec,
         archiveContext,
     } = props
-    const {
-        subNavId,
-        subNavCurrentId,
-        explorerTitle,
-        explorerSubtitle,
-        slug,
-        thumbnail,
-        hideAlertBanner,
-    } = program
+    const { explorerTitle, explorerSubtitle, slug, thumbnail } = program
 
     const isOnArchivalPage = archiveContext?.type === "archive-page"
     const assetMaps = isOnArchivalPage ? archiveContext.assets : undefined
-
-    const subNav = subNavId ? (
-        <SiteSubnavigation
-            subnavId={subNavId}
-            subnavCurrentId={subNavCurrentId}
-        />
-    ) : undefined
 
     const inlineJs = `const explorerProgram = ${serializeJSONForHTML(
         program.toJson(),
@@ -103,6 +91,10 @@ const partialGrapherConfigs = ${serializeJSONForHTML(
         partialGrapherConfigs,
         EMBEDDED_EXPLORER_PARTIAL_GRAPHER_CONFIGS
     )};
+const chartConfigIdByViewId = ${serializeJSONForHTML(
+        chartConfigIdByViewId ?? {},
+        EMBEDDED_EXPLORER_VIEW_CONFIG_IDS
+    )};
 const urlMigrationSpec = ${
         urlMigrationSpec ? JSON.stringify(urlMigrationSpec) : "undefined"
     };
@@ -112,14 +104,16 @@ const explorerConstants = ${serializeJSONForHTML(
             bakedBaseUrl: BAKED_BASE_URL,
             bakedGrapherUrl: BAKED_GRAPHER_URL,
             dataApiUrl: DATA_API_URL,
+            catalogUrl: CATALOG_URL,
         },
         EXPLORER_CONSTANTS_DELIMITER
     )}
-const archiveContext = ${JSON.stringify(archiveContext)};
+const archiveContext = window._OWID_ARCHIVE_CONTEXT
 window.Explorer.renderSingleExplorerOnExplorerPage(
     explorerProgram,
     grapherConfigs,
     partialGrapherConfigs,
+    chartConfigIdByViewId,
     explorerConstants,
     urlMigrationSpec,
     archiveContext
@@ -140,10 +134,8 @@ window.Explorer.renderSingleExplorerOnExplorerPage(
             </Head>
             <body className={GRAPHER_PAGE_BODY_CLASS}>
                 <SiteHeader
-                    hideAlertBanner={hideAlertBanner || false}
                     archiveInfo={isOnArchivalPage ? archiveContext : undefined}
                 />
-                {subNav}
                 <main id={ExplorerContainerId}>
                     <div className="js--show-warning-block-if-js-disabled" />
                     <LoadingIndicator />
@@ -152,7 +144,7 @@ window.Explorer.renderSingleExplorerOnExplorerPage(
                 <SiteFooter
                     context={SiteFooterContext.explorerPage}
                     isPreviewing={props.isPreviewing}
-                    archiveInfo={isOnArchivalPage ? archiveContext : undefined}
+                    archiveContext={archiveContext}
                 />
                 <script
                     type="module"

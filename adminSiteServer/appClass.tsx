@@ -6,9 +6,11 @@ import { BAKED_BASE_URL, ENV } from "../settings/serverSettings.js"
 import * as db from "../db/db.js"
 import { IndexPage } from "./IndexPage.js"
 import {
-    authCloudflareSSOMiddleware,
+    apiKeyAuthMiddleware,
+    cloudflareAuthMiddleware,
     tailscaleAuthMiddleware,
-    authMiddleware,
+    devAuthMiddleware,
+    requireAdminAuthMiddleware,
 } from "./authentication.js"
 import { apiRouter } from "./apiRouter.js"
 import { testPageRouter } from "./testPageRouter.js"
@@ -17,9 +19,18 @@ import { renderToHtmlPage } from "../serverUtils/serverUtil.js"
 
 import { publicApiRouter } from "./publicApiRouter.js"
 import { mockSiteRouter } from "./mockSiteRouter.js"
-import { GdocsContentSource } from "@ourworldindata/utils"
+import {
+    GdocsContentSource,
+    OwidGdocType,
+    getEntitiesForProfile,
+} from "@ourworldindata/utils"
 import OwidGdocPage from "../site/gdocs/OwidGdocPage.js"
 import { getAndLoadGdocById } from "../db/model/Gdoc/GdocFactory.js"
+import {
+    instantiateProfileForEntity,
+    GdocProfile,
+} from "../db/model/Gdoc/GdocProfile.js"
+import { checkShouldProfileRender } from "../db/model/Gdoc/dataCallouts.js"
 
 interface OwidAdminAppOptions {
     isDev: boolean
@@ -33,7 +44,7 @@ export class OwidAdminApp {
     }
 
     app = express()
-    private options: OwidAdminAppOptions
+    private readonly options: OwidAdminAppOptions
 
     server?: http.Server
     async stopListening() {
@@ -55,16 +66,18 @@ export class OwidAdminApp {
 
         app.use(express.urlencoded({ extended: true, limit: "50mb" }))
 
+        app.use("/admin", apiKeyAuthMiddleware)
+
         if (ENV === "staging") {
-            // Try to log in with tailscale if we're in staging
-            app.use(tailscaleAuthMiddleware)
-        } else {
-            // In production use Cloudflare
-            app.use("/admin/login", authCloudflareSSOMiddleware)
+            app.use("/admin", tailscaleAuthMiddleware)
+        } else if (ENV === "production") {
+            app.use("/admin", cloudflareAuthMiddleware)
+        } else if (ENV === "development") {
+            app.use("/admin", devAuthMiddleware)
         }
 
         // Require authentication (only for /admin requests)
-        app.use(authMiddleware)
+        app.use("/admin", requireAdminAuthMiddleware)
 
         app.use("/", express.static("public"))
         app.use("/assets", express.static("dist/assets"))
@@ -91,12 +104,65 @@ export class OwidAdminApp {
         // Public preview of a Gdoc document
         app.get("/gdocs/:id/preview", async (req, res) => {
             try {
+                const acceptSuggestions = req.query.acceptSuggestions === "true"
                 await db.knexReadonlyTransaction(async (knex) => {
                     const gdoc = await getAndLoadGdocById(
                         knex,
                         req.params.id,
-                        GdocsContentSource.Gdocs
+                        GdocsContentSource.Gdocs,
+                        acceptSuggestions
                     )
+
+                    // For profiles, instantiate with the selected entity
+                    if (
+                        gdoc.content.type === OwidGdocType.Profile &&
+                        req.query.entity
+                    ) {
+                        const entityCode = req.query.entity as string
+                        const entitiesInScope = getEntitiesForProfile(
+                            gdoc.content.scope,
+                            gdoc.content.exclude
+                        )
+                        const entityInScope = entitiesInScope.find(
+                            (profileEntity) => profileEntity.code === entityCode
+                        )
+                        if (!entityInScope) {
+                            res.status(404).send(
+                                "This entity is not in the profile scope."
+                            )
+                            return
+                        }
+                        const instantiatedProfile =
+                            await instantiateProfileForEntity(
+                                gdoc as GdocProfile,
+                                entityInScope,
+                                { knex }
+                            )
+
+                        if (
+                            !checkShouldProfileRender(
+                                instantiatedProfile.content
+                            )
+                        ) {
+                            res.status(404).send(
+                                "This profile has no renderable content for this entity. A profile will not be baked for it."
+                            )
+                            return
+                        }
+
+                        res.set("X-Robots-Tag", "noindex")
+                        res.send(
+                            renderToHtmlPage(
+                                <OwidGdocPage
+                                    baseUrl={BAKED_BASE_URL}
+                                    gdoc={instantiatedProfile}
+                                    debug
+                                    isPreviewing
+                                />
+                            )
+                        )
+                        return
+                    }
 
                     res.set("X-Robots-Tag", "noindex")
                     res.send(
@@ -203,6 +269,7 @@ export class OwidAdminApp {
 
     connectToDatabases = async () => {
         try {
+            // @ts-expect-error tests the database connection
             const _ = db.knexInstance()
         } catch (error) {
             // grapher database is in fact required, but we will not fail now in case it

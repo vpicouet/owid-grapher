@@ -2,8 +2,7 @@ import * as _ from "lodash-es"
 import React from "react"
 import {
     Bounds,
-    isTouchDevice,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     excludeUndefined,
     EntityName,
     MapRegionName,
@@ -77,10 +76,6 @@ export class ChoroplethMap extends React.Component<{
         })
     }
 
-    @computed private get isTouchDevice(): boolean {
-        return isTouchDevice()
-    }
-
     @computed private get manager(): ChoroplethMapManager {
         return this.props.manager
     }
@@ -98,7 +93,7 @@ export class ChoroplethMap extends React.Component<{
     }
 
     @computed private get viewport(): MapViewport {
-        return MAP_VIEWPORTS[this.mapConfig.region]
+        return this.manager.mapViewport ?? MAP_VIEWPORTS[this.mapConfig.region]
     }
 
     @computed.struct private get choroplethData(): ChoroplethSeriesByName {
@@ -150,7 +145,19 @@ export class ChoroplethMap extends React.Component<{
         const newOffsetX = boundsCenterX - newCenterX
         const newOffsetY = boundsCenterY - newCenterY
 
-        const matrixStr = `matrix(${viewportScale},0,0,${viewportScale},${newOffsetX},${newOffsetY})`
+        const matrixComponents = [
+            viewportScale,
+            0,
+            0,
+            viewportScale,
+            newOffsetX,
+            newOffsetY,
+        ]
+        const matrixComponentsRounded = matrixComponents.map((c) =>
+            _.round(c, 3)
+        )
+
+        const matrixStr = `matrix(${matrixComponentsRounded.join(",")})`
         return matrixStr
     }
 
@@ -263,7 +270,7 @@ export class ChoroplethMap extends React.Component<{
                     feature,
                     projection: this.projection,
                     formattedValue: this.formatAnnotationLabel(series.value),
-                    fontSizeScale: this.viewportScaleSqrt,
+                    fontSizeScale: this.viewportScale,
                     color: labelColor,
                 }
 
@@ -307,7 +314,7 @@ export class ChoroplethMap extends React.Component<{
     // Otherwise we do a quadtree search for the closest center point of a feature bounds,
     // so that we can hover very small countries without trouble
     @action.bound private detectNearbyFeature(
-        event: MouseEvent | TouchEvent
+        event: PointerEvent
     ): MapRenderFeature | undefined {
         if (this.hoverEnterFeature || !this.base.current) return
 
@@ -331,18 +338,23 @@ export class ChoroplethMap extends React.Component<{
         return nearbyFeature
     }
 
-    @action.bound private onMouseMove(event: MouseEvent): void {
+    @action.bound private onPointerMove(event: PointerEvent): void {
         this.detectNearbyFeature(event)
     }
 
-    @action.bound private onMouseEnter(feature: MapRenderFeature): void {
+    @action.bound private onPointerEnter(
+        feature: MapRenderFeature,
+        event: PointerEvent
+    ): void {
+        // on touch, let the click handler set hover so the
+        // tooltip doesn't appear before the click event fires
+        if (event.pointerType === "touch") return
         this.setHoverEnterFeature(feature)
     }
 
-    @action.bound private onMouseLeave(): void {
-        // Fixes an issue where clicking on a country that overlaps with the
-        // tooltip causes the tooltip to disappear shortly after being rendered
-        if (this.isTouchDevice) return
+    @action.bound private onPointerLeave(event: PointerEvent): void {
+        // on touch, the tooltip is dismissed via the document pointerdown handler
+        if (event.pointerType === "touch") return
 
         this.clearHoverEnterFeature()
     }
@@ -361,10 +373,6 @@ export class ChoroplethMap extends React.Component<{
         this.manager.onMapMouseLeave?.()
     }
 
-    @action.bound private onTouchStart(feature: MapRenderFeature): void {
-        this.setHoverEnterFeature(feature)
-    }
-
     @action.bound private onClick(feature: MapRenderFeature): void {
         const {
             isMapSelectionEnabled,
@@ -374,26 +382,25 @@ export class ChoroplethMap extends React.Component<{
 
         this.setHoverEnterFeature(feature)
 
-        const is2dContinentActive =
-            !this.mapConfig.globe.isActive &&
-            this.mapConfig.region !== MapRegionName.World
+        const is2dContinentActive = this.mapConfig.is2dContinentActive()
 
         if (isMapSelectionEnabled) {
-            // select/deselect the country if allowed
+            // Select/deselect the country if allowed
             selection.toggleSelection(feature.id)
         } else if (
-            // don't rotate if the maps shows a continent in 2d mode
+            // Don't rotate if the maps shows a continent in 2d mode
             !is2dContinentActive &&
-            // don't rotate if the user is zoomed in, otherwise they can get stuck in 3D mode
+            // Don't rotate if the map is faceted
+            !this.manager.isFaceted &&
+            // Don't rotate if the user is zoomed in, otherwise they can get stuck in 3D mode
             window?.visualViewport?.scale === 1
         ) {
-            // rotate to the selected country on the globe
+            // Rotate to the selected country on the globe
             globeController?.rotateToCountry(feature.id)
-            globeController?.setFocusCountry(feature.id)
         }
     }
 
-    @action.bound private onDocumentClick(): void {
+    @action.bound private onDocumentPointerDown(): void {
         this.manager.globeController?.dismissCountryFocus()
         if (this.hoverEnterFeature || this.hoverNearbyFeature) {
             this.hoverEnterFeature = undefined
@@ -406,7 +413,7 @@ export class ChoroplethMap extends React.Component<{
         if (this.internalAnnotations.length === 0) return
 
         return (
-            <g id={makeIdForHumanConsumption("annotations-internal")}>
+            <g id={makeFigmaId("annotations-internal")}>
                 {this.internalAnnotations.map((annotation) => (
                     <InternalValueAnnotation
                         key={annotation.id}
@@ -426,7 +433,7 @@ export class ChoroplethMap extends React.Component<{
 
         return (
             <g
-                id={makeIdForHumanConsumption("annotations-external")}
+                id={makeFigmaId("annotations-external")}
                 className="ExternalAnnotations"
             >
                 {this.externalAnnotations.map((annotation) => (
@@ -434,12 +441,12 @@ export class ChoroplethMap extends React.Component<{
                         key={annotation.id}
                         annotation={annotation}
                         strokeScale={this.viewportScaleSqrt}
-                        onMouseEnter={action((feature: RenderFeature) =>
+                        onPointerEnter={action((feature: RenderFeature) =>
                             this.setHoverEnterFeature(
                                 feature as MapRenderFeature
                             )
                         )}
-                        onMouseLeave={action(() =>
+                        onPointerLeave={action(() =>
                             this.clearHoverEnterFeature()
                         )}
                     />
@@ -452,7 +459,7 @@ export class ChoroplethMap extends React.Component<{
         if (this.backgroundFeatures.length === 0) return
 
         return (
-            <g id={makeIdForHumanConsumption("countries-background")}>
+            <g id={makeFigmaId("countries-background")}>
                 {this.backgroundFeatures.map((feature) => (
                     <BackgroundCountry key={feature.id} feature={feature} />
                 ))}
@@ -466,7 +473,7 @@ export class ChoroplethMap extends React.Component<{
 
         return (
             <g
-                id={makeIdForHumanConsumption("countries-without-data")}
+                id={makeFigmaId("countries-without-data")}
                 className="noDataFeatures"
             >
                 <defs>
@@ -491,9 +498,8 @@ export class ChoroplethMap extends React.Component<{
 
                             this.onClick(feature)
                         }}
-                        onTouchStart={() => this.onTouchStart(feature)}
-                        onMouseEnter={this.onMouseEnter}
-                        onMouseLeave={this.onMouseLeave}
+                        onPointerEnter={this.onPointerEnter}
+                        onPointerLeave={this.onPointerLeave}
                     />
                 ))}
             </g>
@@ -504,7 +510,7 @@ export class ChoroplethMap extends React.Component<{
         if (this.sortedFeaturesWithData.length === 0) return
 
         return (
-            <g id={makeIdForHumanConsumption("countries-with-data")}>
+            <g id={makeFigmaId("countries-with-data")}>
                 {this.manager.hasProjectedData && (
                     <defs>
                         {/* Pattern used by the map legend for the projected data bin */}
@@ -553,9 +559,8 @@ export class ChoroplethMap extends React.Component<{
 
                                 this.onClick(feature)
                             }}
-                            onTouchStart={() => this.onTouchStart(feature)}
-                            onMouseEnter={this.onMouseEnter}
-                            onMouseLeave={this.onMouseLeave}
+                            onPointerEnter={this.onPointerEnter}
+                            onPointerLeave={this.onPointerLeave}
                         />
                     )
                 })}
@@ -565,10 +570,7 @@ export class ChoroplethMap extends React.Component<{
 
     renderStatic(): React.ReactElement {
         return (
-            <g
-                id={makeIdForHumanConsumption("map")}
-                transform={this.matrixTransform}
-            >
+            <g id={makeFigmaId("map")} transform={this.matrixTransform}>
                 {this.renderFeaturesInBackground()}
                 {this.renderFeaturesWithoutData()}
                 {this.renderFeaturesWithData()}
@@ -579,22 +581,19 @@ export class ChoroplethMap extends React.Component<{
     }
 
     override componentDidMount(): void {
-        document.addEventListener("touchstart", this.onDocumentClick, {
-            capture: true,
+        document.addEventListener("pointerdown", this.onDocumentPointerDown, {
             passive: true,
         })
     }
 
     override componentWillUnmount(): void {
-        document.removeEventListener("touchstart", this.onDocumentClick, {
-            capture: true,
-        })
+        document.removeEventListener("pointerdown", this.onDocumentPointerDown)
     }
 
     renderInteractive(): React.ReactElement {
         const { bounds, matrixTransform } = this
 
-        // this needs to be referenced here or it will be recomputed on every mousemove
+        // @ts-expect-error this needs to be referenced here or it will be recomputed on every mousemove
         const _cachedCentroids = this.quadtree
 
         // SVG layering is based on order of appearance in the element tree (later elements rendered on top)
@@ -607,16 +606,18 @@ export class ChoroplethMap extends React.Component<{
                     (ev: SVGMouseEvent): void =>
                         ev.preventDefault() /* Without this, title may get selected while shift clicking */
                 }
-                onMouseMove={(ev: SVGMouseEvent): void =>
-                    this.onMouseMove(ev.nativeEvent)
-                }
-                onMouseLeave={this.onMouseLeave}
+                onPointerMove={(ev): void => this.onPointerMove(ev.nativeEvent)}
+                onPointerLeave={(e) => this.onPointerLeave(e.nativeEvent)}
                 onClick={() => {
                     // invoke a click on a feature when clicking nearby one
                     if (this.hoverNearbyFeature)
                         this.onClick(this.hoverNearbyFeature)
                 }}
-                style={{ cursor: this.hoverFeature ? "pointer" : undefined }}
+                style={{
+                    cursor: this.hoverFeature ? "pointer" : undefined,
+                    // Remove the 300ms delay on click events and double-tap-to-zoom for touch devices
+                    touchAction: "manipulation",
+                }}
             >
                 <rect
                     x={bounds.x}

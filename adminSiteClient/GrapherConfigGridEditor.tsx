@@ -9,6 +9,7 @@ import {
     setWindowUrl,
     excludeNull,
     mergeGrapherConfigs,
+    es6mapValues,
 } from "@ourworldindata/utils"
 import { GrapherConfigPatch } from "../adminShared/AdminSessionTypes.js"
 import {
@@ -43,7 +44,7 @@ import {
     Grapher,
     GrapherProgrammaticInterface,
     GrapherState,
-    loadVariableDataAndMetadata,
+    loadCatalogData,
     MapChartState,
 } from "@ourworldindata/grapher"
 import { BindString, SelectField, Toggle } from "./Forms.js"
@@ -99,13 +100,11 @@ import CodeMirror, { EditorView } from "@uiw/react-codemirror"
 import jsonpointer from "json8-pointer"
 import { EditorColorScaleSection } from "./EditorColorScaleSection.js"
 import { Operation } from "../adminShared/SqlFilterSExpression.js"
-import { DATA_API_URL } from "../settings/clientSettings.js"
+import { CATALOG_URL, DATA_API_URL } from "../settings/clientSettings.js"
 import { SortableList } from "./SortableList.js"
 
 type Disposer = () => void
 
-// The rule doesn't support class components in the same file.
-// eslint-disable-next-line react-refresh/only-export-components
 function HotColorScaleRenderer() {
     return <div style={{ color: "gray" }}>Color scale</div>
 }
@@ -155,8 +154,8 @@ export class GrapherConfigGridEditor extends React.Component<GrapherConfigGridEd
     static override contextType = AdminAppContext
 
     grapherState = new GrapherState({
-        additionalDataLoaderFn: (varId: number) =>
-            loadVariableDataAndMetadata(varId, DATA_API_URL, { noCache: true }),
+        additionalDataLoaderFn: (catalogKey) =>
+            loadCatalogData(catalogKey, { baseUrl: CATALOG_URL }),
         bounds: new Bounds(0, 0, 480, 500),
 
         // workaround to enforce `useIdealBounds == false`
@@ -689,13 +688,12 @@ export class GrapherConfigGridEditor extends React.Component<GrapherConfigGridEd
                 )
                 .filter(([, val]) => !_.isNil(val))
             const fields = Object.fromEntries(fieldsArray)
-            const readOnlyColumnValues = [...readOnlyColumns.values()].map(
-                (field) => [field.key, (row as any)[field.key]]
+            const readOnlyColumnValues = es6mapValues(
+                readOnlyColumns,
+                (field) => row[field.key as keyof VariableAnnotationsRow]
             )
-            const readOnlyValuesObject =
-                Object.fromEntries(readOnlyColumnValues)
             return {
-                ...readOnlyValuesObject,
+                ...Object.fromEntries(readOnlyColumnValues),
                 ...defaultValues,
                 ...fields,
             }
@@ -1113,7 +1111,7 @@ export class GrapherConfigGridEditor extends React.Component<GrapherConfigGridEd
 
     async getFieldDefinitions() {
         const json = await fetch(
-            "https://files.ourworldindata.org/schemas/grapher-schema.009.json"
+            "https://files.ourworldindata.org/schemas/grapher-schema.010.json"
         ).then((response) => response.json())
         const fieldDescriptions = extractFieldDescriptionsFromSchema(json)
         runInAction(() => {

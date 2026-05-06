@@ -36,14 +36,15 @@ if (LOAD_SENTRY) {
         environment: ENV,
         release: COMMIT_SHA,
         integrations: [
+            Sentry.browserTracingIntegration(),
             Sentry.replayIntegration({
                 maskAllText: false,
                 maskAllInputs: false,
                 blockAllMedia: false,
-                minReplayDuration: 1000,
                 mask: [".sentry-mask"],
             }),
         ],
+        tracesSampleRate: 0.1,
         replaysSessionSampleRate: sampleRate,
         replaysOnErrorSampleRate: 0,
     })

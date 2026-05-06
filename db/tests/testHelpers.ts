@@ -2,8 +2,10 @@ import {
     ChartConfigsTableName,
     ChartDimensionsTableName,
     ChartRevisionsTableName,
+    ChartSlugRedirectsTableName,
     ChartsTableName,
     DatasetsTableName,
+    AdminApiKeysTableName,
     ExplorerChartsTableName,
     ExplorerVariablesTableName,
     ExplorerViewsTableName,
@@ -17,12 +19,13 @@ import {
     UsersTableName,
     VariablesTableName,
 } from "@ourworldindata/types"
-import { Knex } from "knex"
+import type { Knex } from "knex"
 
 // the order is important here since we drop rows from the tables in this order
 export const TABLES_IN_USE = [
     ChartDimensionsTableName,
     ChartRevisionsTableName,
+    ChartSlugRedirectsTableName, // Must come before ChartsTableName due to foreign key
     MultiDimXChartConfigsTableName,
     MultiDimDataPagesTableName,
     ExplorerViewsTableName, // Must come before ExplorersTableName due to foreign key
@@ -35,6 +38,7 @@ export const TABLES_IN_USE = [
     ChartConfigsTableName,
     DatasetsTableName,
     PostsGdocsTableName,
+    AdminApiKeysTableName,
     UsersTableName,
     TagGraphTableName,
     TagsTableName,

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import * as _ from "lodash-es"
 import * as React from "react"
 import { observer } from "mobx-react"
@@ -9,6 +10,7 @@ import {
     reaction,
     IReactionDisposer,
     makeObservable,
+    comparer,
 } from "mobx"
 import { Prompt, Redirect } from "react-router-dom"
 import {
@@ -17,7 +19,11 @@ import {
     extractDetailsFromSyntax,
     getIndexableKeys,
 } from "@ourworldindata/utils"
-import { GrapherInterface, DimensionProperty } from "@ourworldindata/types"
+import {
+    GrapherInterface,
+    DimensionProperty,
+    ORIGIN_URL_REGEX_PATTERNS,
+} from "@ourworldindata/types"
 import {
     DEFAULT_GRAPHER_BOUNDS,
     DEFAULT_GRAPHER_BOUNDS_SQUARE,
@@ -174,12 +180,12 @@ export class ChartEditorView<
             })
         }
 
-        const usageData = (await admin.getJSON(
-            `/api/variables.usages.json`
-        )) as {
-            variableId: number
-            usageCount: number
-        }[]
+        const usageData = await admin.getJSON<
+            {
+                variableId: number
+                usageCount: number
+            }[]
+        >(`/api/variables.usages.json`)
         this.database.variableUsageCounts = new Map(
             usageData.map(({ variableId, usageCount }) => [
                 variableId,
@@ -296,17 +302,9 @@ export class ChartEditorView<
             }
         })
 
-        // The origin url can either be a full URL (with optional https protocol), or a relative
-        // URL starting with /.
-        // We could combine them into one regex, but then it's harder to read.
-        const originUrlRegex = [
-            /^(https?:\/\/)?[^/.]+\.[^/].+$/, // absolute URL, optionally starting with https
-            /^\/.+$/, // relative URL, starting with /
-        ]
-
         if (
             this.grapherState.originUrl &&
-            !originUrlRegex.some((regex) =>
+            !ORIGIN_URL_REGEX_PATTERNS.some((regex) =>
                 regex.test(this.grapherState.originUrl ?? "")
             )
         ) {
@@ -375,11 +373,25 @@ export class ChartEditorView<
                 }
             )
         )
+        this.disposers.push(
+            reaction(
+                () => this.editor?.fullConfig,
+                () => {
+                    // Update the authoredVersion, as it's being used for "author's minTime & maxTime" in some places.
+                    if (this.editor?.fullConfig)
+                        this.editor?.grapherState.setAuthoredVersion(
+                            this.editor?.fullConfig
+                        )
+                },
+                { equals: comparer.structural }
+            )
+        )
     }
 
     disposers: IReactionDisposer[] = []
     override componentWillUnmount(): void {
         this.disposers.forEach((dispose) => dispose())
+        this.editor?.dispose()
     }
 
     override render(): React.ReactElement {
@@ -398,12 +410,15 @@ export class ChartEditorView<
         const { grapherState, availableTabs } = editor
 
         const chartEditor = isChartEditorInstance(editor) ? editor : undefined
+        const queryParams = chartEditor?.forceDatapage
+            ? "?forceDatapage=true"
+            : ""
 
         return (
             <>
                 {!editor.isNewGrapher && (
                     <Prompt
-                        when={editor.isModified}
+                        when={editor.isModified && !chartEditor?.newChartId}
                         message="Are you sure you want to leave? Unsaved changes will be lost."
                     />
                 )}
@@ -503,7 +518,7 @@ export class ChartEditorView<
                     {grapherState.id && (
                         <a
                             className="preview"
-                            href={`/admin/charts/${grapherState.id}/preview`}
+                            href={`/admin/charts/${grapherState.id}/preview${queryParams}`}
                             target="_blank"
                             rel="noopener"
                         >

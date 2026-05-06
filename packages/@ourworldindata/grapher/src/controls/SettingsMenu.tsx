@@ -5,11 +5,19 @@ import classnames from "classnames"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { faGear } from "@fortawesome/free-solid-svg-icons"
 import {
+    DialogTrigger,
+    Popover,
+    Dialog,
+    Heading,
+    Button,
+} from "react-aria-components"
+import {
     EntityName,
     GRAPHER_CHART_TYPES,
     FacetStrategy,
     GrapherChartType,
 } from "@ourworldindata/types"
+import { OverlayHeader } from "@ourworldindata/components"
 import { SelectionArray } from "../selection/SelectionArray"
 import { ChartDimension } from "../chart/ChartDimension"
 import { makeSelectionArray } from "../chart/ChartUtils.js"
@@ -30,8 +38,8 @@ import {
     NoDataAreaToggle,
     NoDataAreaToggleManager,
 } from "./settings/NoDataAreaToggle"
-import { Popover } from "../popover/Popover"
 import { GRAPHER_SETTINGS_CLASS } from "../core/GrapherConstants"
+import { LONG_CHART_TYPE_LABEL } from "../chart/ChartTabs"
 
 const {
     LineChart,
@@ -44,7 +52,8 @@ const {
 } = GRAPHER_CHART_TYPES
 
 export interface SettingsMenuManager
-    extends AbsRelToggleManager,
+    extends
+        AbsRelToggleManager,
         NoDataAreaToggleManager,
         FacetYDomainToggleManager,
         ZoomToggleManager,
@@ -76,19 +85,18 @@ export interface SettingsMenuManager
 
 interface SettingsMenuProps {
     manager: SettingsMenuManager
-    popoverStyle?: React.CSSProperties
+    popoverMaxWidth?: number
+    popoverMaxHeight?: number
 }
 
 @observer
 export class SettingsMenu extends React.Component<SettingsMenuProps> {
-    active: boolean = false
+    private active: boolean = false
 
     constructor(props: SettingsMenuProps) {
         super(props)
 
-        makeObservable(this, {
-            active: observable.ref,
-        })
+        makeObservable<SettingsMenu, "active">(this, { active: observable.ref })
     }
 
     static shouldShow(manager: SettingsMenuManager): boolean {
@@ -209,16 +217,12 @@ export class SettingsMenu extends React.Component<SettingsMenuProps> {
         // TODO: add a showCompareEndPointsOnlyToggle to complement compareEndPointsOnly
     }
 
-    @action.bound private toggleVisibility(): void {
-        this.active = !this.active
+    @action.bound private toggleVisibility(open?: boolean): void {
+        this.active = open ?? !this.active
     }
 
     @computed private get manager(): SettingsMenuManager {
         return this.props.manager
-    }
-
-    @computed private get chartTypeLabel(): string {
-        return this.chartType.replace(/([A-Z])/g, " $1")
     }
 
     @computed private get selectionArray(): SelectionArray {
@@ -287,12 +291,12 @@ export class SettingsMenu extends React.Component<SettingsMenuProps> {
                 >
                     {showYScaleToggle && (
                         <AxisScaleToggle
-                            axis={yAxis!}
+                            axis={yAxis}
                             subtitle={omitLoneAxisLabel ? "" : yLabel}
                         />
                     )}
                     {showXScaleToggle && (
-                        <AxisScaleToggle axis={xAxis!} subtitle={xLabel} />
+                        <AxisScaleToggle axis={xAxis} subtitle={xLabel} />
                     )}
                     <div className="config-subtitle">
                         A linear scale evenly spaces values, where each
@@ -306,8 +310,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps> {
     }
 
     @computed private get menuTitle(): string {
-        const { chartTypeLabel } = this
-        return `${chartTypeLabel} settings`
+        return `${LONG_CHART_TYPE_LABEL[this.chartType]} settings`
     }
 
     private renderSettingsButtonAndPopup(): React.ReactElement {
@@ -315,26 +318,44 @@ export class SettingsMenu extends React.Component<SettingsMenuProps> {
 
         return (
             <div className="settings-menu">
-                <button
-                    className={classnames("menu-toggle", { active })}
-                    onClick={this.toggleVisibility}
-                    data-track-note="chart_settings_menu_toggle"
-                    title="Chart settings"
-                    type="button"
-                    aria-label="Chart settings"
-                >
-                    <FontAwesomeIcon icon={faGear} />
-                    <span className="label"> Settings</span>
-                </button>
-                <Popover
-                    title={this.menuTitle}
+                <DialogTrigger
                     isOpen={this.active}
-                    onClose={this.toggleVisibility}
-                    className={GRAPHER_SETTINGS_CLASS}
-                    style={this.props.popoverStyle}
+                    onOpenChange={this.toggleVisibility}
                 >
-                    {this.menuContentsChart}
-                </Popover>
+                    <Button
+                        className={classnames("menu-toggle", { active })}
+                        data-track-note="chart_settings_menu_toggle"
+                        aria-label="Chart settings"
+                    >
+                        <FontAwesomeIcon icon={faGear} />
+                        <span className="label"> Settings</span>
+                    </Button>
+                    <Popover
+                        className={GRAPHER_SETTINGS_CLASS}
+                        placement="bottom end"
+                        style={{
+                            maxWidth: this.props.popoverMaxWidth,
+                            maxHeight: this.props.popoverMaxHeight,
+                        }}
+                    >
+                        <Dialog>
+                            <Heading
+                                slot="title"
+                                className="GrapherSettingsPopover__Header"
+                            >
+                                <OverlayHeader
+                                    title={this.menuTitle}
+                                    onDismiss={() =>
+                                        this.toggleVisibility(false)
+                                    }
+                                />
+                            </Heading>
+                            <div className="GrapherSettingsPopover__Content">
+                                {this.menuContentsChart}
+                            </div>
+                        </Dialog>
+                    </Popover>
+                </DialogTrigger>
             </div>
         )
     }

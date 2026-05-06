@@ -10,7 +10,7 @@ import {
     SortOrder,
     getRelativeMouse,
     EntitySelectionMode,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     dyFromAlign,
     exposeInstanceOnWindow,
 } from "@ourworldindata/utils"
@@ -30,9 +30,16 @@ import {
     VerticalAlign,
     ColorScaleConfigInterface,
 } from "@ourworldindata/types"
-import { OwidTable, CoreColumn } from "@ourworldindata/core-table"
+import {
+    OwidTable,
+    CoreColumn,
+    ColumnTypeMap,
+} from "@ourworldindata/core-table"
 import { getShortNameForEntity } from "../chart/ChartUtils"
-import { StackedSeries } from "./StackedConstants"
+import {
+    LEGEND_STYLE_FOR_STACKED_CHARTS,
+    StackedSeries,
+} from "./StackedConstants"
 import { TooltipFooterIcon } from "../tooltip/TooltipProps.js"
 import {
     Tooltip,
@@ -44,8 +51,10 @@ import {
 import {
     HorizontalCategoricalColorLegend,
     HorizontalColorLegendManager,
-} from "../horizontalColorLegend/HorizontalColorLegends"
+} from "../legend/HorizontalColorLegends"
 import { CategoricalBin, ColorScaleBin } from "../color/ColorScaleBin"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
 import { ColorScale } from "../color/ColorScale"
 import { SelectionArray } from "../selection/SelectionArray"
@@ -57,6 +66,7 @@ import {
     LabelCandidate,
     LabelWithPlacement,
     LabelCandidateWithElement,
+    Bar,
 } from "./MarimekkoChartConstants"
 import { MarimekkoChartState } from "./MarimekkoChartState"
 import { ChartComponentProps } from "../chart/ChartTypeMap.js"
@@ -66,9 +76,6 @@ import { toPlacedMarimekkoItems } from "./MarimekkoChartHelpers"
 const MARKER_MARGIN: number = 4
 const MARKER_AREA_HEIGHT: number = 25
 const MAX_LABEL_COUNT: number = 20
-
-// if an entity name exceeds this width, we use the short name instead (if available)
-const SOFT_MAX_LABEL_WIDTH = 60
 
 export type MarimekkoChartProps = ChartComponentProps<MarimekkoChartState>
 
@@ -124,6 +131,10 @@ export class MarimekkoChart
 
     @computed private get xColumn(): CoreColumn | undefined {
         return this.chartState.xColumn
+    }
+
+    @computed private get colorColumn(): CoreColumn | undefined {
+        return this.chartState.colorColumn
     }
 
     @computed private get latestTime(): number | undefined {
@@ -286,10 +297,6 @@ export class MarimekkoChart
         return this.bounds.top
     }
 
-    @computed get legendOpacity(): number {
-        return 0.7
-    }
-
     @computed get legendWidth(): number {
         return this.bounds.width
     }
@@ -322,6 +329,23 @@ export class MarimekkoChart
         return []
     }
 
+    resolveLegendBinEmphasis(bin: ColorScaleBin): Emphasis {
+        const { focusColorBin } = this
+
+        // If nothing is focused, all items are active
+        if (!focusColorBin && this.hoverColors.length === 0)
+            return Emphasis.Default
+
+        const isHovered = this.hoverColors?.includes(bin.color)
+        if (isHovered) return Emphasis.Highlighted
+
+        // Check if this bin matches the focused color bin
+        const isFocused = focusColorBin && bin.equals(focusColorBin)
+        return isFocused ? Emphasis.Highlighted : Emphasis.Muted
+    }
+
+    legendStyleConfig: LegendStyleConfig = LEGEND_STYLE_FOR_STACKED_CHARTS
+
     @computed get hoverColors(): string[] {
         if (this.focusColorBin) return [this.focusColorBin.color]
         if (this.tooltipItem?.entityColor)
@@ -343,7 +367,7 @@ export class MarimekkoChart
     @computed private get showLegend(): boolean {
         return (
             (!!this.colorColumnSlug || this.categoricalLegendData.length > 1) &&
-            !this.manager.isDisplayedAlongsideComplementaryTable
+            !!this.manager.showLegend
         )
     }
 
@@ -370,7 +394,7 @@ export class MarimekkoChart
         }
     }
 
-    @action.bound private onEntityMouseLeave(): void {
+    @action.bound private dismissTooltip(): void {
         this.tooltipState.target = null
     }
 
@@ -418,6 +442,8 @@ export class MarimekkoChart
             tooltipItem,
             xColumn,
             yColumns,
+            colorColumn,
+            colorScale,
             manager: { endTime, xOverrideTime },
             inputTable: { timeColumn },
             tooltipState: { target, position, fading },
@@ -426,7 +452,11 @@ export class MarimekkoChart
         const { entityName, xPoint, bars } = tooltipItem ?? {}
 
         const yValues =
-            bars?.map((bar: any) => {
+            bars?.map((bar: Bar) => {
+                const column = this.chartState.transformedTable.get(
+                    bar.columnSlug
+                )
+
                 const shouldShowYTimeNotice =
                     bar.yPoint.value !== undefined &&
                     bar.yPoint.time !== endTime
@@ -434,10 +464,10 @@ export class MarimekkoChart
                 return {
                     name: bar.seriesName,
                     value: bar.yPoint.value,
-                    column: this.chartState.transformedTable.get(
-                        bar.columnSlug
-                    ),
-                    notice: shouldShowYTimeNotice ? bar.yPoint.time : undefined,
+                    column,
+                    originalTime: shouldShowYTimeNotice
+                        ? column.formatTime(bar.yPoint.time)
+                        : undefined,
                 }
             }) ?? []
 
@@ -447,14 +477,17 @@ export class MarimekkoChart
         // usually the case when matching day and year variables
         const shouldShowXTimeNotice =
             xPoint && xPoint.time !== endTime && xOverrideTime === undefined
-        const xNotice = shouldShowXTimeNotice ? xPoint?.time : undefined
+        const xOriginalTime = shouldShowXTimeNotice ? xPoint?.time : undefined
+        const xOriginalTimeFormatted = xOriginalTime
+            ? xColumn?.formatTime(xOriginalTime)
+            : undefined
         const targetNotice =
-            xNotice || yValues.some(({ notice }) => !!notice)
+            xOriginalTime || yValues.some(({ originalTime }) => !!originalTime)
                 ? timeColumn.formatValue(endTime)
                 : undefined
         const toleranceNotice = targetNotice
             ? {
-                  icon: TooltipFooterIcon.notice,
+                  icon: TooltipFooterIcon.Notice,
                   text: makeTooltipToleranceNotice(targetNotice),
               }
             : undefined
@@ -476,24 +509,24 @@ export class MarimekkoChart
         const roundingNotice = anyRoundedToSigFigs
             ? {
                   icon: allRoundedToSigFigs
-                      ? TooltipFooterIcon.none
-                      : TooltipFooterIcon.significance,
+                      ? TooltipFooterIcon.None
+                      : TooltipFooterIcon.Significance,
                   text: makeTooltipRoundingNotice(sigFigs, {
                       plural: sigFigs.length > 1,
                   }),
               }
             : undefined
         const superscript =
-            !!roundingNotice && roundingNotice.icon !== TooltipFooterIcon.none
+            !!roundingNotice && roundingNotice.icon !== TooltipFooterIcon.None
 
         const footer = excludeUndefined([toleranceNotice, roundingNotice])
 
         return (
             <g
                 ref={this.base}
-                id={makeIdForHumanConsumption("marimekko-chart")}
-                className="MarimekkoChart"
+                id={makeFigmaId("marimekko-chart")}
                 onMouseMove={(ev): void => this.onMouseMove(ev)}
+                onMouseLeave={(): void => this.dismissTooltip()}
             >
                 <rect
                     x={bounds.left}
@@ -507,7 +540,6 @@ export class MarimekkoChart
                     dualAxis={dualAxis}
                     showTickMarks={true}
                     detailsMarker={manager.detailsMarkerInSvg}
-                    backgroundColor={manager.backgroundColor}
                 />
                 {this.showLegend && (
                     <HorizontalCategoricalColorLegend manager={this} />
@@ -530,23 +562,53 @@ export class MarimekkoChart
                         dissolve={fading}
                         dismiss={() => (this.tooltipState.target = null)}
                     >
-                        {yValues.map(({ name, value, column, notice }) => (
+                        {yValues.map(
+                            ({ name, value, column, originalTime }) => (
+                                <TooltipValue
+                                    key={name}
+                                    label={column.displayName}
+                                    unit={column.displayUnit}
+                                    value={column.formatValueShort(value)}
+                                    originalTime={originalTime}
+                                    isRoundedToSignificantFigures={
+                                        column.roundsToSignificantFigures
+                                    }
+                                    showSignificanceSuperscript={superscript}
+                                />
+                            )
+                        )}
+                        {xColumn && !xColumn.isMissing && (
                             <TooltipValue
-                                key={name}
-                                column={column}
-                                value={value}
-                                notice={notice}
-                                showSignificanceSuperscript={superscript}
-                            />
-                        ))}
-                        {xColumn && (
-                            <TooltipValue
-                                column={xColumn}
-                                value={xPoint?.value}
-                                notice={xNotice}
+                                label={xColumn.displayName}
+                                unit={xColumn.displayUnit}
+                                value={xColumn.formatValueShort(xPoint?.value)}
+                                originalTime={xOriginalTimeFormatted}
+                                isRoundedToSignificantFigures={
+                                    xColumn.roundsToSignificantFigures
+                                }
                                 showSignificanceSuperscript={superscript}
                             />
                         )}
+                        {colorColumn &&
+                            !colorColumn.isMissing &&
+                            tooltipItem?.entityColor &&
+                            !(
+                                colorColumn instanceof ColumnTypeMap.Continent
+                            ) && (
+                                <TooltipValue
+                                    label={
+                                        colorScale.legendDescription ??
+                                        colorColumn.displayName
+                                    }
+                                    value={
+                                        colorScale.getBinForValue(
+                                            tooltipItem.entityColor
+                                                .colorDomainValue
+                                        )?.label ??
+                                        tooltipItem.entityColor.colorDomainValue
+                                    }
+                                />
+                            )}
                     </Tooltip>
                 )}
             </g>
@@ -566,29 +628,22 @@ export class MarimekkoChart
                 selectionArray={this.selectionArray}
                 selectedItems={this.chartState.selectedItems}
                 onEntityClick={this.onEntityClick}
-                onEntityMouseLeave={this.onEntityMouseLeave}
+                onEntityMouseLeave={this.dismissTooltip}
                 onEntityMouseOver={this.onEntityMouseOver}
             />
         )
     }
 
-    private paddingInPixels = 5
+    private readonly paddingInPixels = 5
 
     private static labelCandidateFromItem(
         item: EntityWithSize,
         fontSize: number,
         isSelected: boolean
     ): LabelCandidate {
-        let label = item.entityName
-        let labelBounds = Bounds.forText(label, {
-            fontSize,
-        })
-        if (labelBounds.width > SOFT_MAX_LABEL_WIDTH && item.shortEntityName) {
-            label = item.shortEntityName
-            labelBounds = Bounds.forText(label, {
-                fontSize,
-            })
-        }
+        const label = item.shortEntityName ?? item.entityName
+        const labelBounds = Bounds.forText(label, { fontSize })
+
         return {
             item: item,
             label,
@@ -942,10 +997,7 @@ export class MarimekkoChart
                         : markerNetHeight - directionUnawareMakerYMid
                 labelLines.push(
                     <g
-                        id={makeIdForHumanConsumption(
-                            "label-line",
-                            item.labelKey
-                        )}
+                        id={makeFigmaId("label-line", item.labelKey)}
                         className="indicator"
                         key={`labelline-${item.labelKey}`}
                     >
@@ -971,8 +1023,7 @@ export class MarimekkoChart
 
             labelLines.push(
                 <g
-                    id={makeIdForHumanConsumption("label-line", item.labelKey)}
-                    className="indicator"
+                    id={makeFigmaId("label-line", item.labelKey)}
                     key={`labelline-${item.labelKey}`}
                 >
                     <path
@@ -997,8 +1048,7 @@ export class MarimekkoChart
         const placedLabels = this.labelsWithPlacementInfo.map((item) => (
             <g
                 key={`label-${item.labelKey}`}
-                id={makeIdForHumanConsumption("label", item.labelKey)}
-                className="bar-label"
+                id={makeFigmaId("label", item.labelKey)}
                 transform={`translate(${item.correctedPlacement}, ${labelOffset})`}
             >
                 {item.label}
@@ -1076,7 +1126,7 @@ export class MarimekkoChart
                         onMouseOver={(): void =>
                             this.onEntityMouseOver(candidate.item.entityName)
                         }
-                        onMouseLeave={(): void => this.onEntityMouseLeave()}
+                        onMouseLeave={(): void => this.dismissTooltip()}
                         onClick={(): void =>
                             this.onEntityClick(candidate.item.entityName)
                         }

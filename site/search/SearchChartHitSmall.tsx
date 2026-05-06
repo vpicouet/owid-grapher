@@ -1,7 +1,10 @@
 import { useMemo } from "react"
 import { buildChartHitDataDisplayProps, Tippy } from "@ourworldindata/utils"
-import { GRAPHER_TAB_NAMES, GrapherChartType } from "@ourworldindata/types"
-import { SearchChartHitComponentProps } from "./searchTypes.js"
+import {
+    GRAPHER_TAB_NAMES,
+    GrapherChartType,
+    SearchChartHitComponentProps,
+} from "@ourworldindata/types"
 import {
     constructChartUrl,
     pickEntitiesForChartHit,
@@ -85,7 +88,7 @@ export function SearchChartHitSmall({
                 <div className="search-chart-hit-small__tabs-container">
                     {hit.availableTabs.map((tab) => {
                         const { chartUrl } = constructChartAndPreviewUrlsForTab(
-                            { hit, tab, chartInfo, entities }
+                            { hit, tab, entities }
                         )
 
                         const label = makeLabelForGrapherTab(tab, {

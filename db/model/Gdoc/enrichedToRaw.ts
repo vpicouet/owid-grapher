@@ -8,6 +8,7 @@ import {
     RawBlockChartStory,
     RawBlockDonorList,
     RawBlockGraySection,
+    RawBlockExploreDataSection,
     RawBlockHeading,
     RawBlockHtml,
     RawBlockImage,
@@ -17,7 +18,6 @@ import {
     RawBlockPullQuote,
     RawBlockGuidedChart,
     RawBlockRecirc,
-    RawBlockScroller,
     RawBlockSDGGrid,
     RawBlockText,
     Span,
@@ -44,6 +44,8 @@ import {
     RawBlockPillRow,
     RawBlockHomepageSearch,
     RawBlockHomepageIntro,
+    RawBlockFeaturedMetrics,
+    RawBlockFeaturedDataInsights,
     RawBlockHomepageIntroPost,
     RawBlockLatestDataInsights,
     RawBlockSocials,
@@ -56,9 +58,15 @@ import {
     RawBlockSubscribeBanner,
     RawBlockExpander,
     EnrichedHybridLink,
+    RawBlockBespokeComponent,
     RawBlockResourcePanel,
     RawBlockCta,
-    RawBlockScript,
+    RawBlockStaticViz,
+    RawBlockLTPToc,
+    RawBlockConditionalSection,
+    RawBlockCountryProfileSelector,
+    RawBlockChartRows,
+    RawBlockPullChart,
 } from "@ourworldindata/types"
 import { spanToHtmlString } from "./gdocUtils.js"
 import { match, P } from "ts-pattern"
@@ -127,10 +135,10 @@ export function enrichedBlockToRawBlock(
                 value: {
                     url: b.url,
                     height: b.height,
-                    row: b.row,
-                    column: b.column,
-                    position: b.position,
+                    size: b.size,
                     caption: b.caption ? spansToHtmlText(b.caption) : undefined,
+                    visibility: b.visibility ? b.visibility : undefined,
+                    peerCountries: b.peerCountries,
                 },
             })
         )
@@ -141,9 +149,7 @@ export function enrichedBlockToRawBlock(
                 value: {
                     name: b.name,
                     height: b.height,
-                    row: b.row,
-                    column: b.column,
-                    position: b.position,
+                    size: b.size,
                     caption: b.caption ? spansToHtmlText(b.caption) : undefined,
                 },
             })
@@ -183,22 +189,6 @@ export function enrichedBlockToRawBlock(
             })
         )
         .with(
-            { type: "scroller" },
-            (b): RawBlockScroller => ({
-                type: b.type,
-                value: b.blocks.flatMap((item) => [
-                    {
-                        type: "url",
-                        value: item.url,
-                    },
-                    {
-                        type: "text",
-                        value: spansToHtmlText(item.text.value),
-                    },
-                ]),
-            })
-        )
-        .with(
             { type: "chart-story" },
             (b): RawBlockChartStory => ({
                 type: b.type,
@@ -224,6 +214,21 @@ export function enrichedBlockToRawBlock(
                     caption: b.caption && spansToHtmlText(b.caption),
                     size: b.size,
                     hasOutline: String(b.hasOutline),
+                    visibility: b.visibility ? b.visibility : undefined,
+                },
+            })
+        )
+        .with(
+            { type: "static-viz" },
+            (block): RawBlockStaticViz => ({
+                type: "static-viz",
+                value: {
+                    name: block.name,
+                    size: block.size,
+                    hasOutline: String(block.hasOutline),
+                    caption: block.caption
+                        ? spansToHtmlText(block.caption)
+                        : undefined,
                 },
             })
         )
@@ -236,6 +241,7 @@ export function enrichedBlockToRawBlock(
                     filename: b.filename,
                     caption: b.caption ? spansToHtmlText(b.caption) : undefined,
                     shouldLoop: String(b.shouldLoop),
+                    visibility: b.visibility ? b.visibility : undefined,
                 },
             })
         )
@@ -318,6 +324,46 @@ export function enrichedBlockToRawBlock(
                 },
             })
         )
+        .with({ type: "chart-rows" }, (b): RawBlockChartRows => {
+            const rawRows = b.rows.map((row) => ({
+                image: row.image,
+                url: row.url,
+                content: row.content.length
+                    ? row.content.map(
+                          (enriched) =>
+                              enrichedBlockToRawBlock(enriched) as RawBlockText
+                      )
+                    : undefined,
+            }))
+            return {
+                type: b.type,
+                value: {
+                    kicker: b.kicker,
+                    title: b.title,
+                    source: b.source,
+                    rows: rawRows,
+                },
+            }
+        })
+        .with(
+            { type: "pull-chart" },
+            (b): RawBlockPullChart => ({
+                type: b.type,
+                value: {
+                    align: b.align,
+                    image: b.image,
+                    url: b.url,
+                    content: b.content.length
+                        ? b.content.map(
+                              (enriched) =>
+                                  enrichedBlockToRawBlock(
+                                      enriched
+                                  ) as RawBlockText
+                          )
+                        : undefined,
+                },
+            })
+        )
         .with(
             { type: "subscribe-banner" },
             (b): RawBlockSubscribeBanner => ({
@@ -345,16 +391,6 @@ export function enrichedBlockToRawBlock(
             (b): RawBlockHtml => ({
                 type: b.type,
                 value: b.value,
-            })
-        )
-        .with(
-            { type: "script" },
-            (b): RawBlockScript => ({
-                type: b.type,
-                value: b.lines.map((line) => ({
-                    type: "text",
-                    value: line,
-                })),
             })
         )
         .with(
@@ -410,6 +446,28 @@ export function enrichedBlockToRawBlock(
             })
         )
         .with(
+            { type: "explore-data-section" },
+            (b): RawBlockExploreDataSection => ({
+                type: b.type,
+                value: {
+                    title: b.title,
+                    align: b.align,
+                    content: b.content.map(enrichedBlockToRawBlock),
+                },
+            })
+        )
+        .with(
+            { type: "conditional-section" },
+            (b): RawBlockConditionalSection => ({
+                type: b.type,
+                value: {
+                    content: b.content.map(enrichedBlockToRawBlock),
+                    include: b.include.join(", "),
+                    exclude: b.exclude.join(", "),
+                },
+            })
+        )
+        .with(
             { type: "prominent-link" },
             (b): RawBlockProminentLink => ({
                 type: b.type,
@@ -426,6 +484,13 @@ export function enrichedBlockToRawBlock(
             (b): RawBlockSDGToc => ({
                 type: b.type,
                 value: b.value,
+            })
+        )
+        .with(
+            { type: "ltp-toc" },
+            (b): RawBlockLTPToc => ({
+                type: b.type,
+                value: b.title ? { title: b.title } : undefined,
             })
         )
         .with(
@@ -452,8 +517,8 @@ export function enrichedBlockToRawBlock(
             (b): RawBlockAside => ({
                 type: b.type,
                 value: {
-                    position: b.position,
                     caption: spansToHtmlText(b.caption),
+                    position: b.position,
                 },
             })
         )
@@ -535,6 +600,7 @@ export function enrichedBlockToRawBlock(
                         heading: b.heading,
                         "hide-authors": b["hide-authors"].toString(),
                         "hide-date": b["hide-date"].toString(),
+                        variant: b.variant,
                         primary: b.primary.map((enriched) =>
                             enrichedLinkToRawLink(enriched)
                         ),
@@ -669,6 +735,7 @@ export function enrichedBlockToRawBlock(
                 value: {},
             }
         })
+
         .with({ type: "homepage-intro" }, (b): RawBlockHomepageIntro => {
             return {
                 type: "homepage-intro",
@@ -690,6 +757,20 @@ export function enrichedBlockToRawBlock(
                 },
             }
         })
+        .with(
+            { type: "featured-metrics" },
+            (_): RawBlockFeaturedMetrics => ({
+                type: "featured-metrics",
+                value: {},
+            })
+        )
+        .with(
+            { type: "featured-data-insights" },
+            (_): RawBlockFeaturedDataInsights => ({
+                type: "featured-data-insights",
+                value: {},
+            })
+        )
         .with({ type: "socials" }, (b): RawBlockSocials => {
             return {
                 type: "socials",
@@ -698,6 +779,46 @@ export function enrichedBlockToRawBlock(
                     text,
                     type,
                 })),
+            }
+        })
+        .with({ type: "data-callout" }, (b) => ({
+            type: "data-callout" as const,
+            value: {
+                url: b.url,
+                content: b.content.map(
+                    enrichedBlockToRawBlock
+                ) as RawBlockText[],
+            },
+        }))
+        .with({ type: "data-callout-group" }, (b) => ({
+            type: "data-callout-group" as const,
+            value: {
+                content: b.content.map(enrichedBlockToRawBlock),
+            },
+        }))
+        .with(
+            { type: "country-profile-selector" },
+            (b): RawBlockCountryProfileSelector => ({
+                type: "country-profile-selector",
+                value: {
+                    url: b.url,
+                    title: b.title,
+                    description: b.description,
+                    defaultCountries: b.defaultCountries.length
+                        ? b.defaultCountries.join(", ")
+                        : undefined,
+                },
+            })
+        )
+        .with({ type: "bespoke-component" }, (b): RawBlockBespokeComponent => {
+            return {
+                type: "bespoke-component",
+                value: {
+                    bundle: b.bundle,
+                    variant: b.variant,
+                    size: b.size,
+                    config: b.config,
+                },
             }
         })
         .exhaustive()

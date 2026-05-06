@@ -1,8 +1,9 @@
+import * as _ from "lodash-es"
 import * as React from "react"
 import {
     Box,
     excludeUndefined,
-    getCountryByName,
+    getRegionByName,
     Url,
 } from "@ourworldindata/utils"
 import {
@@ -17,6 +18,9 @@ import {
     PrimitiveType,
     ColumnTypeNames,
     Time,
+    SortBy,
+    SortConfig,
+    SortOrder,
 } from "@ourworldindata/types"
 import { LineChartSeries } from "../lineCharts/LineChartConstants"
 import { SelectionArray } from "../selection/SelectionArray"
@@ -28,6 +32,8 @@ import {
     SVG_STYLE_PROPS,
     BASE_FONT_SIZE,
     Patterns,
+    GRAPHER_IMAGE_WIDTH_1X,
+    GRAPHER_IMAGE_WIDTH_2X,
 } from "../core/GrapherConstants"
 import { ChartSeries } from "./ChartInterface"
 import {
@@ -35,12 +41,13 @@ import {
     isNotErrorValueOrEmptyCell,
     OwidTable,
 } from "@ourworldindata/core-table"
-import { GRAPHER_BACKGROUND_DEFAULT } from "../color/ColorConstants"
+import { GRAPHER_BACKGROUND } from "../color/ColorConstants"
 import { InteractionState } from "../interaction/InteractionState"
 
+import * as R from "remeda"
+
 export const autoDetectYColumnSlugs = (manager: ChartManager): string[] => {
-    if (manager.yColumnSlugs && manager.yColumnSlugs.length)
-        return manager.yColumnSlugs
+    if (manager.yColumnSlugs?.length) return manager.yColumnSlugs
     if (manager.yColumnSlug) return [manager.yColumnSlug]
     return manager.table.numericColumnSlugs
 }
@@ -142,8 +149,8 @@ export function isElementInteractive(element: HTMLElement): boolean {
 }
 
 export function getShortNameForEntity(entityName: string): string | undefined {
-    const country = getCountryByName(entityName)
-    return country?.shortName
+    const region = getRegionByName(entityName)
+    return region?.shortName
 }
 
 export function isTargetOutsideElement(
@@ -163,7 +170,7 @@ export function getHoverStateForSeries(
     series: ChartSeries,
     props: {
         hoveredSeriesNames: SeriesName[]
-        // usually the hover mode is active when there is
+        // Usually the hover mode is active when there is
         // at least one hovered element. But sometimes the hover
         // mode might be active although there are no hovered elements.
         // For example, when the facet legend is hovered but a particular
@@ -196,40 +203,6 @@ export function byHoverThenFocusState(series: {
     return 1
 }
 
-export function makeAxisLabel({
-    label,
-    unit,
-    shortUnit,
-}: {
-    label: string
-    unit?: string
-    shortUnit?: string
-}): {
-    mainLabel: string // shown in bold
-    unit?: string // shown in normal weight, usually in parens
-} {
-    const displayUnit = unit && unit !== shortUnit ? unit : undefined
-
-    if (displayUnit) {
-        // extract text in parens at the end of the label,
-        // e.g. "Population (millions)" is split into "Population " and "(millions)"
-        const [
-            _fullMatch,
-            untrimmedMainLabelText = undefined,
-            labelTextInParens = undefined,
-        ] = label.trim().match(/^(.*?)(\([^()]*\))?$/s) ?? []
-        const mainLabelText = untrimmedMainLabelText?.trim() ?? ""
-
-        // don't show unit twice if it's contained in the label
-        const displayLabel =
-            labelTextInParens === `(${displayUnit})` ? mainLabelText : label
-
-        return { mainLabel: displayLabel, unit: displayUnit }
-    }
-
-    return { mainLabel: label }
-}
-
 /**
  * Given a URL for a CF function grapher thumbnail, generate a srcSet for the image at different widths
  * @param defaultSrc - `https://ourworldindata.org/grapher/thumbnail/life-expectancy.png?tab=chart`
@@ -238,7 +211,10 @@ export function makeAxisLabel({
 export function generateGrapherImageSrcSet(defaultSrc: string): string {
     const url = Url.fromURL(defaultSrc)
     const existingQueryParams = url.queryParams
-    const imWidths = ["850", "1700"]
+    const imWidths = [
+        GRAPHER_IMAGE_WIDTH_1X.toString(),
+        GRAPHER_IMAGE_WIDTH_2X.toString(),
+    ]
     const srcSet = imWidths
         .map((imWidth) => {
             return `${url.setQueryParams({ ...existingQueryParams, imWidth }).fullUrl} ${imWidth}w`
@@ -327,9 +303,10 @@ export function NoDataPattern({
     patternId?: string
     scale?: number
 }): React.ReactElement {
+    const roundedScale = R.round(scale, 3)
     const patternTransforms = excludeUndefined([
         `rotate(-45 2 2)`,
-        scale !== 1 ? `scale(${scale})` : undefined,
+        roundedScale !== 1 ? `scale(${roundedScale})` : undefined,
     ])
     return (
         <pattern
@@ -346,10 +323,8 @@ export function NoDataPattern({
 
 export function getChartSvgProps({
     fontSize,
-    backgroundColor,
 }: {
     fontSize?: number
-    backgroundColor?: string
 }): React.SVGProps<SVGSVGElement> {
     return {
         xmlns: "http://www.w3.org/2000/svg",
@@ -358,7 +333,25 @@ export function getChartSvgProps({
             ...SVG_STYLE_PROPS,
             fontSize: fontSize ?? BASE_FONT_SIZE,
             // Needs to be set here or else pngs will have a black background
-            backgroundColor: backgroundColor ?? GRAPHER_BACKGROUND_DEFAULT,
+            backgroundColor: GRAPHER_BACKGROUND,
         },
     }
+}
+
+type SortKeyFn<T> = (item: T) => number | string | undefined
+
+export type SortKeyFunctions<T> = Record<SortBy, SortKeyFn<T>>
+
+export function sortByConfig<T>(
+    items: readonly T[],
+    sortConfig: SortConfig,
+    keyFns: SortKeyFunctions<T>
+): T[] {
+    const sortByKey = sortConfig.sortBy ?? SortBy.total
+    const sortByFunc = keyFns[sortByKey]
+    const sortOrder = sortConfig.sortOrder ?? SortOrder.desc
+
+    const sortedRows = _.sortBy(items, sortByFunc)
+
+    return sortOrder === SortOrder.desc ? sortedRows.toReversed() : sortedRows
 }

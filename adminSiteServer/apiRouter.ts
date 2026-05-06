@@ -30,13 +30,18 @@ import {
     handleGetExplorer,
     handlePutExplorer,
     handleDeleteExplorer,
+    getExplorerRecordsJson,
 } from "./apiRoutes/explorer.js"
 import {
     getAllGdocIndexItems,
     getIndividualGdoc,
+    getGdocCalloutCoverage,
+    getCalloutFunctionStrings,
     createOrUpdateGdoc,
     deleteGdoc,
     setGdocTags,
+    getPreviewGdocIndexRecords,
+    getPublishedGdocTopicSlugs,
 } from "./apiRoutes/gdocs.js"
 import {
     getImagesHandler,
@@ -49,8 +54,14 @@ import {
 import { getFiles, uploadFileToR2 } from "./apiRoutes/files.js"
 import {
     handlePutMultiDim,
+    handleGetMultiDim,
     handleGetMultiDims,
     handlePatchMultiDim,
+    handleGetMultiDimRedirects,
+    handlePostMultiDimRedirect,
+    handleDeleteMultiDimRedirect,
+    handleGetAllMultiDimRedirects,
+    getMdimRecordsJson,
 } from "./apiRoutes/mdims.js"
 import {
     fetchAllWork,
@@ -70,6 +81,7 @@ import {
     suggestGptTopics,
     suggestGptAltTextForCloudflareImage,
     suggestGptAltText,
+    extractTextFromImage,
 } from "./apiRoutes/suggest.js"
 import {
     handleGetFlatTagGraph,
@@ -119,24 +131,26 @@ import {
 } from "./functionalRouterHelpers.js"
 import {
     getChartsJson,
-    getChartsCsv,
     getChartConfigJson,
     getChartParentJson,
+    getChartSettingsJson,
     getChartPatchConfigJson,
     getChartLogsJson,
     getChartReferencesJson,
     getChartRedirectsJson,
-    getChartPageviewsJson,
+    getChartViewsJson,
     createChart,
     setChartTagsHandler,
     updateChart,
     deleteChart,
     getChartTagsJson,
+    getChartRecordsJson,
 } from "./apiRoutes/charts.js"
 import { getChartConfig } from "./apiRoutes/chartConfigs.js"
 import {
     createDataInsightGDoc,
     getAllDataInsightIndexItems,
+    refreshDataInsights,
 } from "./apiRoutes/dataInsights.js"
 import { getFigmaImageUrl } from "./apiRoutes/figma.js"
 import { sendMessageToSlack } from "./apiRoutes/slack.js"
@@ -154,6 +168,13 @@ import {
     getDodsUsage,
     getParsedDods,
 } from "./apiRoutes/dods.js"
+import {
+    getStaticVizListHandler,
+    getStaticVizByIdHandler,
+    createStaticViz,
+    updateStaticViz,
+    deleteStaticViz,
+} from "./apiRoutes/staticViz.js"
 
 const apiRouter = new FunctionalRouter()
 
@@ -177,7 +198,6 @@ getRouteWithROTransaction(
 
 // Chart routes
 getRouteWithROTransaction(apiRouter, "/charts.json", getChartsJson)
-getRouteWithROTransaction(apiRouter, "/charts.csv", getChartsCsv)
 getRouteWithROTransaction(
     apiRouter,
     "/charts/:chartId.config.json",
@@ -187,6 +207,11 @@ getRouteWithROTransaction(
     apiRouter,
     "/charts/:chartId.parent.json",
     getChartParentJson
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/charts/:chartId.settings.json",
+    getChartSettingsJson
 )
 getRouteWithROTransaction(
     apiRouter,
@@ -210,13 +235,18 @@ getRouteWithROTransaction(
 )
 getRouteWithROTransaction(
     apiRouter,
-    "/charts/:chartId.pageviews.json",
-    getChartPageviewsJson
+    "/charts/:chartId.views.json",
+    getChartViewsJson
 )
 getRouteWithROTransaction(
     apiRouter,
     "/charts/:chartId.tags.json",
     getChartTagsJson
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/charts/:chartId/records",
+    getChartRecordsJson
 )
 postRouteWithRWTransaction(apiRouter, "/charts", createChart)
 postRouteWithRWTransaction(
@@ -281,6 +311,29 @@ getRouteWithROTransaction(apiRouter, "/dods-usage.json", getDodsUsage)
 patchRouteWithRWTransaction(apiRouter, "/dods/:id", updateDod)
 postRouteWithRWTransaction(apiRouter, "/dods", createDod)
 
+// Static viz routes
+getRouteWithROTransaction(
+    apiRouter,
+    "/static-viz.json",
+    getStaticVizListHandler
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/static-viz/:staticVizId.json",
+    getStaticVizByIdHandler
+)
+postRouteWithRWTransaction(apiRouter, "/static-viz", createStaticViz)
+putRouteWithRWTransaction(
+    apiRouter,
+    "/static-viz/:staticVizId",
+    updateStaticViz
+)
+deleteRouteWithRWTransaction(
+    apiRouter,
+    "/static-viz/:staticVizId",
+    deleteStaticViz
+)
+
 // explorer routes
 postRouteWithRWTransaction(apiRouter, "/explorer/:slug/tags", addExplorerTags)
 deleteRouteWithRWTransaction(
@@ -295,10 +348,30 @@ getRouteWithROTransaction(apiRouter, "/files.json", getFiles)
 
 // Gdoc routes
 getRouteWithROTransaction(apiRouter, "/gdocs", getAllGdocIndexItems)
+getRouteWithROTransaction(
+    apiRouter,
+    "/gdocs/publishedTopicSlugs",
+    getPublishedGdocTopicSlugs
+)
 getRouteNonIdempotentWithRWTransaction(
     apiRouter,
     "/gdocs/:id",
     getIndividualGdoc
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/gdocs/:id/coverage",
+    getGdocCalloutCoverage
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/callout-functions",
+    getCalloutFunctionStrings
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/gdocs/:id/records",
+    getPreviewGdocIndexRecords
 )
 putRouteWithRWTransaction(apiRouter, "/gdocs/:id", createOrUpdateGdoc)
 deleteRouteWithRWTransaction(apiRouter, "/gdocs/:id", deleteGdoc)
@@ -314,6 +387,11 @@ postRouteWithRWTransaction(
     apiRouter,
     "/dataInsights/create",
     createDataInsightGDoc
+)
+postRouteWithRWTransaction(
+    apiRouter,
+    "/dataInsights/refresh",
+    refreshDataInsights
 )
 
 // Images routes
@@ -331,15 +409,46 @@ getRouteWithROTransaction(apiRouter, "/images/usage", getImageUsageHandler)
 
 // Mdim routes
 getRouteWithROTransaction(apiRouter, "/multi-dims.json", handleGetMultiDims)
+getRouteWithROTransaction(apiRouter, "/multi-dims/:id", handleGetMultiDim)
+getRouteWithROTransaction(
+    apiRouter,
+    "/multi-dims/:id/records",
+    getMdimRecordsJson
+)
 putRouteWithRWTransaction(
     apiRouter,
     "/multi-dims/:catalogPath",
     handlePutMultiDim
 )
 patchRouteWithRWTransaction(apiRouter, "/multi-dims/:id", handlePatchMultiDim)
+getRouteWithROTransaction(
+    apiRouter,
+    "/multi-dim-redirects.json",
+    handleGetAllMultiDimRedirects
+)
+getRouteWithROTransaction(
+    apiRouter,
+    "/multi-dims/:id/redirects",
+    handleGetMultiDimRedirects
+)
+postRouteWithRWTransaction(
+    apiRouter,
+    "/multi-dims/:id/redirects",
+    handlePostMultiDimRedirect
+)
+deleteRouteWithRWTransaction(
+    apiRouter,
+    "/multi-dims/:id/redirects/:redirectId",
+    handleDeleteMultiDimRedirect
+)
 
 // Explorer routes
 getRouteWithROTransaction(apiRouter, "/explorers/:slug", handleGetExplorer)
+getRouteWithROTransaction(
+    apiRouter,
+    "/explorers/:slug/records",
+    getExplorerRecordsJson
+)
 putRouteWithRWTransaction(apiRouter, "/explorers/:slug", handlePutExplorer)
 deleteRouteWithRWTransaction(
     apiRouter,
@@ -418,6 +527,11 @@ getRouteWithROTransaction(
     suggestGptAltTextForCloudflareImage
 )
 getRouteWithROTransaction(apiRouter, `/gpt/suggest-alt-text`, suggestGptAltText)
+getRouteWithROTransaction(
+    apiRouter,
+    `/gpt/extract-text-from-image`,
+    extractTextFromImage
+)
 
 // Tag graph routes
 getRouteWithROTransaction(

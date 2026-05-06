@@ -1,6 +1,6 @@
 import { match } from "ts-pattern"
 import { useSearchContext } from "./SearchContext.js"
-import { SearchTopicType } from "./searchTypes.js"
+import { SearchTopicType } from "@ourworldindata/types"
 import { SearchWritingResults } from "./SearchWritingResults.js"
 import { SearchDataInsightsResults } from "./SearchDataInsightsResults.js"
 import { SearchWritingTopicsResults } from "./SearchWritingTopicsResults.js"
@@ -17,7 +17,7 @@ export const SearchTemplatesWriting = () => {
             // Writing + Topic + Country + Query
             .with([SearchTopicType.Topic, true, true], () => (
                 <>
-                    <SearchWritingResults topicType={SearchTopicType.Topic} />
+                    <SearchWritingResults showProfiles={true} />
                     <SearchDataInsightsResults />
                 </>
             ))
@@ -25,27 +25,27 @@ export const SearchTemplatesWriting = () => {
             .with([SearchTopicType.Topic, true, false], () => (
                 <>
                     <SearchDataInsightsResults />
-                    <SearchWritingResults topicType={SearchTopicType.Topic} />
+                    <SearchWritingResults showProfiles={true} />
                 </>
             ))
             // Writing + Topic + No Country + Query
             .with([SearchTopicType.Topic, false, true], () => (
                 <>
-                    <SearchWritingResults topicType={SearchTopicType.Topic} />
+                    <SearchWritingResults />
                     <SearchDataInsightsResults />
                 </>
             ))
             // Writing + Topic + No Country + No Query
             .with([SearchTopicType.Topic, false, false], () => (
                 <>
-                    <SearchWritingResults topicType={SearchTopicType.Topic} />
+                    <SearchWritingResults />
                     <SearchDataInsightsResults />
                 </>
             ))
             // Writing + Area + Country + Query
             .with([SearchTopicType.Area, true, true], () => (
                 <>
-                    <SearchWritingResults topicType={SearchTopicType.Area} />
+                    <SearchWritingResults />
                     <SearchDataInsightsResults />
                 </>
             ))
@@ -53,27 +53,27 @@ export const SearchTemplatesWriting = () => {
             .with([SearchTopicType.Area, true, false], () => (
                 <>
                     <SearchDataInsightsResults />
-                    <SearchWritingResults topicType={SearchTopicType.Area} />
+                    <SearchWritingResults />
                 </>
             ))
             // Writing + Area + No Country + Query
             .with([SearchTopicType.Area, false, true], () => (
                 <>
-                    <SearchWritingResults topicType={SearchTopicType.Area} />
+                    <SearchWritingResults />
                     <SearchDataInsightsResults />
                 </>
             ))
             // Writing + Area + No Country + No Query
             .with([SearchTopicType.Area, false, false], () => (
                 <>
-                    <SearchWritingResults topicType={SearchTopicType.Area} />
+                    <SearchWritingResults />
                     <SearchDataInsightsResults />
                 </>
             ))
             // Writing + No Topic + Country + Query
             .with([null, true, true], () => (
                 <>
-                    <SearchWritingResults />
+                    <SearchWritingResults showProfiles={true} />
                     <SearchDataInsightsResults />
                 </>
             ))
@@ -81,7 +81,10 @@ export const SearchTemplatesWriting = () => {
             .with([null, true, false], () => (
                 <>
                     <SearchDataInsightsResults />
-                    <SearchWritingResults hasTopicPages={false} />
+                    <SearchWritingResults
+                        hasTopicPages={false}
+                        showProfiles={true}
+                    />
                 </>
             ))
             // Writing + No Topic + No Country + Query

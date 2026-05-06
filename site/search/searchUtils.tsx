@@ -6,10 +6,24 @@ import {
     GrapherQueryParams,
     GrapherTabName,
     GrapherTabQueryParam,
-    GrapherValuesJson,
     OwidGdocType,
     TagGraphRoot,
     TimeBounds,
+    SearchIndexName,
+    Filter,
+    FilterType,
+    ScoredFilter,
+    SearchResultType,
+    SearchTopicType,
+    SearchFacetFilters,
+    ChartRecordType,
+    SearchChartHit,
+    IChartHit,
+    SearchUrlParam,
+    SynonymMap,
+    Ngram,
+    WordPositioned,
+    ScoredFilterPositioned,
 } from "@ourworldindata/types"
 import {
     Url,
@@ -28,27 +42,12 @@ import {
 } from "@ourworldindata/grapher"
 import { getIndexName } from "./searchClient.js"
 import {
-    SearchIndexName,
-    Filter,
-    FilterType,
-    ScoredFilter,
-    SearchResultType,
-    SearchTopicType,
-    SearchFacetFilters,
-    ChartRecordType,
-    SearchChartHit,
-    IChartHit,
-    SearchUrlParam,
-    SynonymMap,
-    Ngram,
-    WordPositioned,
-    ScoredFilterPositioned,
-} from "./searchTypes.js"
-import {
     faBook,
     faBookmark,
     faBullhorn,
+    faDatabase,
     faFileLines,
+    faFlag,
     faLightbulb,
     faTag,
     IconDefinition,
@@ -108,7 +107,7 @@ export function pickEntitiesForChartHit(
     )
 
     // Reverse the order so that the last picked entity is first
-    const sortedEntities = [...filteredEntities].reverse()
+    const sortedEntities = filteredEntities.toReversed()
 
     return sortedEntities
 }
@@ -356,40 +355,13 @@ export const constructConfigUrl = ({
         .exhaustive()
 }
 
-// Generates time bounds to force line charts to display properly in previews.
-// When start and end times are the same (single time point), line charts
-// automatically switch to discrete bar charts. To prevent that, we set the start
-// time to -Infinity, which refers to the earliest available data.
-export function getTimeBoundsForChartUrl(
-    chartInfo?: GrapherValuesJson | null
-): { timeBounds: TimeBounds; timeMode: "year" | "day" } | undefined {
-    if (!chartInfo) return undefined
-
-    const { startTime, endTime } = chartInfo
-
-    // When a chart has different start and end times, we don't need to adjust
-    // the time parameter because the chart will naturally display as a line chart.
-    // Note: `chartInfo` is fetched for the _default_ view. If startTime equals
-    // endTime here, it doesn't necessarily mean that the line chart is actually
-    // single-time, since we're looking at the default tab rather than the specific
-    // line chart tab. However, false positives are generally harmless because most
-    // charts don't customize their start time.
-    if (startTime && startTime !== endTime) return undefined
-
-    const columnSlug = chartInfo.endValues?.y.at(0)?.columnSlug ?? ""
-    const columnInfo = chartInfo.columns?.[columnSlug]
-
-    return {
-        timeBounds: [-Infinity, endTime ?? Infinity],
-        timeMode: columnInfo?.yearIsDay ? "day" : "year",
-    }
-}
-
 export const CHARTS_INDEX = getIndexName(
     SearchIndexName.ExplorerViewsMdimViewsAndCharts
 )
+export const PAGES_INDEX = getIndexName(SearchIndexName.Pages)
 export const DATA_CATALOG_ATTRIBUTES = [
     "title",
+    "containerTitle",
     "slug",
     "availableEntities",
     "originalAvailableEntities",
@@ -402,9 +374,17 @@ export const DATA_CATALOG_ATTRIBUTES = [
     "explorerType",
 ]
 
+type SearchFacetAttribute =
+    | "tags"
+    | "availableEntities"
+    | "datasetProducts"
+    | "datasetNamespaces"
+    | "datasetVersions"
+    | "datasetProducers"
+
 export function setToFacetFilters(
     facetSet: Set<string>,
-    attribute: "tags" | "availableEntities"
+    attribute: SearchFacetAttribute
 ) {
     return Array.from(facetSet).map((facet) => `${attribute}:${facet}`)
 }
@@ -423,17 +403,46 @@ export function getSelectableTopics(
     return new Set()
 }
 
+export const formatDisjunctiveFacetFilters = (
+    facets: Set<string>,
+    attribute: SearchFacetAttribute
+): SearchFacetFilters => {
+    // disjunction mode (A OR B): [[attribute:"A", attribute:"B"]]
+    return [setToFacetFilters(facets, attribute)]
+}
+
+export const formatConjunctiveFacetFilters = (
+    facets: Set<string>,
+    attribute: SearchFacetAttribute
+): SearchFacetFilters => {
+    // conjunction mode (A AND B): [attribute:"A", attribute:"B"]
+    return setToFacetFilters(facets, attribute)
+}
+
+/**
+ * Returns a facet filter that excludes Featured Metric records when a
+ * free-text query is present. When there is no query (e.g. browsing by
+ * topic), FMs are kept so they can surface at the top of topic pages.
+ */
+export function formatFeaturedMetricFacetFilter(
+    query: string
+): SearchFacetFilters {
+    return query.trim() ? ["isFM:false"] : []
+}
+
 export function formatCountryFacetFilters(
     countries: Set<string>,
     requireAllCountries: boolean
 ) {
     const facetFilters: SearchFacetFilters = []
     if (requireAllCountries) {
-        // conjunction mode (A AND B): [attribute:"A", attribute:"B"]
-        facetFilters.push(...setToFacetFilters(countries, "availableEntities"))
+        facetFilters.push(
+            ...formatConjunctiveFacetFilters(countries, "availableEntities")
+        )
     } else {
-        // disjunction mode (A OR B): [[attribute:"A", attribute:"B"]]
-        facetFilters.push(setToFacetFilters(countries, "availableEntities"))
+        facetFilters.push(
+            ...formatDisjunctiveFacetFilters(countries, "availableEntities")
+        )
     }
     // Don't show income group-specific FMs if no countries are selected
     if (!countries.size) {
@@ -445,15 +454,14 @@ export function formatCountryFacetFilters(
 export const formatTopicFacetFilters = (
     topics: Set<string>
 ): SearchFacetFilters => {
-    // disjunction mode (A OR B): [[attribute:"A", attribute:"B"]]
-    return [setToFacetFilters(topics, "tags")]
+    return formatDisjunctiveFacetFilters(topics, "tags")
 }
 
 export function serializeSet(set: Set<string>) {
     return set.size ? [...set].join("~") : undefined
 }
 
-export function deserializeSet(str?: string): Set<string> {
+export function deserializeSet(str: string | null): Set<string> {
     return str ? new Set(str.split("~")) : new Set()
 }
 
@@ -491,6 +499,17 @@ export const getFilterIcon = (filter: Filter) => {
                 <FontAwesomeIcon icon={faTag} />
             </span>
         ))
+        .with(
+            FilterType.DATASET_PRODUCT,
+            FilterType.DATASET_NAMESPACE,
+            FilterType.DATASET_VERSION,
+            FilterType.DATASET_PRODUCER,
+            () => (
+                <span className="icon">
+                    <FontAwesomeIcon icon={faDatabase} />
+                </span>
+            )
+        )
         .with(FilterType.QUERY, () => null)
         .exhaustive()
 }
@@ -855,6 +874,18 @@ export function createFilter(type: FilterType) {
 export const createCountryFilter = createFilter(FilterType.COUNTRY)
 export const createTopicFilter = createFilter(FilterType.TOPIC)
 export const createQueryFilter = createFilter(FilterType.QUERY)
+export const createDatasetProductsFilter = createFilter(
+    FilterType.DATASET_PRODUCT
+)
+export const createDatasetNamespaceFilter = createFilter(
+    FilterType.DATASET_NAMESPACE
+)
+export const createDatasetVersionFilter = createFilter(
+    FilterType.DATASET_VERSION
+)
+export const createDatasetProducerFilter = createFilter(
+    FilterType.DATASET_PRODUCER
+)
 
 /**
  * Returns a click handler that focuses an input element when clicking on the
@@ -898,16 +929,48 @@ export const getSearchAutocompleteId = () => "search-autocomplete-listbox"
 export const getSearchAutocompleteItemId = (index: number) =>
     index >= 0 ? `search-autocomplete-item-${index}` : undefined
 
+export const buildFilterTestId = (
+    baseTestId: string,
+    filterType: FilterType,
+    filterName: string
+): string => {
+    // Topic names use " and " internally but are displayed as " & ".
+    // See also getTopicFromUrl in search.steps.ts for the same
+    // transformation applied to URL params.
+    const displayName =
+        filterType === FilterType.TOPIC
+            ? filterName.replaceAll(" and ", " & ")
+            : filterName
+    return `${baseTestId}-${filterType}-${encodeURIComponent(displayName)}`
+}
+
 export const getFilterAriaLabel = (
     filter: Filter,
     action: "add" | "remove"
 ) => {
     const actionName = action === "add" ? "Add" : "Remove"
+    const filterTypeLabel = match(filter.type)
+        .with(FilterType.DATASET_PRODUCT, () => "dataset product")
+        .with(FilterType.DATASET_NAMESPACE, () => "dataset namespace")
+        .with(FilterType.DATASET_VERSION, () => "dataset version")
+        .with(FilterType.DATASET_PRODUCER, () => "dataset producer")
+        .with(FilterType.COUNTRY, () => "country")
+        .with(FilterType.TOPIC, () => "topic")
+        .with(FilterType.QUERY, () => "query")
+        .exhaustive()
+
     return match(filter.type)
         .with(FilterType.QUERY, () => `Search for ${filter.name}`)
         .with(
-            P.union(FilterType.COUNTRY, FilterType.TOPIC),
-            () => `${actionName} ${filter.name} ${filter.type} filter`
+            P.union(
+                FilterType.COUNTRY,
+                FilterType.TOPIC,
+                FilterType.DATASET_PRODUCT,
+                FilterType.DATASET_NAMESPACE,
+                FilterType.DATASET_VERSION,
+                FilterType.DATASET_PRODUCER
+            ),
+            () => `${actionName} ${filter.name} ${filterTypeLabel} filter`
         )
         .exhaustive()
 }
@@ -942,6 +1005,18 @@ export function getSelectedTopicType(
 export const isBrowsing = (filters: Filter[], query: string) => {
     return query.trim() === "" && filters.length === 0
 }
+/**
+ * Checks if any dataset-related filters are present in the filters array.
+ */
+export const hasDatasetFilters = (filters: Filter[]): boolean => {
+    return filters.some(
+        (filter) =>
+            filter.type === FilterType.DATASET_PRODUCT ||
+            filter.type === FilterType.DATASET_NAMESPACE ||
+            filter.type === FilterType.DATASET_VERSION ||
+            filter.type === FilterType.DATASET_PRODUCER
+    )
+}
 
 /**
  * Computes the effective result type that should be displayed/used in the UI.
@@ -953,10 +1028,12 @@ export const getEffectiveResultType = (
     query: string,
     desiredResultType: SearchResultType
 ): SearchResultType => {
-    return isBrowsing(filters, query) &&
-        desiredResultType === SearchResultType.ALL
+    return hasDatasetFilters(filters)
         ? SearchResultType.DATA
-        : desiredResultType
+        : isBrowsing(filters, query) &&
+            desiredResultType === SearchResultType.ALL
+          ? SearchResultType.DATA
+          : desiredResultType
 }
 
 export const getUrlParamNameForFilter = (filter: Filter) =>
@@ -964,6 +1041,16 @@ export const getUrlParamNameForFilter = (filter: Filter) =>
         .with(FilterType.COUNTRY, () => SearchUrlParam.COUNTRY)
         .with(FilterType.TOPIC, () => SearchUrlParam.TOPIC)
         .with(FilterType.QUERY, () => SearchUrlParam.QUERY)
+        .with(FilterType.DATASET_PRODUCT, () => SearchUrlParam.DATASET_PRODUCT)
+        .with(
+            FilterType.DATASET_NAMESPACE,
+            () => SearchUrlParam.DATASET_NAMESPACE
+        )
+        .with(FilterType.DATASET_VERSION, () => SearchUrlParam.DATASET_VERSION)
+        .with(
+            FilterType.DATASET_PRODUCER,
+            () => SearchUrlParam.DATASET_PRODUCER
+        )
         .exhaustive()
 
 /**
@@ -998,7 +1085,15 @@ export const getItemUrlForFilter = (
                 [SearchUrlParam.QUERY]: unmatchedQuery,
             }),
         }))
-        .with(FilterType.QUERY, FilterType.TOPIC, () => filterParam)
+        .with(
+            FilterType.QUERY,
+            FilterType.TOPIC,
+            FilterType.DATASET_PRODUCT, // only for exhaustiveness, not used in autocomplete
+            FilterType.DATASET_NAMESPACE, // only for exhaustiveness, not used in autocomplete
+            FilterType.DATASET_VERSION, // only for exhaustiveness, not used in autocomplete
+            FilterType.DATASET_PRODUCER, // only for exhaustiveness, not used in autocomplete
+            () => filterParam
+        )
         .exhaustive()
 
     return `${BAKED_BASE_URL}${SEARCH_BASE_PATH}${queryParamsToStr(queryParams)}`
@@ -1025,6 +1120,10 @@ export function getPageTypeNameAndIcon(pageType: OwidGdocType): {
         .with(OwidGdocType.Announcement, () => ({
             name: "Announcement",
             icon: faBullhorn,
+        }))
+        .with(OwidGdocType.Profile, () => ({
+            name: "Country Profile",
+            icon: faFlag,
         }))
         .with(
             OwidGdocType.Author, // Should never be indexed

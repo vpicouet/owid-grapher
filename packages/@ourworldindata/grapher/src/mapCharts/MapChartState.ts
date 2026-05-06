@@ -42,8 +42,8 @@ export type MapFormatValueForTooltip = (
     d: PrimitiveType,
     options?: TickFormattingOptions
 ) => {
-    formattedValue: string
-    isRounded: boolean
+    label: string
+    isCategorical: boolean
 }
 
 export class MapChartState implements ChartState, ColorScaleManager {
@@ -82,11 +82,10 @@ export class MapChartState implements ChartState, ColorScaleManager {
     ): OwidTable {
         return table
             .dropRowsWithErrorValuesForColumn(mapColumnInfo.slug)
-            .interpolateColumnWithTolerance(
-                mapColumnInfo.slug,
-                this.mapConfig.timeTolerance,
-                this.mapConfig.toleranceStrategy
-            )
+            .interpolateColumnWithTolerance(mapColumnInfo.slug, {
+                toleranceOverride: this.mapConfig.timeTolerance,
+                toleranceStrategyOverride: this.mapConfig.toleranceStrategy,
+            })
     }
 
     private transformTableForCombinedMapColumn(
@@ -97,16 +96,14 @@ export class MapChartState implements ChartState, ColorScaleManager {
 
         // Interpolate both columns separately
         table = table
-            .interpolateColumnWithTolerance(
-                projectedSlug,
-                this.mapConfig.timeTolerance,
-                this.mapConfig.toleranceStrategy
-            )
-            .interpolateColumnWithTolerance(
-                historicalSlug,
-                this.mapConfig.timeTolerance,
-                this.mapConfig.toleranceStrategy
-            )
+            .interpolateColumnWithTolerance(projectedSlug, {
+                toleranceOverride: this.mapConfig.timeTolerance,
+                toleranceStrategyOverride: this.mapConfig.toleranceStrategy,
+            })
+            .interpolateColumnWithTolerance(historicalSlug, {
+                toleranceOverride: this.mapConfig.timeTolerance,
+                toleranceStrategyOverride: this.mapConfig.toleranceStrategy,
+            })
 
         // Combine the projection column with its historical stem into one column
         table = combineHistoricalAndProjectionColumns(table, mapColumnInfo, {
@@ -159,10 +156,11 @@ export class MapChartState implements ChartState, ColorScaleManager {
             )
             if (!countriesInRegionSet) return table
 
-            const countriesInRegion = Array.from(countriesInRegionSet)
-            const mappableCountriesInRegion = countriesInRegion.filter(
-                (countryName) => mappableCountryNameSet.has(countryName)
-            )
+            const mappableCountriesInRegion = countriesInRegionSet
+                .keys()
+                .filter((countryName) =>
+                    mappableCountryNameSet.has(countryName)
+                )
 
             return table.filterByEntityNames(
                 R.unique([
@@ -387,15 +385,15 @@ export class MapChartState implements ChartState, ColorScaleManager {
                 const bin = colorScale.getBinForValue(d)
                 const label = bin?.label
                 if (label !== undefined && label !== "")
-                    return { formattedValue: label, isRounded: false }
+                    return { label, isCategorical: true }
             }
 
-            if (typeof d === "number")
-                return {
-                    formattedValue: this.mapColumn.formatValueShort(d, options),
-                    isRounded: true,
-                }
-            else return { formattedValue: anyToString(d), isRounded: false }
+            if (typeof d === "number") {
+                const label = this.mapColumn.formatValueShort(d, options)
+                return { label, isCategorical: false }
+            } else {
+                return { label: anyToString(d), isCategorical: true }
+            }
         }
     }
 

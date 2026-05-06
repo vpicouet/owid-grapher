@@ -13,13 +13,13 @@ import { expectInt } from "../../serverUtils/serverUtil.js"
 import { UNCATEGORIZED_TAG_ID } from "../../settings/serverSettings.js"
 import * as db from "../../db/db.js"
 import * as lodash from "lodash-es"
-import e from "express"
 import { Request } from "../authentication.js"
+import { HandlerResponse } from "../FunctionalRouter.js"
 import * as R from "remeda"
 
 export async function getTagById(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     const tagId = expectInt(req.params.tagId) as number | null
@@ -33,13 +33,18 @@ export async function getTagById(
     const tag: any = await db.knexRawFirst<
         Pick<
             DbPlainTag,
-            "id" | "name" | "specialType" | "updatedAt" | "parentId" | "slug"
+            | "id"
+            | "name"
+            | "specialType"
+            | "updatedAt"
+            | "slug"
+            | "searchableInAlgolia"
         >
     >(
         trx,
         `-- sql
-        SELECT t.id, t.name, t.specialType, t.updatedAt, t.parentId, t.slug
-        FROM tags t LEFT JOIN tags p ON t.parentId=p.id
+        SELECT t.id, t.name, t.specialType, t.updatedAt, t.slug, t.searchableInAlgolia
+        FROM tags t
         WHERE t.id = ?
     `,
         [tagId]
@@ -117,19 +122,16 @@ export async function getTagById(
     const charts = await db.knexRaw<OldChartFieldList>(
         trx,
         `-- sql
-                SELECT ${oldChartFieldList},
-                    round(views_365d / 365, 1) as pageviewsPerDay,
-                    crv.narrativeChartsCount,
-                    crv.referencesCount
+                SELECT ${oldChartFieldList}
                 FROM charts
                 JOIN chart_configs ON chart_configs.id = charts.configId
                 LEFT JOIN chart_tags ct ON ct.chartId=charts.id
                 JOIN users lastEditedByUser ON lastEditedByUser.id = charts.lastEditedByUserId
                 LEFT JOIN users publishedByUser ON publishedByUser.id = charts.publishedByUserId
-                LEFT JOIN analytics_pageviews on (analytics_pageviews.url = CONCAT("https://ourworldindata.org/grapher/", chart_configs.slug) AND chart_configs.full ->> '$.isPublished' = "true" )
+                LEFT JOIN analytics_grapher_views agv ON (agv.grapher_slug = chart_configs.slug AND chart_configs.full ->> '$.isPublished' = "true")
                 LEFT JOIN chart_references_view crv ON crv.chartId = charts.id
                 WHERE ct.tagId ${tagId === UNCATEGORIZED_TAG_ID ? "IS NULL" : "= ?"}
-                GROUP BY charts.id, views_365d, crv.narrativeChartsCount, crv.referencesCount
+                GROUP BY charts.id, agv.views_365d, crv.narrativeChartsCount, crv.referencesCount
                 ORDER BY charts.updatedAt DESC
             `,
         uncategorized ? [] : [tagId]
@@ -138,42 +140,38 @@ export async function getTagById(
 
     await assignTagsForCharts(trx, charts)
 
-    // Subcategories
+    // Subcategories (children in tag_graph)
     const children = await db.knexRaw<{ id: number; name: string }>(
         trx,
         `-- sql
         SELECT t.id, t.name FROM tags t
-        WHERE t.parentId = ?
+        JOIN tag_graph tg ON tg.childId = t.id
+        WHERE tg.parentId = ?
     `,
         [tag.id]
     )
     tag.children = children
 
-    const possibleParents = await db.knexRaw<{ id: number; name: string }>(
-        trx,
-        `-- sql
-        SELECT t.id, t.name FROM tags t
-        WHERE t.parentId IS NULL
-    `
-    )
-    tag.possibleParents = possibleParents
-
-    return {
-        tag,
-    }
+    return { tag }
 }
 
 export async function updateTag(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const tagId = expectInt(req.params.tagId)
     const tag = (req.body as { tag: any }).tag
     await db.knexRaw(
         trx,
-        `UPDATE tags SET name=?, updatedAt=?, slug=? WHERE id=?`,
-        [tag.name, new Date(), tag.slug, tagId]
+        `UPDATE tags SET name=?, updatedAt=?, slug=?, searchableInAlgolia=? WHERE id=?`,
+        [
+            tag.name,
+            new Date(),
+            tag.slug,
+            tag.searchableInAlgolia ?? false,
+            tagId,
+        ]
     )
     if (tag.slug) {
         // See if there's a published gdoc with a matching slug.
@@ -187,15 +185,15 @@ export async function updateTag(
                         SELECT 1
                         FROM posts_gdocs_x_tags gt
                         WHERE pg.id = gt.gdocId AND gt.tagId = ?
-                ) AND pg.published = TRUE AND pg.slug = ?`,
+                ) AND pg.published = TRUE AND pg.slug = ? AND pg.type IN ('topic-page', 'linear-topic-page')`,
             [tagId, tag.slug]
         )
         if (!gdoc.length) {
             return {
                 success: true,
-                tagUpdateWarning: `The tag's slug has been updated, but there isn't a published Gdoc page with the same slug.
-
-Are you sure you haven't made a typo?`,
+                tagUpdateWarning: `The tag's slug has been updated, but there isn't a published topic page with the same slug. Are you sure you haven't made a typo?
+                
+You should probably just enable "Searchable in Algolia" for this tag and remove the slug until you've published the topic page.`,
             }
         }
     }
@@ -204,7 +202,7 @@ Are you sure you haven't made a typo?`,
 
 export async function createTag(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const tag = req.body
@@ -248,7 +246,7 @@ export async function createTag(
 
 export async function getAllTags(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ) {
     return { tags: await db.getMinimalTagsWithIsTopic(trx) }
@@ -256,7 +254,7 @@ export async function getAllTags(
 
 export async function deleteTag(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const tagId = expectInt(req.params.tagId)

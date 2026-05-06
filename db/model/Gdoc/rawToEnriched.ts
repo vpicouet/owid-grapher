@@ -1,19 +1,25 @@
 import * as _ from "lodash-es"
 import {
     BlockPositionChoice,
-    ChartPositionChoice,
     EnrichedBlockAside,
     EnrichedBlockCallout,
+    EnrichedBlockDataCallout,
+    EnrichedBlockDataCalloutGroup,
     EnrichedBlockChart,
     EnrichedBlockChartStory,
     EnrichedBlockDonorList,
+    EnrichedBlockConditionalSection,
     EnrichedBlockGraySection,
+    EnrichedBlockExploreDataSection,
+    ExploreDataSectionAlignment,
+    exploreDataSectionAlignments,
     EnrichedBlockHeading,
     EnrichedBlockHorizontalRule,
     EnrichedBlockHtml,
     EnrichedBlockImage,
     EnrichedBlockExplorerTiles,
     EnrichedBlockVideo,
+    EnrichedBlockStaticViz,
     EnrichedBlockKeyInsights,
     EnrichedBlockList,
     EnrichedBlockNumberedList,
@@ -23,9 +29,9 @@ import {
     EnrichedBlockGuidedChart,
     EnrichedBlockRecirc,
     EnrichedBlockSubscribeBanner,
-    EnrichedBlockScroller,
     EnrichedBlockSDGGrid,
     EnrichedBlockSDGToc,
+    EnrichedBlockLTPToc,
     EnrichedBlockAdditionalCharts,
     EnrichedBlockSideBySideContainer,
     EnrichedBlockStickyLeftContainer,
@@ -33,7 +39,6 @@ import {
     EnrichedBlockText,
     EnrichedChartStoryItem,
     EnrichedHybridLink,
-    EnrichedScrollerItem,
     EnrichedSDGGridItem,
     EnrichedBlockKeyIndicator,
     OwidEnrichedGdocBlock,
@@ -43,14 +48,19 @@ import {
     RawBlockAdditionalCharts,
     RawBlockAside,
     RawBlockCallout,
+    RawBlockDataCallout,
+    RawBlockDataCalloutGroup,
     RawBlockChart,
     RawBlockChartStory,
     RawBlockDonorList,
+    RawBlockConditionalSection,
     RawBlockGraySection,
+    RawBlockExploreDataSection,
     RawBlockHeading,
     RawBlockHtml,
     RawBlockImage,
     RawBlockVideo,
+    RawBlockStaticViz,
     RawBlockKeyInsights,
     RawBlockList,
     RawBlockNumberedList,
@@ -59,18 +69,18 @@ import {
     RawBlockGuidedChart,
     RawBlockRecirc,
     RawBlockSubscribeBanner,
-    RawBlockScroller,
     RawBlockSDGGrid,
     RawBlockSideBySideContainer,
     RawBlockStickyLeftContainer,
     RawBlockStickyRightContainer,
+    RawBlockLTPToc,
     RawBlockText,
     RawBlockKeyIndicator,
     Span,
     SpanSimpleText,
     EnrichedBlockSimpleText,
-    BlockImageSize,
-    checkIsBlockImageSize,
+    BlockSize,
+    checkIsBlockSize,
     RawBlockTopicPageIntro,
     EnrichedBlockTopicPageIntro,
     EnrichedTopicPageIntroRelatedTopic,
@@ -80,6 +90,8 @@ import {
     EnrichedBlockResearchAndWriting,
     EnrichedBlockResearchAndWritingLink,
     EnrichedBlockResearchAndWritingRow,
+    ResearchAndWritingVariant,
+    RESEARCH_AND_WRITING_VARIANTS,
     EnrichedBlockExpandableParagraph,
     RawBlockExpandableParagraph,
     RawBlockAllCharts,
@@ -117,6 +129,10 @@ import {
     EnrichedBlockHomepageIntro,
     RawBlockHomepageIntro,
     EnrichedBlockHomepageIntroPost,
+    RawBlockFeaturedMetrics,
+    EnrichedBlockFeaturedMetrics,
+    RawBlockFeaturedDataInsights,
+    EnrichedBlockFeaturedDataInsights,
     RawSocialLink,
     RawBlockSocials,
     EnrichedBlockSocials,
@@ -138,6 +154,15 @@ import {
     RawBlockCookieNotice,
     PullQuoteAlignment,
     pullquoteAlignments,
+    EnrichedBlockChartRows,
+    EnrichedChartRowItem,
+    RawBlockChartRows,
+    EnrichedBlockPullChart,
+    RawBlockPullChart,
+    PullChartAlignment,
+    pullChartAlignments,
+    RawBlockCountryProfileSelector,
+    EnrichedBlockCountryProfileSelector,
     RawBlockExpander,
     EnrichedBlockExpander,
     blockAlignments,
@@ -149,6 +174,10 @@ import {
     resourcePanelIcons,
     EnrichedBlockCta,
     RawBlockCta,
+    blockVisibilitys,
+    VALID_PEER_COUNTRY_STRATEGY_QUERY_PARAMS,
+    RawBlockBespokeComponent,
+    EnrichedBlockBespokeComponent,
 } from "@ourworldindata/types"
 import {
     traverseEnrichedSpan,
@@ -157,13 +186,16 @@ import {
     Url,
     toAsciiQuotes,
     traverseEnrichedBlock,
+    validateConditionalSectionLists,
 } from "@ourworldindata/utils"
 import { checkIsInternalLink, getLinkType } from "@ourworldindata/components"
+import { isValidPeerCountryStrategyQueryParam } from "@ourworldindata/grapher"
 import {
     extractUrl,
     getTitleSupertitleFromHeadingText,
     parseAuthors,
     spansToSimpleString,
+    transformCalloutTokensInBlock,
 } from "./gdocUtils.js"
 import {
     htmlToEnrichedTextBlock,
@@ -172,10 +204,6 @@ import {
 } from "./htmlToEnriched.js"
 import { P, match } from "ts-pattern"
 import * as R from "remeda"
-import {
-    EnrichedBlockScript,
-    RawBlockScript,
-} from "@ourworldindata/types/src/gdocTypes/ArchieMlComponents.js"
 
 export function parseRawBlocksToEnrichedBlocks(
     block: OwidRawGdocBlock
@@ -184,23 +212,28 @@ export function parseRawBlocksToEnrichedBlocks(
         .with({ type: "all-charts" }, parseAllCharts)
         .with({ type: "additional-charts" }, parseAdditionalCharts)
         .with({ type: "aside" }, parseAside)
+        .with({ type: "bespoke-component" }, parseBespokeComponent)
         .with({ type: "blockquote" }, parseBlockquote)
         .with({ type: "callout" }, parseCallout)
+        .with({ type: "data-callout" }, parseDataCallout)
+        .with({ type: "data-callout-group" }, parseDataCalloutGroup)
         .with({ type: "chart" }, parseChart)
         .with({ type: "narrative-chart" }, parseNarrativeChart)
         .with({ type: "code" }, parseCode)
         .with({ type: "donors" }, parseDonorList)
-        .with({ type: "scroller" }, parseScroller)
         .with({ type: "expander" }, parseExpander)
         .with({ type: "chart-story" }, parseChartStory)
         .with({ type: "image" }, parseImage)
         .with({ type: "video" }, parseVideo)
+        .with({ type: "static-viz" }, parseStaticViz)
         .with({ type: "list" }, parseList)
         .with({ type: "numbered-list" }, parseNumberedList)
         .with({ type: "people" }, parsePeople)
         .with({ type: "people-rows" }, parsePeopleRows)
         .with({ type: "person" }, parsePerson)
         .with({ type: "pull-quote" }, parsePullQuote)
+        .with({ type: "chart-rows" }, parseChartRows)
+        .with({ type: "pull-chart" }, parsePullChart)
         .with({ type: "resource-panel" }, parseResourcePanel)
         .with({ type: "guided-chart" }, parseGuidedChart)
         .with(
@@ -222,15 +255,14 @@ export function parseRawBlocksToEnrichedBlocks(
                 parseErrors: [],
             })
         )
-        .with({ type: "script" }, parseScript)
-        .with({ type: "url" }, () => null) // url blocks should only occur inside of chart stories etc
-        .with({ type: "position" }, () => null) // position blocks should only occur inside of chart stories etc
         .with({ type: "heading" }, parseHeading)
         .with({ type: "sdg-grid" }, parseSdgGrid)
         .with({ type: "sticky-left" }, parseStickyLeft)
         .with({ type: "sticky-right" }, parseStickyRight)
         .with({ type: "side-by-side" }, parseSideBySide)
         .with({ type: "gray-section" }, parseGraySection)
+        .with({ type: "explore-data-section" }, parseExploreDataSection)
+        .with({ type: "conditional-section" }, parseConditionalSection)
         .with({ type: "prominent-link" }, parseProminentLink)
         .with({ type: "topic-page-intro" }, parseTopicPageIntro)
         .with({ type: "cookie-notice" }, parseCookieNotice)
@@ -245,6 +277,7 @@ export function parseRawBlocksToEnrichedBlocks(
                 parseErrors: [],
             })
         )
+        .with({ type: "ltp-toc" }, parseLtpToc)
         .with(
             { type: "missing-data" },
             (b): EnrichedBlockMissingData => ({
@@ -263,8 +296,11 @@ export function parseRawBlocksToEnrichedBlocks(
         .with({ type: "latest-data-insights" }, parseLatestDataInsights)
         .with({ type: "pill-row" }, parsePillRow)
         .with({ type: "homepage-search" }, parseHomepageSearch)
+        .with({ type: "featured-metrics" }, parseFeaturedMetrics)
+        .with({ type: "featured-data-insights" }, parseFeaturedDataInsights)
         .with({ type: "homepage-intro" }, parseHomepageIntro)
         .with({ type: "socials" }, parseSocials)
+        .with({ type: "country-profile-selector" }, parseCountryProfileSelector)
         .exhaustive()
 }
 
@@ -448,15 +484,69 @@ const parseBlockquote = (raw: RawBlockBlockquote): EnrichedBlockBlockquote => {
     }
 }
 
+const parseBespokeComponent = (
+    raw: RawBlockBespokeComponent
+): EnrichedBlockBespokeComponent => {
+    const createError = (
+        error: ParseError,
+        bundle: string = "",
+        size: BlockSize = BlockSize.Wide,
+        config: Record<string, string> = {}
+    ): EnrichedBlockBespokeComponent => ({
+        type: "bespoke-component",
+        bundle,
+        size,
+        config,
+        parseErrors: [error],
+    })
+
+    if (!raw.value.bundle) {
+        return createError({
+            message: "Bundle property is required for bespoke-component",
+        })
+    }
+
+    const size = raw.value.size ?? BlockSize.Wide
+    if (!checkIsBlockSize(size)) {
+        return createError({
+            message: `Invalid size property: ${size}`,
+        })
+    }
+
+    const rawConfig = raw.value.config ?? {}
+    const config: Record<string, string> = {}
+    const parseErrors: ParseError[] = []
+    for (const [key, value] of Object.entries(rawConfig)) {
+        if (typeof value !== "string") {
+            parseErrors.push({
+                message: `Config value for "${key}" must be a string, got ${typeof value}. Nested config values are not supported.`,
+            })
+        } else {
+            config[key] = value
+        }
+    }
+
+    return {
+        type: "bespoke-component",
+        bundle: raw.value.bundle,
+        variant: raw.value.variant,
+        size,
+        config,
+        parseErrors,
+    }
+}
+
 const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
     const createError = (
         error: ParseError,
         url: string,
-        caption: Span[] = []
+        caption: Span[] = [],
+        size: BlockSize = BlockSize.Wide
     ): EnrichedBlockChart => ({
         type: "chart",
         url,
         caption,
+        size,
         parseErrors: [error],
     })
 
@@ -466,6 +556,7 @@ const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
         return {
             type: "chart",
             url: val,
+            size: BlockSize.Wide,
             parseErrors: [],
         }
     } else {
@@ -479,31 +570,52 @@ const parseChart = (raw: RawBlockChart): EnrichedBlockChart => {
 
         const url = extractUrl(val.url)
 
-        const warnings: ParseError[] = []
-
         const height = val.height
-        const row = val.row
-        const column = val.column
-        // This property is currently unused, a holdover from @mathisonian's gdocs demo.
-        // We will decide soon™️ if we want to use it for something
-        let position: ChartPositionChoice | undefined = undefined
-        if (val.position)
-            if (val.position === "featured") position = val.position
-            else {
-                warnings.push({
-                    message: "position must be 'featured' or unset",
-                })
-            }
+        const size = val.size ?? BlockSize.Wide
+        if (!checkIsBlockSize(size)) {
+            return createError(
+                {
+                    message: `Invalid size property: ${size}`,
+                },
+                url,
+                [],
+                BlockSize.Wide
+            )
+        }
+
+        const visibility = parseOptionalEnum(blockVisibilitys, val.visibility)
+        if (visibility === "invalid") {
+            return createError(
+                {
+                    message: `Invalid visibility property: ${val.visibility}`,
+                },
+                url
+            )
+        }
+
         const caption = val.caption ? htmlToSpans(val.caption) : []
+
+        const peerCountries = val.peerCountries
+        if (
+            peerCountries !== undefined &&
+            !isValidPeerCountryStrategyQueryParam(peerCountries)
+        ) {
+            return createError(
+                {
+                    message: `Invalid peerCountries property: ${peerCountries}. Valid values are: ${VALID_PEER_COUNTRY_STRATEGY_QUERY_PARAMS.join(", ")}`,
+                },
+                url
+            )
+        }
 
         return omitUndefinedValues({
             type: "chart",
             url,
             height,
-            row,
-            column,
-            position,
+            size,
             caption: caption.length > 0 ? caption : undefined,
+            visibility,
+            peerCountries,
             parseErrors: [],
         }) as EnrichedBlockChart
     }
@@ -515,11 +627,13 @@ const parseNarrativeChart = (
     const createError = (
         error: ParseError,
         name: string,
-        caption: Span[] = []
+        caption: Span[] = [],
+        size: BlockSize = BlockSize.Wide
     ): EnrichedBlockNarrativeChart => ({
         type: "narrative-chart",
         name,
         caption,
+        size,
         parseErrors: [error],
     })
 
@@ -529,6 +643,7 @@ const parseNarrativeChart = (
         return {
             type: "narrative-chart",
             name: val,
+            size: BlockSize.Wide,
             parseErrors: [],
         }
     } else {
@@ -540,30 +655,26 @@ const parseNarrativeChart = (
                 ""
             )
 
-        const warnings: ParseError[] = []
-
         const height = val.height
-        const row = val.row
-        const column = val.column
-        // This property is currently unused, a holdover from @mathisonian's gdocs demo.
-        // We will decide soon™️ if we want to use it for something
-        let position: ChartPositionChoice | undefined = undefined
-        if (val.position)
-            if (val.position === "featured") position = val.position
-            else {
-                warnings.push({
-                    message: "position must be 'featured' or unset",
-                })
-            }
+        const size = val.size ?? BlockSize.Wide
+        if (!checkIsBlockSize(size)) {
+            return createError(
+                {
+                    message: `Invalid size property: ${size}`,
+                },
+                val.name,
+                [],
+                BlockSize.Wide
+            )
+        }
+
         const caption = val.caption ? htmlToSpans(val.caption) : []
 
         return omitUndefinedValues({
             type: "narrative-chart",
             name: val.name,
             height,
-            row,
-            column,
-            position,
+            size,
             caption: caption.length > 0 ? caption : undefined,
             parseErrors: [],
         }) as EnrichedBlockNarrativeChart
@@ -589,66 +700,6 @@ const parseDonorList = (raw: RawBlockDonorList): EnrichedBlockDonorList => {
     return {
         type: "donors",
         value: raw.value,
-        parseErrors: [],
-    }
-}
-
-const parseScroller = (raw: RawBlockScroller): EnrichedBlockScroller => {
-    const createError = (
-        error: ParseError,
-        blocks: EnrichedScrollerItem[] = []
-    ): EnrichedBlockScroller => ({
-        type: "scroller",
-        blocks,
-        parseErrors: [error],
-    })
-
-    if (typeof raw.value === "string")
-        return createError({
-            message: "Value is a string, not an object with properties",
-        })
-
-    const blocks: EnrichedScrollerItem[] = []
-    let currentBlock: EnrichedScrollerItem = {
-        url: "",
-        type: "enriched-scroller-item",
-        text: { type: "text", value: [], parseErrors: [] },
-    }
-    const warnings: ParseError[] = []
-    for (const block of raw.value) {
-        match(block)
-            .with({ type: "url" }, (url) => {
-                if (currentBlock.url !== "") {
-                    blocks.push(currentBlock)
-                    currentBlock = {
-                        type: "enriched-scroller-item",
-                        url: "",
-                        text: {
-                            type: "text",
-                            value: [],
-                            parseErrors: [],
-                        },
-                    }
-                }
-                currentBlock.url = url.value
-            })
-            .with({ type: "text" }, (text) => {
-                currentBlock.text = htmlToEnrichedTextBlock(text.value)
-            })
-            .otherwise(() =>
-                warnings.push({
-                    message: "scroller items must be of type 'url' or 'text'",
-                    isWarning: true,
-                })
-            )
-    }
-    if (currentBlock.url !== "") {
-        blocks.push(currentBlock)
-    }
-
-    return {
-        type: "scroller",
-        blocks,
         parseErrors: [],
     }
 }
@@ -687,7 +738,12 @@ const parseChartStory = (raw: RawBlockChartStory): EnrichedBlockChartStory => {
                 }
             return {
                 narrative: htmlToEnrichedTextBlock(item.narrative),
-                chart: { type: "chart", url: chart, parseErrors: [] },
+                chart: {
+                    type: "chart",
+                    url: chart,
+                    size: BlockSize.Wide,
+                    parseErrors: [],
+                },
                 technical: item.technical?.list
                     ? item.technical.list.map(htmlToEnrichedTextBlock)
                     : [],
@@ -713,7 +769,7 @@ const parseImage = (image: RawBlockImage): EnrichedBlockImage => {
         filename: string = "",
         alt: string = "",
         caption?: Span[],
-        size: BlockImageSize = BlockImageSize.Wide
+        size: BlockSize = BlockSize.Wide
     ): EnrichedBlockImage => ({
         type: "image",
         filename,
@@ -733,8 +789,8 @@ const parseImage = (image: RawBlockImage): EnrichedBlockImage => {
     }
 
     // Default to wide
-    const size = image.value.size ?? BlockImageSize.Wide
-    if (!checkIsBlockImageSize(size)) {
+    const size = image.value.size ?? BlockSize.Wide
+    if (!checkIsBlockSize(size)) {
         return createError({
             message: `Invalid size property: ${size}`,
         })
@@ -752,6 +808,16 @@ const parseImage = (image: RawBlockImage): EnrichedBlockImage => {
         ? image.value.hasOutline === "true"
         : true // Default to true if not specified
 
+    const visibility = parseOptionalEnum(
+        blockVisibilitys,
+        image.value.visibility
+    )
+    if (visibility === "invalid") {
+        return createError({
+            message: `Invalid visibility property: ${image.value.visibility}`,
+        })
+    }
+
     return {
         type: "image",
         filename,
@@ -760,6 +826,7 @@ const parseImage = (image: RawBlockImage): EnrichedBlockImage => {
         caption,
         size,
         hasOutline,
+        visibility,
         originalWidth: undefined,
         parseErrors: [],
     }
@@ -816,6 +883,13 @@ const parseVideo = (raw: RawBlockVideo): EnrichedBlockVideo => {
         return createError(shouldAutoplayValidation)
     }
 
+    const visibility = parseOptionalEnum(blockVisibilitys, raw.value.visibility)
+    if (visibility === "invalid") {
+        return createError({
+            message: `Invalid visibility property: ${raw.value.visibility}`,
+        })
+    }
+
     const caption = raw.value.caption
         ? htmlToSpans(raw.value.caption)
         : undefined
@@ -827,6 +901,61 @@ const parseVideo = (raw: RawBlockVideo): EnrichedBlockVideo => {
         caption,
         shouldLoop: raw.value.shouldLoop === "true",
         shouldAutoplay: raw.value.shouldAutoplay === "true",
+        visibility,
+        parseErrors: [],
+    }
+}
+
+const parseStaticViz = (raw: RawBlockStaticViz): EnrichedBlockStaticViz => {
+    const createError = (
+        error: ParseError,
+        name: string = "",
+        size: BlockSize = BlockSize.Wide,
+        hasOutline: boolean = true
+    ): EnrichedBlockStaticViz => ({
+        type: "static-viz",
+        name,
+        size,
+        hasOutline,
+        parseErrors: [error],
+    })
+
+    const name = raw.value.name?.trim()
+    if (!name) {
+        return createError({
+            message: "name property is missing or empty",
+        })
+    }
+
+    const size = raw.value.size ?? BlockSize.Wide
+    if (!checkIsBlockSize(size)) {
+        return createError(
+            {
+                message: `Invalid size property: ${size}`,
+            },
+            name
+        )
+    }
+
+    const hasOutlineValidation = validateRawBoolean("hasOutline", raw.value)
+    if (!hasOutlineValidation.isValid) {
+        return createError(hasOutlineValidation, name, size)
+    }
+    const hasOutline =
+        raw.value.hasOutline === undefined
+            ? true
+            : raw.value.hasOutline === "true"
+
+    const caption = raw.value.caption
+        ? htmlToSpans(raw.value.caption)
+        : undefined
+
+    return {
+        type: "static-viz",
+        name,
+        size,
+        hasOutline,
+        caption,
         parseErrors: [],
     }
 }
@@ -1067,6 +1196,149 @@ const parsePullQuote = (raw: RawBlockPullQuote): EnrichedBlockPullQuote => {
     }
 }
 
+function parseChartRows(raw: RawBlockChartRows): EnrichedBlockChartRows {
+    const createError = (
+        error: ParseError,
+        rows: EnrichedChartRowItem[] = []
+    ): EnrichedBlockChartRows => ({
+        type: "chart-rows",
+        kicker: "",
+        title: "",
+        source: "",
+        rows,
+        parseErrors: [error],
+    })
+
+    if (typeof raw.value === "string") {
+        return createError({
+            message: "Value is a string, not an object with properties",
+        })
+    }
+
+    const { kicker, title, source, rows } = raw.value
+    const parseErrors: ParseError[] = []
+
+    if (!rows || rows.length === 0) {
+        return createError({
+            message: "chart-rows must have at least one row item",
+        })
+    }
+
+    const enrichedRows: EnrichedChartRowItem[] = []
+    for (const row of rows) {
+        if (!row.image) {
+            parseErrors.push({
+                message: "chart-rows row item missing image property",
+            })
+            continue
+        }
+        if (!row.url) {
+            parseErrors.push({
+                message: "chart-rows row item missing url property",
+            })
+            continue
+        }
+
+        const enrichedContent = row.content?.map(parseText) ?? []
+        for (const block of enrichedContent) {
+            for (const error of block.parseErrors) {
+                parseErrors.push({
+                    ...error,
+                    message: `chart-rows row content: ${error.message}`,
+                })
+            }
+        }
+
+        if (enrichedContent.length === 0) {
+            parseErrors.push({
+                message:
+                    "chart-rows row item has no content. Consider adding text to accompany the chart thumbnail.",
+                isWarning: true,
+            })
+        }
+
+        enrichedRows.push({
+            image: row.image,
+            url: row.url,
+            content: enrichedContent,
+        })
+    }
+
+    return {
+        type: "chart-rows",
+        kicker: kicker ?? "",
+        title: title ?? "",
+        source: source ?? "",
+        rows: enrichedRows,
+        parseErrors,
+    }
+}
+
+function parsePullChart(raw: RawBlockPullChart): EnrichedBlockPullChart {
+    const createError = (error: ParseError): EnrichedBlockPullChart => ({
+        type: "pull-chart",
+        image: "",
+        url: "",
+        content: [],
+        parseErrors: [error],
+    })
+
+    if (typeof raw.value === "string") {
+        return createError({
+            message: "Value is a string, not an object with properties",
+        })
+    }
+
+    const { align, image, url, content } = raw.value
+    const parseErrors: ParseError[] = []
+
+    let validAlign: PullChartAlignment | undefined
+    if (align) {
+        if (validateRawEnum(pullChartAlignments, align)) {
+            validAlign = align
+        } else {
+            parseErrors.push({
+                message: `Invalid pull-chart alignment "${align}". Must be one of ${pullChartAlignments.join(", ")}.`,
+                isWarning: true,
+            })
+        }
+    }
+
+    if (!image) {
+        return createError({ message: "pull-chart missing image property" })
+    }
+    if (!url) {
+        return createError({ message: "pull-chart missing url property" })
+    }
+
+    const enrichedContent = content?.map(parseText) ?? []
+    for (const block of enrichedContent) {
+        for (const error of block.parseErrors) {
+            parseErrors.push({
+                ...error,
+                message: `pull-chart content: ${error.message}`,
+            })
+        }
+    }
+
+    if (enrichedContent.length === 0) {
+        parseErrors.push({
+            message:
+                "pull-chart has no content. Consider adding text to accompany the chart thumbnail.",
+            isWarning: true,
+        })
+    }
+
+    return {
+        type: "pull-chart",
+        align: validAlign,
+        image,
+        url,
+        content: enrichedContent,
+        parseErrors,
+    }
+}
+
 function parseHybridLinks(rawLinks: RawHybridLink[]): {
     parsedLinks: EnrichedHybridLink[]
     parseErrors: ParseError[]
@@ -1147,6 +1419,13 @@ const parseGuidedChart = (
         traverseEnrichedBlock(block, (node) => {
             if (node.type === "chart") {
                 chartCount++
+            }
+            if (node.type === "chart-rows" && (node.title || node.source)) {
+                contentErrors.push({
+                    message:
+                        "chart-rows inside a guided-chart should not have title or source — these are hidden in guided chart mode",
+                    isWarning: true,
+                })
             }
             if (node.parseErrors.length) {
                 contentErrors.push(
@@ -1240,7 +1519,7 @@ const parseSubscribeBanner = (
     const rawAlign = raw.value?.align
     if (rawAlign) {
         if (validateRawEnum(blockAlignments, rawAlign)) {
-            align = rawAlign as BlockAlignment
+            align = rawAlign
         } else {
             parseErrors.push({
                 message: `If specified, subscribe-banner align must be one of ${blockAlignments.join(", ")}`,
@@ -1260,6 +1539,16 @@ function validateRawEnum<T extends string>(
     value: unknown
 ): value is T {
     return typeof value === "string" && validValues.includes(value as T)
+}
+
+// Returns the enum value if valid, undefined if null/undefined, or "invalid" if not valid
+function parseOptionalEnum<const T extends readonly string[]>(
+    values: T,
+    raw: unknown
+): T[number] | undefined | "invalid" {
+    if (raw === undefined || raw === null) return undefined
+    if (values.includes(raw as T[number])) return raw as T[number]
+    return "invalid"
 }
 
 export const parseTable = (raw: RawBlockTable): EnrichedBlockTable => {
@@ -1312,7 +1601,7 @@ export const parseTable = (raw: RawBlockTable): EnrichedBlockTable => {
             for (const [cellIndex, cell] of cells.entries()) {
                 const enrichedCellContent: OwidEnrichedGdocBlock[] = []
                 const content = cell.value
-                if (!content || !content.length) {
+                if (!content?.length) {
                     enrichedCells.push({
                         type: "table-cell",
                         content: [],
@@ -1526,8 +1815,8 @@ const parseSdgGrid = (raw: RawBlockSDGGrid): EnrichedBlockSDGGrid => {
                     },
                 ]
             // TODO: make the type not just a string and then parse spans here
-            const goal = item.goal!
-            const link = item.link!
+            const goal = item.goal
+            const link = item.link
 
             //const errors = goal.parseErrors.concat(link.parseErrors)
 
@@ -1602,6 +1891,103 @@ function parseGraySection(raw: RawBlockGraySection): EnrichedBlockGraySection {
         type: "gray-section",
         items: _.compact(raw.value.map(parseRawBlocksToEnrichedBlocks)),
         parseErrors: [],
+    }
+}
+
+function parseExploreDataSection(
+    raw: RawBlockExploreDataSection
+): EnrichedBlockExploreDataSection {
+    const parseErrors: ParseError[] = []
+    let align: ExploreDataSectionAlignment = "left"
+
+    if (raw.value.align !== undefined) {
+        if (!validateRawEnum(exploreDataSectionAlignments, raw.value.align)) {
+            parseErrors.push({
+                message: `Invalid explore-data-section alignment "${raw.value.align}". Must be one of ${exploreDataSectionAlignments.join(", ")}`,
+            })
+        } else {
+            align = raw.value.align
+        }
+    }
+
+    return {
+        type: "explore-data-section",
+        title: raw.value.title,
+        align,
+        content: _.compact(
+            raw.value.content.map(parseRawBlocksToEnrichedBlocks)
+        ),
+        parseErrors,
+    }
+}
+
+/**
+ * This is the first pass at validating a conditional section.
+ * There's a second pass once the profile has been instantiated
+ * in instantiateProfile to determine whether to include/exclude
+ * the content based on the profile's entities.
+ */
+function parseConditionalSection(
+    raw: RawBlockConditionalSection
+): EnrichedBlockConditionalSection | null {
+    const baseBlock: EnrichedBlockConditionalSection = {
+        type: "conditional-section",
+        content: [],
+        include: [],
+        exclude: [],
+        parseErrors: [],
+    }
+
+    const parseErrors: ParseError[] = []
+
+    const content = raw.value.content
+    if (!content) {
+        return {
+            ...baseBlock,
+            parseErrors: [
+                {
+                    message: "Conditional section must have content",
+                },
+            ],
+        }
+    }
+
+    const parseEntityList = (
+        rawList: unknown
+    ): { value: string[]; parseErrors: ParseError[] } => {
+        if (!rawList) {
+            return { value: [], parseErrors: [] }
+        }
+        if (typeof rawList === "string") {
+            const value: string[] = rawList.split(",").map((s) => s.trim())
+            return { value, parseErrors: [] }
+        }
+        return {
+            value: [],
+            parseErrors: [
+                {
+                    message:
+                        "Include/exclude must be a comma-separated string of entity names",
+                },
+            ],
+        }
+    }
+    const include = parseEntityList(raw.value.include)
+    const exclude = parseEntityList(raw.value.exclude)
+    parseErrors.push(...include.parseErrors)
+    parseErrors.push(...exclude.parseErrors)
+    parseErrors.push(
+        ...validateConditionalSectionLists(include.value, exclude.value)
+    )
+
+    return {
+        type: "conditional-section",
+        content: content
+            .map(parseRawBlocksToEnrichedBlocks)
+            .filter((block): block is OwidEnrichedGdocBlock => block !== null),
+        include: include.value,
+        exclude: exclude.value,
+        parseErrors,
     }
 }
 
@@ -1682,6 +2068,112 @@ function parseCallout(raw: RawBlockCallout): EnrichedBlockCallout {
         parseErrors: [],
         text: excludeNullish(enrichedTextBlocks),
         title: raw.value.title,
+    }
+}
+
+function parseDataCallout(raw: RawBlockDataCallout): EnrichedBlockDataCallout {
+    const createError = (error: ParseError): EnrichedBlockDataCallout => ({
+        type: "data-callout",
+        parseErrors: [error],
+        url: "",
+        content: [],
+    })
+
+    if (!raw.value.url) {
+        return createError({
+            message: "Missing url for data-callout block",
+        })
+    }
+
+    // Validate that the URL is a grapher or explorer link
+    const url = Url.fromURL(extractUrl(raw.value.url))
+
+    if (!url.isGrapher && !url.isExplorer) {
+        return createError({
+            message: "data-callout url must be a grapher or explorer link",
+        })
+    }
+    const countryQueryParams = url.queryParams["country"]
+    const countryValues = countryQueryParams?.split("~").filter(Boolean) || []
+    if (countryValues.length !== 1) {
+        return createError({
+            message:
+                "data-callout url must specify exactly one country using the 'country' query parameter",
+        })
+    }
+
+    if (!raw.value.content) {
+        return createError({
+            message: "Missing content for data-callout block",
+        })
+    }
+
+    if (!_.isArray(raw.value.content)) {
+        return createError({
+            message:
+                "Content must be provided as an array e.g. inside a [.+content] block",
+        })
+    }
+
+    const enrichedContent = raw.value.content.map(
+        parseRawBlocksToEnrichedBlocks
+    )
+
+    const transformedContent = excludeNullish(enrichedContent).map(
+        transformCalloutTokensInBlock
+    )
+
+    return {
+        type: "data-callout",
+        url: url.fullUrl,
+        content: transformedContent,
+        parseErrors: [],
+    }
+}
+
+function parseDataCalloutGroup(
+    raw: RawBlockDataCalloutGroup
+): EnrichedBlockDataCalloutGroup {
+    const createError = (error: ParseError): EnrichedBlockDataCalloutGroup => ({
+        type: "data-callout-group",
+        parseErrors: [error],
+        content: [],
+    })
+
+    if (!raw.value.content) {
+        return createError({
+            message: "Missing content for data-callout-group block",
+        })
+    }
+
+    if (!_.isArray(raw.value.content)) {
+        return createError({
+            message:
+                "Content must be provided as an array e.g. inside a [.+content] block",
+        })
+    }
+
+    const enrichedContent = raw.value.content.map(
+        parseRawBlocksToEnrichedBlocks
+    )
+
+    const content = excludeNullish(enrichedContent)
+
+    const hasDataCallout = content.some(
+        (block) => block.type === "data-callout"
+    )
+
+    if (!hasDataCallout) {
+        return createError({
+            message:
+                "data-callout-group must contain at least one data-callout block",
+        })
+    }
+
+    return {
+        type: "data-callout-group",
+        content,
+        parseErrors: [],
     }
 }
 
@@ -2040,14 +2532,14 @@ export function parseFaqs(
         return {
             id: faq.id,
             content: enrichedText,
-            parseErrors: _.compact([
-                ...enrichedText.flatMap((block) =>
+            parseErrors: _.compact(
+                enrichedText.flatMap((block) =>
                     block?.parseErrors.map((parseError) => ({
                         ...parseError,
                         message: `Block parse error in faq with id "${faq.id}": ${parseError.message}`,
                     }))
-                ),
-            ]),
+                )
+            ),
         }
     }
 
@@ -2131,7 +2623,7 @@ function parseResearchAndWritingBlock(
             const enriched: EnrichedBlockResearchAndWritingLink = {
                 value: { url: enrichedUrl },
             }
-            if (authors) enriched.value.authors = parseAuthors(authors)
+            if (authors) enriched.value.authors = parseAuthors(authors).authors
             if (title) enriched.value.title = title
             if (filename) enriched.value.filename = filename
             if (subtitle) enriched.value.subtitle = subtitle
@@ -2147,6 +2639,22 @@ function parseResearchAndWritingBlock(
     const hideDateValidation = validateRawBoolean("hide-date", raw.value)
     if (!hideDateValidation.isValid) {
         parseErrors.push(hideDateValidation)
+    }
+
+    let variant: ResearchAndWritingVariant | undefined
+    if (raw.value.variant !== undefined) {
+        if (
+            !validateRawEnum(RESEARCH_AND_WRITING_VARIANTS, raw.value.variant)
+        ) {
+            const allowedVariants = RESEARCH_AND_WRITING_VARIANTS.map(
+                (allowed) => `"${allowed}"`
+            ).join(", ")
+            parseErrors.push({
+                message: `Invalid "variant" value. Allowed values: ${allowedVariants}`,
+            })
+        } else {
+            variant = raw.value.variant
+        }
     }
 
     const primary: EnrichedBlockResearchAndWritingLink[] = []
@@ -2208,6 +2716,7 @@ function parseResearchAndWritingBlock(
         heading: raw.value.heading,
         "hide-authors": raw.value["hide-authors"] === "true",
         "hide-date": raw.value["hide-date"] === "true",
+        variant,
         primary,
         secondary,
         more,
@@ -2274,6 +2783,28 @@ function parseEntrySummary(
     return {
         type: "entry-summary",
         items,
+        parseErrors,
+    }
+}
+
+function parseLtpToc(raw: RawBlockLTPToc): EnrichedBlockLTPToc {
+    const parseErrors: ParseError[] = []
+    let title: string | undefined
+
+    if (raw.value !== undefined) {
+        if (typeof raw.value === "string") {
+            parseErrors.push({
+                message:
+                    "ltp-toc block value is a string, not an object with properties",
+            })
+        } else if (typeof raw.value.title === "string") {
+            title = raw.value.title
+        }
+    }
+
+    return {
+        type: "ltp-toc",
+        title,
         parseErrors,
     }
 }
@@ -2596,6 +3127,24 @@ function parseHomepageSearch(
     }
 }
 
+function parseFeaturedMetrics(
+    _: RawBlockFeaturedMetrics
+): EnrichedBlockFeaturedMetrics {
+    return {
+        type: "featured-metrics",
+        parseErrors: [],
+    }
+}
+
+function parseFeaturedDataInsights(
+    _: RawBlockFeaturedDataInsights
+): EnrichedBlockFeaturedDataInsights {
+    return {
+        type: "featured-data-insights",
+        parseErrors: [],
+    }
+}
+
 function parseHomepageIntro(
     raw: RawBlockHomepageIntro
 ): EnrichedBlockHomepageIntro {
@@ -2648,7 +3197,9 @@ function parseHomepageIntro(
         const url = extractUrl(post.url)
         const linkType = getLinkType(url)
         // If authors aren't specified, assume it's a linked gdoc
-        const authors = post.authors ? parseAuthors(post.authors) : undefined
+        const authors = post.authors
+            ? parseAuthors(post.authors).authors
+            : undefined
 
         const enrichedPost: EnrichedBlockHomepageIntroPost = {
             url,
@@ -2736,7 +3287,7 @@ export const parseSocialLink = (raw: RawSocialLink): EnrichedSocialLink => {
             message: "Link is missing text",
         })
     }
-    if (raw.type && Object.values(SocialLinkType).indexOf(raw.type) === -1) {
+    if (raw.type && !Object.values(SocialLinkType).includes(raw.type)) {
         return createError({
             message: `Link type must be one of ${Object.values(
                 SocialLinkType
@@ -2780,37 +3331,31 @@ export const parseSocials = (raw: RawBlockSocials): EnrichedBlockSocials => {
     }
 }
 
-export const parseScript = (raw: RawBlockScript): EnrichedBlockScript => {
-    const createError = (error: ParseError): EnrichedBlockScript => ({
-        type: "script",
-        lines: [],
-        parseErrors: [error],
-    })
+function parseCountryProfileSelector(
+    raw: RawBlockCountryProfileSelector
+): EnrichedBlockCountryProfileSelector {
+    const parseErrors: ParseError[] = []
+    const val = raw.value
 
-    const rawLines = raw.value
-    if (!R.isArray(rawLines)) {
-        return createError({
-            message: `Script block must be written as an array e.g. [.+script]`,
+    if (!val.url) {
+        parseErrors.push({
+            message: "country-profile-selector block is missing a url field",
         })
     }
 
-    const enrichedText = rawLines.map(parseText)
-    const [goodText, badText] = _.partition(
-        enrichedText,
-        (enrichedLine) =>
-            enrichedLine.value.length === 1 &&
-            enrichedLine.value[0].spanType === "span-simple-text"
-    )
-
-    if (badText.length) {
-        return createError({
-            message: `Script block contains invalid lines: "${badText.map((text) => spansToSimpleString(text.value)).join(", ")}". Each line must be simple text without formatting.`,
-        })
-    }
+    const defaultCountries = val.defaultCountries
+        ? val.defaultCountries
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0)
+        : []
 
     return {
-        type: "script",
-        lines: goodText.map((text) => spansToSimpleString(text.value)),
-        parseErrors: [],
+        type: "country-profile-selector",
+        url: extractUrl(val.url ?? ""),
+        title: val.title,
+        description: val.description,
+        defaultCountries,
+        parseErrors,
     }
 }

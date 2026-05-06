@@ -26,8 +26,12 @@ export const DATA_API_FOR_ADMIN_UI: string | undefined =
     serverSettings.DATA_API_FOR_ADMIN_UI
 export const BAKED_BASE_URL: string = clientSettings.BAKED_BASE_URL
 
-export const ARCHIVE_BASE_URL: string | null =
-    serverSettings.ARCHIVE_BASE_URL || null
+export const ARCHIVE_BASE_URL: string | null = clientSettings.ARCHIVE_BASE_URL
+
+export const WIKIPEDIA_ARCHIVE_BASE_URL: string | null =
+    serverSettings.WIKIPEDIA_ARCHIVE_BASE_URL || null
+
+export const CLOUDFLARE_IMAGES_URL = clientSettings.CLOUDFLARE_IMAGES_URL
 
 export const VITE_PREVIEW: boolean = serverSettings.VITE_PREVIEW === "true"
 
@@ -63,11 +67,6 @@ export const GRAPHER_TEST_DB_PORT: number =
 
 export const BAKED_SITE_DIR: string =
     serverSettings.BAKED_SITE_DIR ?? path.resolve(BASE_DIR, "bakedSite") // Where the static build output goes
-export const SECRET_KEY: string =
-    serverSettings.SECRET_KEY ??
-    "fejwiaof jewiafo jeioa fjieowajf isa fjidosajfgj"
-export const SESSION_COOKIE_AGE: number =
-    parseIntOrUndefined(serverSettings.SESSION_COOKIE_AGE) ?? 1209600
 export const ALGOLIA_SECRET_KEY: string =
     serverSettings.ALGOLIA_SECRET_KEY ?? ""
 export const ALGOLIA_INDEXING: boolean =
@@ -143,6 +142,7 @@ export const GRAPHER_CONFIG_R2_BUCKET_PATH: string | undefined =
     serverSettings.GRAPHER_CONFIG_R2_BUCKET_PATH
 
 export const DATA_API_URL: string = clientSettings.DATA_API_URL
+export const CATALOG_URL: string = clientSettings.CATALOG_URL
 
 export const FEATURE_FLAGS = clientSettings.FEATURE_FLAGS
 
@@ -160,6 +160,9 @@ export const OPENAI_API_KEY: string = serverSettings.OPENAI_API_KEY ?? ""
 
 export const SLACK_BOT_OAUTH_TOKEN: string =
     serverSettings.SLACK_BOT_OAUTH_TOKEN ?? ""
+
+export const SLACK_ALGOLIA_INDEXING_CHANNEL_ID: string =
+    serverSettings.SLACK_ALGOLIA_INDEXING_CHANNEL_ID ?? ""
 
 export const LEGACY_WORDPRESS_IMAGE_URL: string =
     serverSettings.LEGACY_WORDPRESS_IMAGE_URL ??

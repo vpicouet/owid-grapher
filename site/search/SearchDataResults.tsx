@@ -5,7 +5,7 @@ import {
     SearchChartsResponse,
     SearchChartHit,
     SearchChartHitComponentVariant,
-} from "./searchTypes.js"
+} from "@ourworldindata/types"
 import { SearchDataResultsSkeleton } from "./SearchDataResultsSkeleton.js"
 import { SearchChartHitComponent } from "./SearchChartHitComponent.js"
 import { SearchHorizontalDivider } from "./SearchHorizontalDivider.js"
@@ -17,7 +17,7 @@ export const SearchDataResults = ({
     isFirstChartLarge: boolean
 }) => {
     const { analytics } = useSearchContext()
-    const selectedRegionNames = useSelectedRegionNames(true)
+    const selectedRegionNames = useSelectedRegionNames()
 
     const query = useInfiniteSearch<SearchChartsResponse, SearchChartHit>({
         queryKey: (state) => searchQueryKeys.charts(state),

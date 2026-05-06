@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, afterEach, expect } from "vitest"
-import { knex, Knex } from "knex"
+import knex, { Knex } from "knex"
 import { dbTestConfig } from "../../db/tests/dbTestConfig.js"
 import { OwidAdminApp } from "../appClass.js"
 import {
@@ -8,6 +8,8 @@ import {
     setKnexInstance,
 } from "../../db/db.js"
 import { TABLES_IN_USE } from "../../db/tests/testHelpers.js"
+import { AdminApiKeysTableName, UsersTableName } from "@ourworldindata/types"
+import { createApiKey, hashApiKey } from "../../serverUtils/apiKey.js"
 
 // Fixed port is okay while DB tests run serially
 const ADMIN_SERVER_HOST = "localhost"
@@ -18,7 +20,7 @@ export interface TestEnv {
     serverKnex: Knex<any, unknown[]>
     app: OwidAdminApp
     baseUrl: string
-    cookieId: string
+    apiKey: string
     // Helpers
     fetchJson(path: string): Promise<any>
     request(arg: {
@@ -32,44 +34,60 @@ export interface TestEnv {
 let testKnex: Knex<any, unknown[]> | undefined
 let serverKnex: Knex<any, unknown[]> | undefined
 let app: OwidAdminApp | undefined
-let cookieId = ""
-let adminUserId = 0
+let adminApiKey: string | undefined
 
 const ADMIN_URL = `http://${ADMIN_SERVER_HOST}:${ADMIN_SERVER_PORT}/admin/api`
 
-async function logInAsAdmin(id: number): Promise<string> {
-    const { logInAsUser } = await import("../authentication.js")
-    const result = await logInAsUser({ email: "admin@example.com", id })
-    return result.id
-}
-
 async function seedBaselineData(): Promise<number> {
-    // Ensure we have an admin user; do NOT delete users to avoid FK issues
-    const existing = await testKnex!("users")
-        .where({ email: "admin@example.com" })
-        .first()
-    if (existing) return existing.id
-    const [id] = await testKnex!("users").insert({
+    const now = new Date()
+    const adminUser = {
         email: "admin@example.com",
         fullName: "Admin",
-        password: "admin",
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        isActive: 1,
+        isSuperuser: 1,
+        createdAt: now,
+        updatedAt: now,
+    }
+
+    // Ensure we have an admin user; do NOT delete users to avoid FK issues
+    await testKnex!(UsersTableName)
+        .insert(adminUser)
+        .onConflict("email")
+        .merge(adminUser)
+
+    const adminRow = await testKnex!(UsersTableName)
+        .where({ email: adminUser.email })
+        .first()
+    const userId = adminRow?.id as number
+
+    // Always recreate the API key since we can't retrieve the plaintext from
+    // the DB.
+    await testKnex!(AdminApiKeysTableName).where({ userId }).delete()
+    const apiKey = createApiKey()
+    const keyHash = hashApiKey(apiKey)
+    await testKnex!(AdminApiKeysTableName).insert({
+        userId,
+        keyHash,
     })
-    return id as number
+    adminApiKey = apiKey
+
+    return userId
 }
 
 export async function resetDbButKeepBaselines(): Promise<void> {
-    // Clean all used tables except users (baseline), like the previous monolithic test.
+    // Clean all used tables except users and admin_api_keys (baseline), like
+    // the previous monolithic test.
     await knexReadWriteTransaction(
         async (trx) => {
-            const tables = TABLES_IN_USE.filter((t) => t !== "users")
+            const tables = TABLES_IN_USE.filter(
+                (t) => t !== UsersTableName && t !== AdminApiKeysTableName
+            )
             for (const table of tables) {
                 await trx.raw(`DELETE FROM ??`, [table])
             }
         },
         TransactionCloseMode.KeepOpen,
-        testKnex!
+        testKnex
     )
 }
 
@@ -77,11 +95,13 @@ export function getAdminTestEnv(): TestEnv {
     beforeAll(async () => {
         testKnex = knex(dbTestConfig)
         serverKnex = knex(dbTestConfig)
-        adminUserId = await seedBaselineData()
+        await seedBaselineData()
         // Ensure we start from a clean slate for non-user tables
         await knexReadWriteTransaction(
             async (trx) => {
-                const tables = TABLES_IN_USE.filter((t) => t !== "users")
+                const tables = TABLES_IN_USE.filter(
+                    (t) => t !== UsersTableName && t !== AdminApiKeysTableName
+                )
                 for (const table of tables)
                     await trx.raw(`DELETE FROM ??`, [table])
             },
@@ -92,7 +112,6 @@ export function getAdminTestEnv(): TestEnv {
 
         app = new OwidAdminApp({ isDev: true, isTest: true, quiet: true })
         await app.startListening(ADMIN_SERVER_PORT, ADMIN_SERVER_HOST)
-        cookieId = await logInAsAdmin(adminUserId)
     })
 
     afterEach(async () => {
@@ -116,7 +135,9 @@ export function getAdminTestEnv(): TestEnv {
     async function fetchJson(p: string): Promise<any> {
         const url = ADMIN_URL + p
         const response = await fetch(url, {
-            headers: { cookie: `sessionid=${cookieId}` },
+            headers: {
+                Authorization: `Bearer ${adminApiKey}`,
+            },
         })
         expect(response.status).toBe(200)
         return await response.json()
@@ -132,7 +153,7 @@ export function getAdminTestEnv(): TestEnv {
             method: arg.method,
             headers: {
                 "Content-Type": "application/json",
-                cookie: `sessionid=${cookieId}`,
+                Authorization: `Bearer ${adminApiKey}`,
             },
             body: arg.body,
         })
@@ -151,8 +172,8 @@ export function getAdminTestEnv(): TestEnv {
             return app!
         },
         baseUrl: ADMIN_URL,
-        get cookieId() {
-            return cookieId
+        get apiKey() {
+            return adminApiKey!
         },
         fetchJson,
         request,

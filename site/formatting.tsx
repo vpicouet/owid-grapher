@@ -7,7 +7,6 @@ import {
     WP_ColumnStyle,
 } from "@ourworldindata/utils"
 import { BAKED_BASE_URL } from "../settings/serverSettings.js"
-import { bakeGlobalEntitySelector } from "./bakeGlobalEntitySelector.js"
 import { PROMINENT_LINK_CLASSNAME } from "./blocks/ProminentLink.js"
 import { SectionHeading } from "./SectionHeading.js"
 import { FormattingOptions, GRAPHER_PREVIEW_CLASS } from "@ourworldindata/types"
@@ -222,6 +221,7 @@ export const splitContentIntoSectionsAndColumns = (
                 el.name === "h6" ||
                 ($el.find("img").length !== 0 &&
                     !$el.hasClass(PROMINENT_LINK_CLASSNAME) &&
+                    // oxlint-disable-next-line unicorn/prefer-array-some
                     !$el.find(
                         ".wp-block-owid-additional-information[data-variation='merge-left']"
                     ))
@@ -332,7 +332,6 @@ export const addContentFeatures = ({
     const cheerioEl = cheerio.load(post.html)
 
     splitContentIntoSectionsAndColumns(cheerioEl)
-    bakeGlobalEntitySelector(cheerioEl)
     addTocToSections(cheerioEl, post.tocHeadings)
 
     return getBodyHtml(cheerioEl)

@@ -1,6 +1,7 @@
 import { writeFile } from "fs/promises"
 import { Position } from "geojson"
-import prettier from "prettier"
+import { format, FormatOptions } from "oxfmt"
+import oxfmtConfig from "../../.oxfmtrc.json"
 import * as R from "remeda"
 import {
     GeoFeatures,
@@ -8,7 +9,11 @@ import {
     EllipseCoords,
     Ellipse,
 } from "@ourworldindata/grapher"
-import { excludeNull, omitUndefinedValues } from "@ourworldindata/utils"
+import {
+    excludeNull,
+    excludeUndefined,
+    omitUndefinedValues,
+} from "@ourworldindata/utils"
 import polylabel from "polylabel"
 import { geoMercator, geoPath } from "d3-geo"
 import { manualAnnotationPlacementsById } from "./ManualAnnotationPlacements"
@@ -17,7 +22,11 @@ const GRAPHER_ROOT = __dirname.replace(/\/(itsJustJavascript\/)?devTools.*/, "")
 const GRAPHER_MAP_ANNOTATIONS_PATH = `${GRAPHER_ROOT}/packages/@ourworldindata/grapher/src/mapCharts/MapAnnotationPlacements.json`
 
 // it's not possible to place internal labels for these countries in a nice way
-const COUNTRIES_WITH_EXTERNAL_LABEL_ONLY = ["Chile", "New Zealand"]
+const COUNTRIES_WITH_EXTERNAL_LABEL_ONLY = [
+    "Chile",
+    "New Zealand",
+    "Antarctica",
+]
 
 interface PoleOfInaccessibility {
     x: number // center x
@@ -25,8 +34,13 @@ interface PoleOfInaccessibility {
     distance: number // distance of the pole to the closest polygon point
 }
 
-function prettifiedJson(obj: any): Promise<string> {
-    return prettier.format(JSON.stringify(obj), { parser: "json", tabWidth: 4 })
+async function prettifiedJson(obj: any): Promise<string> {
+    const result = await format(
+        "input.json",
+        JSON.stringify(obj),
+        oxfmtConfig as FormatOptions
+    )
+    return result.code
 }
 
 // we could use any projection here since annotation placements
@@ -155,40 +169,47 @@ const roundCoords = (coords: [number, number]): [number, number] => [
 ]
 
 async function main() {
-    const annotations = GeoFeatures.map((feature: GeoFeature) => {
-        const manual = manualAnnotationPlacementsById.get(feature.id as string)
+    const annotations = excludeUndefined(
+        GeoFeatures.map((feature: GeoFeature) => {
+            const manual = manualAnnotationPlacementsById.get(
+                feature.id as string
+            )
 
-        let ellipse: EllipseCoords | undefined = roundEllipse(
-            manual?.internal?.ellipse ??
-                makeLabelEllipseCoordsForGeoFeature(feature)
-        )
-        const ellipseWidth = (ellipse.cx - ellipse.left) * 2
-        const ellipseHeight = (ellipse.top - ellipse.cy) * 2
+            let ellipse: EllipseCoords | undefined = roundEllipse(
+                manual?.internal?.ellipse ??
+                    makeLabelEllipseCoordsForGeoFeature(feature)
+            )
+            const ellipseWidth = (ellipse.cx - ellipse.left) * 2
+            const ellipseHeight = (ellipse.top - ellipse.cy) * 2
 
-        const shouldHaveInternalAnnotation =
-            !COUNTRIES_WITH_EXTERNAL_LABEL_ONLY.includes(feature.id as any) &&
-            // skip internal annotations if the ellipse is too small to fit a label
-            ellipseWidth >= 1 &&
-            ellipseHeight >= 0.5
+            const shouldHaveInternalAnnotation =
+                !COUNTRIES_WITH_EXTERNAL_LABEL_ONLY.includes(
+                    feature.id as any
+                ) &&
+                // skip internal annotations if the ellipse is too small to fit a label
+                ellipseWidth >= 1 &&
+                ellipseHeight >= 0.5
 
-        if (!shouldHaveInternalAnnotation) ellipse = undefined
+            if (!shouldHaveInternalAnnotation) ellipse = undefined
 
-        const external = manual?.external
-        if (external?.anchorPoint)
-            external.anchorPoint = roundCoords(external.anchorPoint)
+            const external = manual?.external
+            if (external?.anchorPoint)
+                external.anchorPoint = roundCoords(external.anchorPoint)
 
-        if (!ellipse && !external) {
-            console.warn(`No internal or external label: ${feature.id}`)
-        } else if (!ellipse) {
-            console.info(`No internal label: ${feature.id}`)
-        }
+            if (!ellipse && !external) {
+                console.warn(`No internal or external label: ${feature.id}`)
+                return undefined
+            } else if (!ellipse) {
+                console.info(`No internal label: ${feature.id}`)
+            }
 
-        return omitUndefinedValues({
-            id: feature.id,
-            ellipse,
-            ...external,
+            return omitUndefinedValues({
+                id: feature.id,
+                ellipse,
+                ...external,
+            })
         })
-    })
+    )
 
     const json = await prettifiedJson(annotations)
     await writeFile(GRAPHER_MAP_ANNOTATIONS_PATH, json)

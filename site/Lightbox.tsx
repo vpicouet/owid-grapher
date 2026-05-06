@@ -8,7 +8,7 @@ import {
     faXmark,
 } from "@fortawesome/free-solid-svg-icons"
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch"
-import { LoadingIndicator, BodyDiv } from "@ourworldindata/components"
+import { LoadingIndicator, BodyPortal } from "@ourworldindata/components"
 import { triggerDownloadFromBlob } from "@ourworldindata/utils"
 import { useTriggerOnEscape } from "./hooks.js"
 import cx from "classnames"
@@ -50,6 +50,7 @@ export const Lightbox = ({
     width,
     height,
     alt,
+    hideDownload,
 }: {
     onClose: () => void
     imgSrc: string
@@ -59,6 +60,7 @@ export const Lightbox = ({
     alt: string
     // With CF Images, the filename is not the last part of the URL
     // so we need to pass it separately
+    hideDownload?: boolean
 }) => {
     const [isLoaded, setIsLoaded] = useState(false)
     const contentRef = useRef<HTMLDivElement>(null)
@@ -82,7 +84,7 @@ export const Lightbox = ({
     useTriggerOnEscape(onClose)
 
     return (
-        <BodyDiv divClassname="lightbox">
+        <BodyPortal containerClassName="lightbox">
             <div className="container">
                 {!isLoaded && <LoadingIndicator color="#ccc" />}
                 <TransformWrapper
@@ -134,14 +136,16 @@ export const Lightbox = ({
                                                 icon={faCompress}
                                             />
                                         </button>
-                                        <button
-                                            onClick={handleDownload}
-                                            aria-label="Download high resolution image"
-                                        >
-                                            <FontAwesomeIcon
-                                                icon={faDownload}
-                                            />
-                                        </button>
+                                        {!hideDownload && (
+                                            <button
+                                                onClick={handleDownload}
+                                                aria-label="Download high resolution image"
+                                            >
+                                                <FontAwesomeIcon
+                                                    icon={faDownload}
+                                                />
+                                            </button>
+                                        )}
                                     </>
                                 )}
                                 <button aria-label="Close" onClick={onClose}>
@@ -152,6 +156,6 @@ export const Lightbox = ({
                     )}
                 </TransformWrapper>
             </div>
-        </BodyDiv>
+        </BodyPortal>
     )
 }

@@ -11,7 +11,9 @@ describe("Admin app smoke", { timeout: 10000 }, () => {
 
     it("returns node version", async () => {
         const res = await fetch("http://localhost:8765/admin/nodeVersion", {
-            headers: { cookie: `sessionid=${env.cookieId}` },
+            headers: {
+                Authorization: `Bearer ${env.apiKey}`,
+            },
         })
         expect(res.status).toBe(200)
         const text = await res.text()

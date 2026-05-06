@@ -226,8 +226,9 @@ export class SlopeChartState implements ChartState {
             hasMultipleEntitiesSelected,
             allowsMultiEntitySelection: canSelectMultipleEntities,
         })
+        const shortEntityName = getShortNameForEntity(entityName)
         const displayName = getDisplayName({
-            entityName: getShortNameForEntity(entityName) ?? entityName,
+            entityName: shortEntityName ?? entityName,
             columnName,
             seriesStrategy,
             hasMultipleEntitiesSelected,
@@ -331,13 +332,7 @@ export class SlopeChartState implements ChartState {
         EntityName,
         RawSlopeChartSeries[]
     > {
-        const map = new Map<EntityName, RawSlopeChartSeries[]>()
-        this.rawSeries.forEach((series) => {
-            const { entityName } = series
-            if (!map.has(entityName)) map.set(entityName, [])
-            map.get(entityName)!.push(series)
-        })
-        return map
+        return Map.groupBy(this.rawSeries, (series) => series.entityName)
     }
 
     @computed get series(): SlopeChartSeries[] {

@@ -8,8 +8,8 @@ import {
 } from "@ourworldindata/explorer"
 import { renderSvgToPng } from "./grapherRenderer.js"
 import { error, png } from "itty-router"
-import { createZip, File } from "littlezipper"
-import { Bounds, Url } from "@ourworldindata/utils"
+import { createZip, UncompressedFile } from "littlezipper"
+import { Bounds, slugify, Url } from "@ourworldindata/utils"
 import {
     getEntityNamesParam,
     getSelectedEntityNamesParam,
@@ -31,7 +31,6 @@ import {
     prepareSearchParamsBeforeExtractingDataValues,
 } from "./downloadFunctions.js"
 import { assembleMetadata } from "./metadataTools.js"
-import { getDataApiUrl } from "./grapherTools.js"
 import { checkCache } from "./reusableHandlers.js"
 
 async function initGrapherForExplorerView(
@@ -48,8 +47,9 @@ async function initGrapherForExplorerView(
     const queryStr = url.searchParams.toString()
     // The env URL class isn't compatible with the Url class from @ourworldindata/utils
     const urlObj = Url.fromURL(url.toString())
+    const migratedUrl = migrateSelectedEntityNamesParam(urlObj)
     const windowEntityNames = getSelectedEntityNamesParam(
-        migrateSelectedEntityNamesParam(urlObj)
+        migratedUrl.queryParams.country
     )
 
     const selection = new SelectionArray(windowEntityNames)
@@ -64,14 +64,11 @@ async function initGrapherForExplorerView(
     await explorer.updateGrapherFromExplorer()
     explorer.grapherState.populateFromQueryParams(urlObj.queryParams)
 
-    if (options.grapherProps?.isSocialMediaExport)
-        explorer.grapherState.isSocialMediaExport =
-            options.grapherProps.isSocialMediaExport
     if (options.grapherProps?.variant)
         explorer.grapherState.variant = options.grapherProps.variant
-    if (options.grapherProps?.isDisplayedAlongsideComplementaryTable)
-        explorer.grapherState.isDisplayedAlongsideComplementaryTable =
-            options.grapherProps.isDisplayedAlongsideComplementaryTable
+    if (options.grapherProps?.useMinimalLabeling)
+        explorer.grapherState.useMinimalLabeling =
+            options.grapherProps.useMinimalLabeling
     explorer.grapherState.initialOptions = { baseFontSize: options.fontSize }
 
     return {
@@ -93,7 +90,7 @@ export async function handleThumbnailRequestForExplorerView(
             explorerEnv,
             options
         )
-        const svg = grapherState.generateStaticSvg(
+        const svg = await grapherState.generateStaticSvg(
             ReactDOMServer.renderToStaticMarkup
         )
         if (extension === "svg") {
@@ -104,11 +101,11 @@ export async function handleThumbnailRequestForExplorerView(
                 },
             })
         } else {
-            return png(await renderSvgToPng(svg, options, "#fff"))
+            return png(await renderSvgToPng(svg, options))
         }
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -132,7 +129,7 @@ export async function handleConfigRequestForExplorerView(
         })
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -162,7 +159,7 @@ export async function fetchCsvForExplorerView(
         })
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -182,7 +179,7 @@ export async function fetchMetadataForExplorerView(
         return Response.json(metadata)
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -204,7 +201,7 @@ export async function fetchReadmeForExplorerView(
         })
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -216,8 +213,10 @@ export async function fetchZipForExplorerView(
 
     try {
         const explorerEnv = stripUrlExtensionFromEnv(env, extensions.zip)
-        const { grapherState, explorerParams } =
-            await initGrapherForExplorerView(explorerEnv, options)
+        const { grapherState } = await initGrapherForExplorerView(
+            explorerEnv,
+            options
+        )
 
         ensureDownloadOfDataAllowed(grapherState)
         const metadata = assembleMetadata(grapherState, searchParams)
@@ -225,19 +224,14 @@ export async function fetchZipForExplorerView(
         const csv = assembleCsv(grapherState, searchParams)
         console.log("Fetched the parts, creating zip file")
 
-        // Make a unique identifier for the given view
-        const explorerSlug = explorerEnv.url.pathname.split("/").pop()
-        const viewId = Object.values(explorerParams)
-            .map((value) => value.replace(/\s/g, "_"))
-            .join("__")
-        const identifier = `${explorerSlug}__${viewId}`
+        const filename = slugify(grapherState.displayTitle)
 
-        const zipContent: File[] = [
+        const zipContent: UncompressedFile[] = [
             {
-                path: `${identifier}.metadata.json`,
+                path: `${filename}.metadata.json`,
                 data: JSON.stringify(metadata, undefined, 2),
             },
-            { path: `${identifier}.csv`, data: csv },
+            { path: `${filename}.csv`, data: csv },
             { path: "readme.md", data: readme },
         ]
         const content = await createZip(zipContent)
@@ -246,12 +240,12 @@ export async function fetchZipForExplorerView(
         return new Response(content, {
             headers: {
                 "Content-Type": "application/zip",
-                "Content-Disposition": `attachment; filename="${identifier}.zip"`,
+                "Content-Disposition": `attachment; filename="${filename}.zip"`,
             },
         })
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -284,7 +278,7 @@ export async function fetchDataValuesForExplorerView(
         const entityNames = getEntityNamesParam(
             searchParams.get("country") ?? undefined
         )
-        if (entityNames?.length > 0)
+        if (entityNames && entityNames.length > 0)
             grapherState.selection.setSelectedEntities(entityNames)
 
         const dataValues = assembleDataValues(grapherState, entityName)
@@ -301,7 +295,7 @@ export async function fetchDataValuesForExplorerView(
         return response
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 
@@ -318,7 +312,7 @@ export async function fetchSearchResultDataForExplorerView(
     const supportedVersions = [1]
     const version = parseVersionParam(
         searchParams.get("version"),
-        supportedVersions.at(-1)
+        supportedVersions.at(-1)!
     )
 
     // Validate version
@@ -356,12 +350,12 @@ export async function fetchSearchResultDataForExplorerView(
         const shouldIgnoreProjections = searchParams.has("ignoreProjections")
         if (shouldIgnoreProjections) dropProjectionColumns(grapherState)
 
-        const dataApiUrl = getDataApiUrl(env)
+        const catalogUrl = env.CATALOG_URL
         const searchResult = await assembleSearchResultData(grapherState, {
             variant,
             pickedEntities,
             numDataTableRowsPerColumn,
-            dataApiUrl,
+            catalogUrl,
         })
 
         if (searchResult === undefined)
@@ -379,7 +373,7 @@ export async function fetchSearchResultDataForExplorerView(
         return response
     } catch (e) {
         console.error(e)
-        return error(500, e)
+        return error(500, e instanceof Error ? e.message : String(e))
     }
 }
 

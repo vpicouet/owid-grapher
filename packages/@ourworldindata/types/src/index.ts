@@ -65,10 +65,10 @@ export {
     GRAPHER_TAB_CONFIG_OPTIONS,
     GRAPHER_TAB_QUERY_PARAMS,
     ALL_GRAPHER_CHART_TYPES,
+    ORIGIN_URL_REGEX_PATTERNS,
 } from "./grapherTypes/GrapherConstants.js"
 
 export {
-    type EntityYearHighlight,
     type Box,
     type BasicChartInformation,
     SortBy,
@@ -101,6 +101,9 @@ export {
     StackMode,
     EntitySelectionMode,
     ScatterPointLabelStrategy,
+    PeerCountryStrategy,
+    type PeerCountryStrategyQueryParam,
+    VALID_PEER_COUNTRY_STRATEGY_QUERY_PARAMS,
     type RelatedQuestionsConfig,
     FacetStrategy,
     type SeriesColorMap,
@@ -118,11 +121,13 @@ export {
     type ComparisonLineConfig,
     type VerticalComparisonLineConfig,
     type CustomComparisonLineConfig,
+    type VerticalComparisonLineLabelPlacement,
     type AxisConfigInterface,
     type ColorSchemeInterface,
     type Tickmark,
     type SeriesName,
     type LegacyGrapherQueryParams,
+    type DownloadRewriteTarget,
     GRAPHER_QUERY_PARAM_KEYS,
     type ChartRedirect,
     type DetailsMarker,
@@ -134,6 +139,7 @@ export {
     type ProjectionColumnInfo,
     GrapherVariant,
     type ChartErrorInfo,
+    type ToleranceOptions,
 } from "./grapherTypes/GrapherTypes.js"
 
 export {
@@ -166,171 +172,10 @@ export {
     type PostRestApi,
     type BlockGraphQlApi,
     type FormattingOptions,
-    SubNavId,
 } from "./wordpressTypes/WordpressTypes.js"
 
-export {
-    type Ref,
-    type RefDictionary,
-    type BlockPositionChoice,
-    type ChartPositionChoice,
-    type OwidEnrichedGdocBlock,
-    type OwidRawGdocBlock,
-    pullquoteAlignments,
-    type PullQuoteAlignment,
-    type EnrichedBlockAlign,
-    type RawBlockAlign,
-    type ParseError,
-    BlockImageSize,
-    checkIsBlockImageSize,
-    type RawBlockAllCharts,
-    type RawBlockAdditionalCharts,
-    type RawBlockAside,
-    type RawBlockBlockquote,
-    type RawBlockCallout,
-    type RawBlockChart,
-    type RawBlockExpander,
-    type RawBlockChartStory,
-    type RawBlockChartValue,
-    type RawBlockCode,
-    type RawBlockCookieNotice,
-    type RawBlockSubscribeBanner,
-    type RawBlockCta,
-    type RawBlockExpandableParagraph,
-    type RawBlockExplorerTiles,
-    type RawBlockGraySection,
-    type RawBlockHeading,
-    type RawBlockHomepageIntroPost,
-    type RawBlockHomepageIntro,
-    type RawBlockHorizontalRule,
-    type RawBlockHtml,
-    type RawBlockScript,
-    type RawBlockImage,
-    type RawBlockVideo,
-    type RawBlockKeyInsights,
-    type RawBlockLatestDataInsights,
-    type RawBlockList,
-    type RawBlockMissingData,
-    type RawBlockNumberedList,
-    type RawBlockPeople,
-    type RawBlockPeopleRows,
-    type RawBlockPerson,
-    type RawBlockPosition,
-    type RawBlockProminentLink,
-    type RawBlockPullQuote,
-    type RawBlockGuidedChart,
-    type RawBlockRecirc,
-    type RawBlockResearchAndWriting,
-    type RawBlockResearchAndWritingLink,
-    type RawBlockLatestWork,
-    type RawBlockScroller,
-    type RawBlockSDGGrid,
-    type RawBlockSDGToc,
-    type RawBlockSideBySideContainer,
-    type RawBlockStickyLeftContainer,
-    type RawBlockStickyRightContainer,
-    type RawBlockText,
-    type RawBlockTopicPageIntro,
-    type RawBlockUrl,
-    type RawBlockResourcePanel,
-    type RawBlockKeyIndicator,
-    type RawBlockKeyIndicatorCollection,
-    tableTemplates,
-    type TableTemplate,
-    tableSizes,
-    type TableSize,
-    type RawBlockTable,
-    type RawBlockTableRow,
-    type RawBlockTableCell,
-    type RawChartStoryValue,
-    type RawBlockDonorList,
-    type RawHybridLink,
-    type RawSDGGridItem,
-    type RawBlockEntrySummary,
-    type RawBlockEntrySummaryItem,
-    type EnrichedBlockAllCharts,
-    type EnrichedBlockAdditionalCharts,
-    type EnrichedBlockAside,
-    type EnrichedBlockBlockquote,
-    type EnrichedBlockCallout,
-    type EnrichedBlockChart,
-    type EnrichedBlockExpander,
-    type EnrichedBlockChartStory,
-    type EnrichedBlockCode,
-    type EnrichedBlockCookieNotice,
-    type EnrichedBlockSubscribeBanner,
-    type EnrichedBlockCta,
-    type EnrichedBlockDonorList,
-    type EnrichedBlockExpandableParagraph,
-    type EnrichedBlockExplorerTiles,
-    type EnrichedBlockGraySection,
-    type EnrichedBlockHeading,
-    type EnrichedBlockHomepageIntroPost,
-    type EnrichedBlockHomepageIntro,
-    type EnrichedBlockHorizontalRule,
-    type EnrichedBlockHtml,
-    type EnrichedBlockScript,
-    type EnrichedBlockImage,
-    type EnrichedBlockVideo,
-    type EnrichedBlockKeyInsights,
-    type EnrichedBlockKeyInsightsSlide,
-    type EnrichedBlockLatestDataInsights,
-    type EnrichedBlockList,
-    type EnrichedBlockMissingData,
-    type EnrichedBlockNumberedList,
-    type EnrichedBlockPeople,
-    type EnrichedBlockPeopleRows,
-    type EnrichedBlockPerson,
-    type EnrichedBlockProminentLink,
-    type EnrichedBlockPullQuote,
-    type EnrichedBlockGuidedChart,
-    type EnrichedBlockRecirc,
-    type EnrichedBlockResearchAndWriting,
-    type EnrichedBlockResearchAndWritingLink,
-    type EnrichedBlockLatestWork,
-    type EnrichedBlockResearchAndWritingRow,
-    type EnrichedBlockScroller,
-    type EnrichedBlockSDGGrid,
-    type EnrichedBlockSDGToc,
-    type EnrichedBlockSideBySideContainer,
-    type EnrichedBlockSimpleText,
-    type EnrichedBlockStickyLeftContainer,
-    type EnrichedBlockStickyRightContainer,
-    type EnrichedBlockText,
-    type EnrichedTopicPageIntroRelatedTopic,
-    type EnrichedTopicPageIntroDownloadButton,
-    type EnrichedBlockTopicPageIntro,
-    type EnrichedChartStoryItem,
-    type EnrichedHybridLink,
-    type EnrichedBlockResourcePanel,
-    resourcePanelIcons,
-    type ResourcePanelIcon,
-    blockAlignments,
-    type BlockAlignment,
-    type EnrichedScrollerItem,
-    type EnrichedSDGGridItem,
-    type EnrichedBlockEntrySummary,
-    type EnrichedBlockEntrySummaryItem,
-    type EnrichedBlockTable,
-    type EnrichedBlockTableRow,
-    type EnrichedBlockTableCell,
-    type EnrichedBlockKeyIndicator,
-    type EnrichedBlockKeyIndicatorCollection,
-    type EnrichedBlockWithParseErrors,
-    type RawBlockResearchAndWritingRow,
-    type RawBlockPillRow,
-    type EnrichedBlockPillRow,
-    type RawBlockHomepageSearch,
-    type EnrichedBlockHomepageSearch,
-    type RawBlockSocials,
-    type EnrichedBlockSocials,
-    SocialLinkType,
-    type RawSocialLink,
-    type EnrichedSocialLink,
-    type RawBlockNarrativeChart,
-    type EnrichedBlockNarrativeChart,
-    type OwidEnrichedGdocBlockTypeMap,
-} from "./gdocTypes/ArchieMlComponents.js"
+export * from "./gdocTypes/ArchieMlComponents.js"
+
 export {
     ChartConfigType,
     OwidGdocPublicationContext,
@@ -353,10 +198,15 @@ export {
     type OwidGdocHomepageContent,
     type OwidGdocHomepageInterface,
     type OwidGdocHomepageMetadata,
+    type OwidGdocProfileScope,
+    type OwidGdocProfileContent,
+    type OwidGdocProfileInterface,
+    type OwidGdocProfileEntitySummary,
     DATA_INSIGHTS_INDEX_PAGE_SIZE,
     LATEST_INDEX_PAGE_SIZE,
     type OwidGdoc,
     OwidGdocType,
+    ALL_GDOC_TYPES,
     type OwidGdocStickyNavItem,
     type OwidGdocJSON,
     type FaqDictionary,
@@ -369,6 +219,9 @@ export {
     type LinkedAuthor,
     type LinkedChart,
     type LinkedIndicator,
+    type LinkedCallout,
+    type LinkedCallouts,
+    type LinkedStaticViz,
     DYNAMIC_COLLECTION_PAGE_CONTAINER_ID,
     type OwidGdocContent,
     type OwidGdocIndexItem,
@@ -378,22 +231,22 @@ export {
 } from "./gdocTypes/Gdoc.js"
 
 export {
-    DataPageJsonTypeObject,
-    type DataPageJson,
-    type DataPageParseError,
+    type Distribution,
     type DataPageV2ContentFields,
     type DataPageDataV2,
     type DataPageRelatedResearch,
     type PrimaryTopic,
-    type DataInsightLink,
     type FaqLink,
     type FaqEntryData,
     type DisplaySource,
 } from "./gdocTypes/Datapage.js"
 
 export {
+    CALLOUT_FUNCTIONS,
+    type CalloutFunction,
     type Span,
     type SpanBold,
+    type SpanCallout,
     type SpanDod,
     type SpanGuidedChartLink,
     type SpanFallback,
@@ -417,7 +270,11 @@ export {
     ENDNOTES_ID,
     KEY_INSIGHTS_ID,
     RESEARCH_AND_WRITING_ID,
+    FEATURED_METRICS_ID,
+    FEATURED_DATA_INSIGHTS_ID,
+    EXPLORE_DATA_SECTION_ID,
     RESEARCH_AND_WRITING_DEFAULT_HEADING,
+    EXPLORE_DATA_SECTION_DEFAULT_TITLE,
     gdocUrlRegex,
     GDOCS_URL_PLACEHOLDER,
     GDOCS_BASE_URL,
@@ -498,6 +355,11 @@ export {
     AnalyticsPageviewsTableName,
 } from "./dbTypes/AnalyticsPageviews.js"
 export {
+    type DbPlainAnalyticsGrapherView,
+    type AnalyticsGrapherViewWithRank,
+    AnalyticsGrapherViewsTableName,
+} from "./dbTypes/AnalyticsGrapherViews.js"
+export {
     type DbInsertArchivedChartVersion,
     type DbPlainArchivedChartVersion,
     type DbEnrichedArchivedChartVersion,
@@ -515,6 +377,12 @@ export {
     type DbEnrichedArchivedExplorerVersion,
     ArchivedExplorerVersionsTableName,
 } from "./dbTypes/ArchivedExplorerVersion.js"
+export {
+    type DbInsertArchivedPostVersion,
+    type DbPlainArchivedPostVersion,
+    type DbEnrichedArchivedPostVersion,
+    ArchivedPostVersionsTableName,
+} from "./dbTypes/ArchivedPostVersion.js"
 export {
     type DbInsertChartConfig,
     type DbRawChartConfig,
@@ -548,6 +416,11 @@ export {
     ChartSlugRedirectsTableName,
 } from "./dbTypes/ChartSlugRedirects.js"
 export {
+    type DbPlainMultiDimRedirect,
+    type DbInsertMultiDimRedirect,
+    MultiDimRedirectsTableName,
+} from "./dbTypes/MultiDimRedirects.js"
+export {
     type DbPlainChartTag,
     type DbInsertChartTag,
     ChartTagsTableName,
@@ -566,10 +439,9 @@ export {
     type DbPlainChartXEntity,
 } from "./dbTypes/ChartsXEntities.js"
 export {
-    type DbPlainCountryLatestData,
-    type DbInsertCountryLatestData,
-    CountryLatestDataTableName,
-} from "./dbTypes/CountryLatestData.js"
+    type DbPlainDatapage,
+    DatapagesTableName,
+} from "./dbTypes/Datapages.js"
 export {
     type DbPlainDataset,
     type DbInsertDataset,
@@ -624,6 +496,7 @@ export {
     type DbRawImage,
     type DbEnrichedImage,
     type DbEnrichedImageWithUserId,
+    type DbEnrichedImageWithPageviews,
     type DbInsertImage,
     parseImageRow,
     parseImageUpdatedAt,
@@ -741,10 +614,9 @@ export {
     PostTagsTableName,
 } from "./dbTypes/PostTags.js"
 export {
-    type DbPlainSession,
-    type DbInsertSession,
-    SessionsTableName,
-} from "./dbTypes/Sessions.js"
+    AdminApiKeysTableName,
+    type DbAdminApiKey,
+} from "./dbTypes/AdminApiKeys.js"
 
 export {
     type DbInsertSource,
@@ -796,7 +668,11 @@ export {
     type License,
 } from "./dbTypes/Variables.js"
 
-export { RedirectCode, type DbPlainRedirect } from "./dbTypes/Redirects.js"
+export {
+    RedirectsTableName,
+    RedirectCode,
+    type DbPlainRedirect,
+} from "./dbTypes/Redirects.js"
 
 export {
     ExplorerViewsTableName,
@@ -807,6 +683,16 @@ export {
     serializeExplorerViewRow,
 } from "./dbTypes/ExplorerViews.js"
 
+export {
+    ExplorerViewDimensionsTableName,
+    type DbInsertExplorerViewDimensions,
+} from "./dbTypes/ExplorerViewDimensions.js"
+
+export {
+    MultiDimViewDimensionsTableName,
+    type DbInsertMultiDimViewDimensions,
+} from "./dbTypes/MultiDimViewDimensions.js"
+
 export { type Nominal, wrap, unwrap } from "./NominalType.js"
 
 export {
@@ -814,6 +700,15 @@ export {
     type DbEnrichedLatestWork,
     parseLatestWork,
 } from "./domainTypes/Author.js"
+
+export {
+    StaticVizTableName,
+    type DbRawStaticViz,
+    type DbEnrichedStaticViz,
+    type StaticVizUpdate,
+    StaticVizUpdateSchema,
+    StaticVizInsertSchema,
+} from "./domainTypes/StaticViz.js"
 
 export type {
     IndicatorConfig,
@@ -823,6 +718,7 @@ export type {
     MultiDimDataPageConfigEnriched,
     MultiDimDataPageConfigPreProcessed,
     MultiDimDataPageConfigRaw,
+    MultiDimDataPageInitialViewData,
     MultiDimDataPageProps,
     FaqEntryKeyedByGdocIdAndFragmentId,
     Choice,
@@ -852,17 +748,28 @@ export {
     type ArchivedPageVersion,
     type ArchiveVersions,
     type ArchiveContext,
+    type IndicatorChecksums,
     type GrapherChecksums,
     type GrapherChecksumsObjectWithHash,
     type MultiDimChecksums,
     type MultiDimChecksumsObjectWithHash,
     type ExplorerChecksums,
     type ExplorerChecksumsObjectWithHash,
+    type NarrativeChartChecksums,
+    type NarrativeChartChecksumsResult,
+    type PostChecksums,
+    type PostChecksumsObjectWithHash,
 } from "./domainTypes/Archive.js"
 export {
     type AdditionalGrapherDataFetchFn,
     type GrapherTrendArrowDirection,
 } from "./grapherTypes/GrapherTypes.js"
+export {
+    type CatalogKey,
+    type CatalogNumericDataPoint,
+    type CatalogDataForKey,
+    type NumericCatalogKey,
+} from "./CatalogTypes.js"
 
 export {
     logBinningStrategies,
@@ -882,6 +789,7 @@ export {
     type GrapherValuesJson,
     type GrapherValuesJsonDataPoints,
     type GrapherValuesJsonDataPoint,
+    type GrapherValuesJsonDimension,
 } from "./endpointTypes/GrapherValuesJson.js"
 
 export {
@@ -893,3 +801,6 @@ export {
     MediumVariantGridSlotKey,
     LargeVariantGridSlotKey,
 } from "./endpointTypes/GrapherSearchResultJson.js"
+
+export * from "./analyticsTypes/analyticsTypes.js"
+export * from "./domainTypes/Search.js"

@@ -93,6 +93,64 @@ The analytics system requires these environment variables:
 
 # Our dynamic routes
 
+## `/api/detect-country`
+
+This route detects the visitor's country using Cloudflare's `cf.country` property (derived from the request's IP address) and returns structured country information.
+
+This was previously handled by a separate service at `detect-country.owid.io` and has been moved in-house to reduce external dependencies.
+
+### Response
+
+The response is a JSON object with a single `country` key, which is either `null` (if the country could not be detected or is not in our regions dataset) or an object with the following fields:
+
+| Field        | Type             | Description                            |
+| ------------ | ---------------- | -------------------------------------- |
+| `code`       | string           | OWID region code (e.g. `"DEU"`)        |
+| `name`       | string           | Country name (e.g. `"Germany"`)        |
+| `short_code` | string           | ISO 3166-1 alpha-2 code (e.g. `"DE"`)  |
+| `slug`       | string           | URL slug (e.g. `"germany"`)            |
+| `regions`    | string[] \| null | Parent region codes, or `null` if none |
+
+### Headers
+
+- `Access-Control-Allow-Origin: *` — accessible from any origin
+- `Cache-Control: public, s-maxage=0, max-age=7200` — cached in the browser for 2 hours, not cached on the CDN edge
+
+### Example
+
+```
+GET /api/detect-country
+
+200 OK
+{
+  "country": {
+    "code": "DEU",
+    "name": "Germany",
+    "short_code": "DE",
+    "slug": "germany",
+    "regions": [
+      "OWID_EU27",
+      "OWID_EUR",
+      "OWID_HIC",
+      "OWID_NH",
+      "PEW_EUR",
+      "UNM49_EUR",
+      "UNM49_WEU",
+      "UNSDG_ENA",
+      "UN_EUR",
+      "WB_ECA",
+      "WHO_EUR"
+    ]
+  }
+}
+```
+
+## `/api/search`
+
+This route provides a search API for both charts and pages (articles, about pages).
+
+For detailed API documentation, including all parameters, response schemas, and examples, see [search-api.openapi.yaml](../docs/search-api.openapi.yaml).
+
 ## `/deleted/:slug`
 
 This route is used to handle deleted pages. They are fully baked we just want them to return a 404 status code instead of a 200.
@@ -234,6 +292,8 @@ They're still driven by a statically rendered page, but to make dynamic thumbnai
 
 So, for example, if a request is coming in for `/grapher/population?tab=chart&time=1999..2023`, then we need to reflect these query params in the tags for social media preview images, too, and would put something like `<meta property="og:image" content="/grapher/thumbnail/population?tab=chart&time=1999..2023>` so that social media posts will then show the preview for the exact chart configuration.
 
+For detailed API documentation, including all parameters, response schemas, and examples, see [chart-api.openapi.yaml](../docs/chart-api.openapi.yaml).
+
 ## `/grapher/thumbnail/:slug`
 
 This route is where the actual thumbnail magic happens 🙌🏻✨
@@ -291,14 +351,13 @@ All of the below options can be given as query parameters, e.g. `?imType=og&noca
         <td><code>imType</code></td>
         <td>
           <code>twitter</code> or <code>og</code> (short for
-          <a href="https://ogp.me">Open Graph</a>) or <code>social-media-square</code>
+          <a href="https://ogp.me">Open Graph</a>)
         </td>
         <td>
           If present, will use fitting defaults for the generated image size:
           <ul>
             <li><code>twitter</code>: 800x418</li>
             <li><code>og</code>: 1200x628</li>
-            <li><code>social-media-square</code>: 2160x2160, customizable using <code>imSquareSize=[number]</code></li>
           </ul>
           All below options will be ignored if <code>imType</code> is set to one of these values.
         </td>

@@ -1,11 +1,13 @@
 import cx from "classnames"
+import { useContext, useState, useEffect } from "react"
 
 import Callout from "./Callout.js"
 import ChartStory from "./ChartStory.js"
-import Scroller from "./Scroller.js"
 import Chart from "./Chart.js"
 import Donors from "./Donors.js"
 import PullQuote from "./PullQuote.js"
+import ChartRows from "./ChartRows.js"
+import PullChart from "./PullChart.js"
 import GuidedChart from "./GuidedChart.js"
 import Recirc from "./Recirc.js"
 import SubscribeBanner from "./SubscribeBanner.js"
@@ -13,10 +15,15 @@ import List from "./List.js"
 import NumberedList from "./NumberedList.js"
 import Image, { ImageParentContainer } from "./Image.js"
 import {
+    EXPERIMENT_ARM_SEPARATOR,
+    EXPERIMENT_PREFIX,
     OwidEnrichedGdocBlock,
     spansToUnformattedPlainText,
     TocHeadingWithTitleSupertitle,
     Url,
+    defaultExperimentState,
+    getExperimentState,
+    ExperimentState,
 } from "@ourworldindata/utils"
 import { CodeSnippet, convertHeadingTextToId } from "@ourworldindata/components"
 import SDGGrid from "./SDGGrid.js"
@@ -36,6 +43,7 @@ import { KeyInsights } from "./KeyInsights.js"
 import { ResearchAndWriting } from "./ResearchAndWriting.js"
 import { AllCharts } from "./AllCharts.js"
 import Video from "./Video.js"
+import StaticViz from "./StaticViz.js"
 import { Table } from "./Table.js"
 import { ExplorerTiles } from "./ExplorerTiles.js"
 import KeyIndicator from "./KeyIndicator.js"
@@ -47,12 +55,21 @@ import LatestDataInsightsBlock from "./LatestDataInsightsBlock.js"
 import { Socials } from "./Socials.js"
 import Person from "./Person.js"
 import NarrativeChart from "./NarrativeChart.js"
+import { BespokeComponent } from "./BespokeComponent.js"
 import { Container, getLayout } from "./layout.js"
 import { Expander } from "./Expander.js"
-import { ChartConfigType } from "@ourworldindata/types"
+import { BlockSize, ChartConfigType } from "@ourworldindata/types"
 import { useLinkedChart } from "../utils.js"
 import { ResourcePanel } from "./ResourcePanel.js"
 import { Cta } from "./Cta.js"
+import { AttachmentsContext } from "../AttachmentsContext.js"
+import { FeaturedMetrics } from "../../FeaturedMetrics.js"
+import { FeaturedDataInsights } from "../../FeaturedDataInsights.js"
+import { ExploreDataSection } from "./ExploreDataSection.js"
+import { LTPTableOfContents } from "./LTPTableOfContents.js"
+import { DataCallout } from "./DataCallout.js"
+import { DataCalloutGroup } from "./DataCalloutGroup.js"
+import { CountryProfileSelector } from "./CountryProfileSelector.js"
 
 function ArticleBlockInternal({
     b: block,
@@ -67,8 +84,12 @@ function ArticleBlockInternal({
     shouldRenderLinks?: boolean
     interactiveImages?: boolean
 }) {
+    const { tags } = useContext(AttachmentsContext)
     block.type = block.type.toLowerCase() as any // this comes from the user and may not be all lowercase, enforce it here
 
+    const { linkedChart } = useLinkedChart(
+        block.type === "chart" ? block.url : ""
+    )
     // Special handling for mdims in side-by-side blocks to align them with
     // other charts.
     const isSideBySide = block.type === "side-by-side"
@@ -85,7 +106,19 @@ function ArticleBlockInternal({
         rightIsChart ? rightBlock.url : ""
     )
 
-    if (block.parseErrors.filter(({ isWarning }) => !isWarning).length > 0) {
+    // note: experimentState should NOT be used to conditionally render content b/c
+    // it will cause a flash of content before js loads.
+    const [experimentState, setExperimentState] = useState<ExperimentState>(
+        defaultExperimentState
+    )
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            const s = getExperimentState()
+            setExperimentState(s)
+        }
+    }, [])
+
+    if (block.parseErrors.some(({ isWarning }) => !isWarning)) {
         return (
             <BlockErrorFallback
                 className={getLayout("default", containerType)}
@@ -113,29 +146,103 @@ function ArticleBlockInternal({
                 ) : null}
             </aside>
         ))
-        .with({ type: "all-charts" }, (block) => (
-            <AllCharts
-                {...block}
-                className={getLayout("all-charts", containerType)}
-            />
-        ))
+        .with({ type: "all-charts" }, (block) => {
+            const layoutClassName = getLayout("featured-metrics", containerType)
+            const topicName = tags[0]?.name
+
+            if (!topicName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Featured metrics requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return (
+                <>
+                    {/*
+                     * The id is swapped between AllCharts and FeaturedMetrics based
+                     * on experiment arm so that the #all-charts sticky nav link always
+                     * scrolls to the visible element. Browsers won't scroll to a
+                     * display:none element, so a static id on AllCharts would break
+                     * navigation in the featured-metrics arm.
+                     */}
+                    <AllCharts
+                        {...block}
+                        id={
+                            experimentState &&
+                            experimentState[
+                                `${EXPERIMENT_PREFIX}-all-charts-vs-featured-v1`
+                            ]?.isPageInExperiment &&
+                            experimentState[
+                                `${EXPERIMENT_PREFIX}-all-charts-vs-featured-v1`
+                            ]?.arm !== "all-charts"
+                                ? ""
+                                : "all-charts"
+                        }
+                        className={cx(
+                            getLayout("all-charts", containerType),
+                            `${EXPERIMENT_PREFIX}-all-charts-vs-featured-v1${EXPERIMENT_ARM_SEPARATOR}featured-metrics--hide`
+                        )}
+                    />
+                    <FeaturedMetrics
+                        id={
+                            experimentState &&
+                            experimentState[
+                                `${EXPERIMENT_PREFIX}-all-charts-vs-featured-v1`
+                            ]?.isPageInExperiment &&
+                            experimentState[
+                                `${EXPERIMENT_PREFIX}-all-charts-vs-featured-v1`
+                            ]?.arm === "featured-metrics"
+                                ? "all-charts"
+                                : ""
+                        }
+                        topicName={topicName}
+                        className={cx(
+                            layoutClassName,
+                            `${EXPERIMENT_PREFIX}-all-charts-vs-featured-v1${EXPERIMENT_ARM_SEPARATOR}featured-metrics--show`
+                        )}
+                    />
+                </>
+            )
+        })
         .with({ type: "chart" }, (block) => {
-            const { isExplorer, queryStr } = Url.fromURL(block.url)
-            const areControlsHidden = queryStr.includes("hideControls=true")
+            const resolvedUrl = linkedChart?.resolvedUrl ?? block.url
+            const { isExplorer, queryParams } = Url.fromURL(resolvedUrl)
+            const areControlsHidden = queryParams.hideControls === "true"
+            const size = block.size ?? BlockSize.Wide
             const layoutSubtype =
-                isExplorer && !areControlsHidden ? "explorer" : "chart"
+                isExplorer && !areControlsHidden
+                    ? `explorer--${size}`
+                    : `chart--${size}`
             return (
                 <Chart
-                    className={getLayout(layoutSubtype, containerType)}
+                    className={cx(
+                        "article-block__chart",
+                        getLayout(layoutSubtype, containerType),
+                        {
+                            "hide-sm-only": block.visibility === "desktop",
+                            "show-sm-only": block.visibility === "mobile",
+                        }
+                    )}
                     d={block}
                     fullWidthOnMobile={true}
                 />
             )
         })
         .with({ type: "narrative-chart" }, (block) => {
+            const size = block.size ?? BlockSize.Wide
             return (
                 <NarrativeChart
-                    className={getLayout("chart", containerType)}
+                    className={cx(
+                        "article-block__chart",
+                        getLayout(`chart--${size}`, containerType)
+                    )}
                     d={block}
                     fullWidthOnMobile={true}
                 />
@@ -149,12 +256,6 @@ function ArticleBlockInternal({
         ))
         .with({ type: "donors" }, (_block) => (
             <Donors className={getLayout("donors", containerType)} />
-        ))
-        .with({ type: "scroller" }, (block) => (
-            <Scroller
-                className={getLayout("scroller", containerType)}
-                d={block}
-            />
         ))
         .with({ type: "callout" }, (block) => (
             <Callout
@@ -172,7 +273,11 @@ function ArticleBlockInternal({
             <figure
                 className={cx(
                     "article-block__image",
-                    getLayout(`image--${block.size}`, containerType)
+                    getLayout(`image--${block.size}`, containerType),
+                    {
+                        "hide-sm-only": block.visibility === "desktop",
+                        "show-sm-only": block.visibility === "mobile",
+                    }
                 )}
             >
                 <Image
@@ -198,12 +303,27 @@ function ArticleBlockInternal({
         ))
         .with({ type: "video" }, (block) => (
             <Video
-                className={getLayout("video", containerType)}
+                className={cx(getLayout("video", containerType), {
+                    "hide-sm-only": block.visibility === "desktop",
+                    "show-sm-only": block.visibility === "mobile",
+                })}
                 url={block.url}
                 shouldLoop={block.shouldLoop}
                 shouldAutoplay={block.shouldAutoplay}
                 caption={block.caption}
                 filename={block.filename}
+            />
+        ))
+        .with({ type: "static-viz" }, (block) => (
+            <StaticViz
+                className={cx(
+                    "article-block__static-viz",
+                    getLayout(`static-viz--${block.size}`, containerType)
+                )}
+                name={block.name}
+                containerType={containerType as ImageParentContainer}
+                hasOutline={block.hasOutline}
+                caption={block.caption}
             />
         ))
         .with({ type: "people" }, (block) => (
@@ -424,16 +544,6 @@ function ArticleBlockInternal({
                 dangerouslySetInnerHTML={{ __html: block.value }}
             />
         ))
-        .with({ type: "script" }, (block) => (
-            <div
-                className={getLayout("script", containerType)}
-                dangerouslySetInnerHTML={{
-                    __html: `<script type="module">
-                    ${block.lines.join("\n")}
-                    </script>`,
-                }}
-            />
-        ))
         .with({ type: "horizontal-rule" }, () => (
             <hr className={getLayout("horizontal-rule", containerType)} />
         ))
@@ -595,6 +705,31 @@ function ArticleBlockInternal({
                 ))}
             </div>
         ))
+        .with({ type: "explore-data-section" }, (block) => (
+            <ExploreDataSection
+                title={block.title}
+                align={block.align}
+                className={getLayout("explore-data-section")}
+            >
+                {block.content.map((item, i) => (
+                    <ArticleBlock key={i} b={item} />
+                ))}
+            </ExploreDataSection>
+        ))
+        .with({ type: "conditional-section" }, (block) => (
+            <>
+                {block.content.map((item, i) => (
+                    <ArticleBlock
+                        key={i}
+                        b={item}
+                        containerType={containerType}
+                        toc={toc}
+                        shouldRenderLinks={shouldRenderLinks}
+                        interactiveImages={interactiveImages}
+                    />
+                ))}
+            </>
+        ))
         .with({ type: "prominent-link" }, (block) => (
             <ProminentLink
                 className={getLayout("prominent-link", containerType)}
@@ -622,6 +757,32 @@ function ArticleBlockInternal({
                     className={getLayout("toc", containerType)}
                 />
             )
+        })
+        .with({ type: "ltp-toc" }, (block) => {
+            const layoutClassName = getLayout("ltp-toc", containerType)
+            const tagName = tags[0]?.name
+
+            if (!tagName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Linear topic TOC requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return toc?.length ? (
+                <LTPTableOfContents
+                    title={block.title}
+                    toc={toc}
+                    tagName={tagName}
+                    className={layoutClassName}
+                />
+            ) : null
         })
         .with({ type: "missing-data" }, () => (
             <MissingData className={getLayout("missing-data", containerType)} />
@@ -715,9 +876,7 @@ function ArticleBlockInternal({
             // If the citation exists and is a URL, it uses the cite attribute
             // If the citation exists and is not a URL, it uses the footer
             // Otherwise, we show nothing for cases where the citation is written in the surrounding text
-            const isCitationAUrl = Boolean(
-                block.citation && block.citation.startsWith("http")
-            )
+            const isCitationAUrl = Boolean(block.citation?.startsWith("http"))
             const shouldShowCitationInFooter = block.citation && !isCitationAUrl
             const blockquoteProps = isCitationAUrl
                 ? { cite: block.citation }
@@ -788,10 +947,94 @@ function ArticleBlockInternal({
                 />
             )
         })
+        .with({ type: "featured-metrics" }, () => {
+            const layoutClassName = getLayout("featured-metrics", containerType)
+            const topicName = tags[0]?.name
+
+            if (!topicName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Featured metrics requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return (
+                <FeaturedMetrics
+                    topicName={topicName}
+                    className={layoutClassName}
+                />
+            )
+        })
+        .with({ type: "featured-data-insights" }, () => {
+            const layoutClassName = getLayout(
+                "featured-data-insights",
+                containerType
+            )
+            const topicName = tags[0]?.name
+
+            if (!topicName) {
+                return (
+                    <BlockErrorFallback
+                        className={layoutClassName}
+                        error={{
+                            name: `Error in ${block.type}`,
+                            message:
+                                "Featured data insights requires at least one tag on the document.",
+                        }}
+                    />
+                )
+            }
+
+            return (
+                <FeaturedDataInsights
+                    topicName={topicName}
+                    className={layoutClassName}
+                />
+            )
+        })
         .with({ type: "socials" }, (block) => (
             <Socials
                 className={getLayout("socials", containerType)}
                 links={block.links}
+            />
+        ))
+        .with({ type: "data-callout" }, (block) => (
+            <DataCallout block={block} containerType={containerType} />
+        ))
+        .with({ type: "data-callout-group" }, (block) => (
+            <DataCalloutGroup block={block} containerType={containerType} />
+        ))
+        .with({ type: "country-profile-selector" }, (block) => (
+            <CountryProfileSelector
+                block={block}
+                className={getLayout("country-profile-selector", containerType)}
+            />
+        ))
+        .with({ type: "bespoke-component" }, (block) => (
+            <BespokeComponent
+                className={getLayout(
+                    `bespoke-component--${block.size}`,
+                    containerType
+                )}
+                block={block}
+            />
+        ))
+        .with({ type: "chart-rows" }, (block) => (
+            <ChartRows
+                className={getLayout("chart-rows", containerType)}
+                d={block}
+            />
+        ))
+        .with({ type: "pull-chart" }, (block) => (
+            <PullChart
+                className={getLayout("pull-chart", containerType)}
+                d={block}
             />
         ))
         .exhaustive()

@@ -5,6 +5,7 @@ import {
     differenceObj,
     trimObject,
     parseIntOrUndefined,
+    es6mapValues,
 } from "@ourworldindata/utils"
 import { ColumnTypeNames, CoreRow } from "@ourworldindata/types"
 import {
@@ -27,6 +28,13 @@ import {
 import { trimAndParseObject } from "./ExplorerProgram.js"
 import { GrapherGrammar } from "./GrapherGrammar.js"
 
+function parseVariableIds(value: string): number[] {
+    return value
+        .split(" ")
+        .map((id) => parseInt(id, 10))
+        .filter((id) => !isNaN(id))
+}
+
 // todo: cleanup
 const makeChoicesMap = (delimited: string) => {
     const headerLine = delimited.split("\n")[0]
@@ -40,7 +48,7 @@ const makeChoicesMap = (delimited: string) => {
                 words.slice(0, -1).join(" "),
                 words[words.length - 1],
             ]
-            map.set(choiceName as ChoiceName, choiceType as ExplorerControlType)
+            map.set(choiceName, choiceType as ExplorerControlType)
         })
     return map
 }
@@ -131,27 +139,40 @@ export class DecisionMatrix {
         return this.table.get(GrapherGrammar.grapherId.keyword).uniqValues
     }
 
+    /**
+     * Unique variable IDs requiring partial Grapher config to be loaded.
+     * Extracts the first (primary) variable ID from the y-dimension of each
+     * decision matrix row.
+     */
     get requiredVariableIds() {
-        // only the first partial Grapher config of the y-dimension is taken into account
         return _.uniq(
             this.table
                 .get(GrapherGrammar.yVariableIds.keyword)
-                .values.map((value: string) =>
-                    value
-                        .split(" ")
-                        .map((id) => parseInt(id, 10))
-                        .filter((id) => !isNaN(id))
-                )
+                .values.map((value) => parseVariableIds(value))
                 .map((ids: number[]) => ids[0])
                 .filter(_.identity)
         )
     }
 
-    private static allColumnSlugsWithIndicatorIdsOrCatalogPaths = [
+    /** All variable IDs referenced in the explorer config */
+    get allVariableIds() {
+        return _.uniq(
+            DecisionMatrix.allColumnSlugsWithIndicatorIdsOrCatalogPaths.flatMap(
+                (slug) =>
+                    this.table
+                        .get(slug)
+                        .values.flatMap((value) => parseVariableIds(value))
+                        .filter(_.identity)
+            )
+        )
+    }
+
+    private static readonly allColumnSlugsWithIndicatorIdsOrCatalogPaths = [
         GrapherGrammar.yVariableIds.keyword,
         GrapherGrammar.xVariableId.keyword,
         GrapherGrammar.colorVariableId.keyword,
         GrapherGrammar.sizeVariableId.keyword,
+        GrapherGrammar.sortColumnSlug.keyword,
     ]
 
     get allColumnsWithIndicatorIdsOrCatalogPaths() {
@@ -181,10 +202,9 @@ export class DecisionMatrix {
     get tableWithOriginalColumnNames() {
         return this.table.renameColumns(
             Object.fromEntries(
-                [...this.choiceNameToControlTypeMap.entries()].map(
-                    ([choiceName, controlType]) => {
-                        return [choiceName, `${choiceName} ${controlType}`]
-                    }
+                es6mapValues(
+                    this.choiceNameToControlTypeMap,
+                    (controlType, choiceName) => `${choiceName} ${controlType}`
                 )
             )
         )

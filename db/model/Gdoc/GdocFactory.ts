@@ -47,12 +47,12 @@ import {
     getTagHierarchiesByChildName,
     getBestBreadcrumbs,
 } from "../../db.js"
-import { enrichedBlocksToMarkdown } from "./enrichedToMarkdown.js"
 import { GdocAbout } from "./GdocAbout.js"
 import { GdocAuthor } from "./GdocAuthor.js"
 import { extractFilenamesFromBlock } from "./gdocUtils.js"
 import { getGdocComponentsWithoutChildren } from "./extractGdocComponentInfo.js"
 import { GdocAnnouncement } from "./GdocAnnouncement.js"
+import { GdocProfile } from "./GdocProfile.js"
 
 export function gdocFromJSON(
     json: Record<string, any>
@@ -62,7 +62,8 @@ export function gdocFromJSON(
     | GdocHomepage
     | GdocAbout
     | GdocAuthor
-    | GdocAnnouncement {
+    | GdocAnnouncement
+    | GdocProfile {
     if (typeof json.content === "string") {
         json.content = JSON.parse(json.content)
     }
@@ -114,6 +115,9 @@ export function gdocFromJSON(
             // TODO: better validation here?
             () => GdocAnnouncement.create({ ...(json as any) })
         )
+        .with(OwidGdocType.Profile, () =>
+            GdocProfile.create({ ...(json as any) })
+        )
         .exhaustive()
 }
 
@@ -155,14 +159,9 @@ export async function updateGdocContentOnly(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ): Promise<void> {
-    let markdown: string | null = gdoc.markdown
-    try {
-        const markdownContentSource = gdoc.enrichedBlockSources.flat()
-        markdown = enrichedBlocksToMarkdown(markdownContentSource, true) ?? null
-    } catch (e) {
-        console.error("Error when converting content to markdown", e)
-    }
+    gdoc.updateMarkdown()
     await knex
         .table(PostsGdocsTableName)
         .where({ id })
@@ -170,7 +169,7 @@ export async function updateGdocContentOnly(
         .update({
             content: JSON.stringify(gdoc.content),
             revisionId: gdoc.revisionId,
-            markdown,
+            markdown: gdoc.markdown,
         })
     await updateDerivedGdocPostsComponents(knex, id, gdoc.content.body)
 }
@@ -285,27 +284,29 @@ export async function getMinimalGdocBaseObjects(
             postTypes,
         }
     )
-    return rows.map((row) => {
-        return {
-            id: row.id,
-            title: row.title,
-            slug: row.slug,
-            authors: JSON.parse(row.authors) as string[],
-            publishedAt: formatDate(row.publishedAt),
-            published: !!row.published,
-            subtitle: row.subtitle,
-            excerpt: row.excerpt,
-            type: row.type as OwidGdocType,
-            "featured-image": row["featured-image"],
-        } satisfies OwidGdocMinimalPostInterface
-    })
+    return rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        slug: row.slug,
+        authors: JSON.parse(row.authors) as string[],
+        publishedAt: formatDate(row.publishedAt),
+        published: !!row.published,
+        subtitle: row.subtitle,
+        excerpt: row.excerpt,
+        type: row.type as OwidGdocType,
+        "featured-image": row["featured-image"],
+    }))
 }
 
 export async function getPublishedGdocBaseObjectBySlug(
     knex: KnexReadonlyTransaction,
     slug: string,
-    fetchLinkedTags: boolean
+    fetchLinkedTags: boolean,
+    types: OwidGdocType[]
 ): Promise<OwidGdocBaseInterface | undefined> {
+    if (types.length === 0) {
+        throw new Error("At least one Gdoc type must be provided")
+    }
     const row = await knexRawFirst<DbRawPostGdoc>(
         knex,
         `-- sql
@@ -313,8 +314,9 @@ export async function getPublishedGdocBaseObjectBySlug(
             FROM posts_gdocs
             WHERE slug = ?
             AND published = 1
-            AND publishedAt <= NOW()`,
-        [slug]
+            AND publishedAt <= NOW()
+            AND type IN (?)`,
+        [slug, types]
     )
     if (!row) return undefined
     const enrichedRow = parsePostsGdocsRow(row)
@@ -345,9 +347,15 @@ export async function getPublishedGdocBaseObjectBySlug(
     return gdoc
 }
 
+/**
+ * From a slug, get a Gdoc object with all its metadata and state loaded, in its correct subclass.
+ * Only fetch the Gdoc if it matches one of the provided types.
+ * (There can be multiple published gdocs with the same slug if they are of different types)
+ */
 export async function getAndLoadGdocBySlug(
     knex: KnexReadonlyTransaction,
-    slug: string
+    slug: string,
+    types: OwidGdocType[]
 ): Promise<
     | GdocPost
     | GdocDataInsight
@@ -355,11 +363,12 @@ export async function getAndLoadGdocBySlug(
     | GdocAbout
     | GdocAuthor
     | GdocAnnouncement
+    | GdocProfile
 > {
-    const base = await getPublishedGdocBaseObjectBySlug(knex, slug, true)
+    const base = await getPublishedGdocBaseObjectBySlug(knex, slug, true, types)
     if (!base) {
         throw new Error(
-            `No published Google Doc with slug "${slug}" found in the database`
+            `No published Google Doc with slug "${slug}" with types "${types.join(", ")}" found in the database`
         )
     }
     return loadGdocFromGdocBase(knex, base)
@@ -368,7 +377,8 @@ export async function getAndLoadGdocBySlug(
 export async function getAndLoadGdocById(
     knex: KnexReadonlyTransaction,
     id: string,
-    contentSource?: GdocsContentSource
+    contentSource?: GdocsContentSource,
+    acceptSuggestions: boolean = false
 ): Promise<
     | GdocPost
     | GdocDataInsight
@@ -376,11 +386,12 @@ export async function getAndLoadGdocById(
     | GdocAbout
     | GdocAuthor
     | GdocAnnouncement
+    | GdocProfile
 > {
     const base = await getGdocBaseObjectById(knex, id, true)
     if (!base)
         throw new Error(`No Google Doc with id "${id}" found in the database`)
-    return loadGdocFromGdocBase(knex, base, contentSource)
+    return loadGdocFromGdocBase(knex, base, contentSource, acceptSuggestions)
 }
 
 export async function createOrLoadGdocById(
@@ -402,6 +413,7 @@ export async function loadGdocFromGdocBase(
     knex: KnexReadonlyTransaction,
     base: OwidGdocBaseInterface,
     contentSource?: GdocsContentSource,
+    acceptSuggestions: boolean = false,
     options?: { loadState?: boolean }
 ): Promise<
     | GdocPost
@@ -410,6 +422,7 @@ export async function loadGdocFromGdocBase(
     | GdocAbout
     | GdocAuthor
     | GdocAnnouncement
+    | GdocProfile
 > {
     const shouldLoadState = options?.loadState ?? true
 
@@ -439,11 +452,18 @@ export async function loadGdocFromGdocBase(
         .with(OwidGdocType.Homepage, () => GdocHomepage.create(base))
         .with(OwidGdocType.Author, () => GdocAuthor.create(base))
         .with(OwidGdocType.Announcement, () => GdocAnnouncement.create(base))
+        .with(OwidGdocType.Profile, () => GdocProfile.create(base))
         .exhaustive()
 
     if (contentSource === GdocsContentSource.Gdocs) {
         // TODO: if we get here via fromJSON then we have already done this - optimize that?
-        await gdoc.fetchAndEnrichGdoc()
+        await gdoc.fetchAndEnrichGdoc(acceptSuggestions)
+        const updatedType = _.get(gdoc, "content.type") as unknown
+        if (!checkIsOwidGdocType(updatedType)) {
+            throw new Error(
+                `Fetched Google Doc with id "${gdoc.id}" has invalid type "${updatedType}"`
+            )
+        }
     }
 
     if (shouldLoadState) {
@@ -475,28 +495,18 @@ async function getAndLoadPublishedGdocs<T extends GdocBase>(
     if (options?.limit) query = query.limit(options.limit)
     if (options?.offset) query = query.offset(options.offset)
 
-    const rows = await query.select(`${PostsGdocsTableName}.*`)
+    const rows: DbRawPostGdoc[] = await query.select(`${PostsGdocsTableName}.*`)
     const ids = rows.map((row) => row.id)
 
     let gdocs: T[] = []
 
     if (ids.length) {
-        const tags = await knexRaw<DbPlainTag>(
-            knex,
-            `-- sql
-      SELECT gt.gdocId as gdocId, tags.*
-      FROM tags
-      JOIN posts_gdocs_x_tags gt ON gt.tagId = tags.id
-      WHERE gt.gdocId in (:ids)`,
-            { ids: ids }
-        )
-
-        const groupedTags = _.groupBy(tags, "gdocId")
+        const groupedTags = await getTagsGroupedByGdocId(knex, ids)
 
         const enrichedRows = rows.map((row) => {
             return {
                 ...parsePostsGdocsRow(row),
-                tags: groupedTags[row.id] ? groupedTags[row.id] : null,
+                tags: groupedTags.get(row.id) ?? null,
             } satisfies OwidGdocBaseInterface
         })
 
@@ -632,16 +642,7 @@ export async function getAndLoadListedGdocPosts(
         { publicationContext: OwidGdocPublicationContext.listed }
     )
     const ids = rows.map((row) => row.id)
-    const tags = await knexRaw<DbPlainTag>(
-        knex,
-        `-- sql
-                 SELECT gt.gdocId as gdocId, tags.*
-                 FROM tags
-                 JOIN posts_gdocs_x_tags gt ON gt.tagId = tags.id
-                 WHERE gt.gdocId in (:ids)`,
-        { ids: ids }
-    )
-    const groupedTags = _.groupBy(tags, "gdocId")
+    const groupedTags = await getTagsGroupedByGdocId(knex, ids)
     const enrichedRows = rows
         .filter(
             (row) =>
@@ -651,7 +652,7 @@ export async function getAndLoadListedGdocPosts(
         .map((row) => {
             return {
                 ...parsePostsGdocsRow(row),
-                tags: groupedTags[row.id] ? groupedTags[row.id] : null,
+                tags: groupedTags.get(row.id) ?? null,
             } satisfies OwidGdocBaseInterface
         })
 
@@ -660,7 +661,7 @@ export async function getAndLoadListedGdocPosts(
     // When loadState=true (default), it fully loads linked charts, validates, loads images, etc.
     const gdocs = (await Promise.all(
         enrichedRows.map(async (row) =>
-            loadGdocFromGdocBase(knex, row, undefined, {
+            loadGdocFromGdocBase(knex, row, undefined, undefined, {
                 loadState: shouldLoadState,
             })
         )
@@ -705,6 +706,7 @@ export function getDbEnrichedGdocFromOwidGdoc(
     const enrichedGdoc = {
         manualBreadcrumbs: gdoc.manualBreadcrumbs,
         content: gdoc.content,
+        contentMd5: gdoc.contentMd5,
         createdAt: gdoc.createdAt,
         id: gdoc.id,
         markdown: gdoc.markdown,
@@ -719,10 +721,19 @@ export function getDbEnrichedGdocFromOwidGdoc(
 }
 export async function upsertGdoc(
     knex: KnexReadWriteTransaction,
-    gdoc: OwidGdoc | GdocBase
-): Promise<DbEnrichedPostGdoc> {
+    gdoc: GdocBase
+): Promise<
+    | GdocPost
+    | GdocDataInsight
+    | GdocHomepage
+    | GdocAbout
+    | GdocAuthor
+    | GdocAnnouncement
+    | GdocProfile
+> {
     let sql = undefined
     try {
+        gdoc.updateMarkdown()
         const enrichedGdoc = getDbEnrichedGdocFromOwidGdoc(gdoc)
         const rawPost = serializePostsGdocsRow(enrichedGdoc)
         const query = knex
@@ -744,8 +755,8 @@ export async function upsertGdoc(
 export async function getTagsGroupedByGdocId(
     knex: KnexReadonlyTransaction,
     gdocIds: string[]
-): Promise<Record<string, DbPlainTag[]>> {
-    const tags = await knexRaw<DbPlainTag & Pick<DbRawPostGdoc, "id">>(
+): Promise<Map<string, (DbPlainTag & { gdocId: string })[]>> {
+    const tags = await knexRaw<DbPlainTag & { gdocId: string }>(
         knex,
         `-- sql
             SELECT gt.gdocId as gdocId, tags.*
@@ -754,7 +765,7 @@ export async function getTagsGroupedByGdocId(
             WHERE gt.gdocId in (:ids)`,
         { ids: gdocIds }
     )
-    return _.groupBy(tags, "gdocId")
+    return Map.groupBy(tags, (tag) => tag.gdocId)
 }
 
 export async function getAllGdocIndexItemsOrderedByUpdatedAt(
@@ -773,7 +784,7 @@ export async function getAllGdocIndexItemsOrderedByUpdatedAt(
     return gdocs.map((gdoc) =>
         extractGdocIndexItem({
             ...parsePostsGdocsRow(gdoc),
-            tags: groupedTags[gdoc.id] ? groupedTags[gdoc.id] : null,
+            tags: groupedTags.get(gdoc.id) ?? null,
         })
     )
 }
@@ -787,6 +798,7 @@ export async function setImagesInContentGraph(
         | GdocAbout
         | GdocAuthor
         | GdocAnnouncement
+        | GdocProfile
 ): Promise<void> {
     const id = gdoc.id
     // Deleting and recreating these is simpler than tracking orphans over the next code block

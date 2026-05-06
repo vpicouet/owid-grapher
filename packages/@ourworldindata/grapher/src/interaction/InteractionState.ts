@@ -2,12 +2,12 @@ export class InteractionState {
     /**
      * Whether the series is currently interacted with
      */
-    private _isInteractedWith = false
+    private readonly _isInteractedWith: boolean = false
 
     /**
      * Whether _any_ series in a chart is currently interacted with
      */
-    private _isInteractionModeActive = false
+    private readonly _isInteractionModeActive: boolean = false
 
     /**
      * If `isInteractedWith` is true, then the given series is currently active,
@@ -24,6 +24,20 @@ export class InteractionState {
         this._isInteractionModeActive = isInteractedWith
             ? true // Must be active if the series is currently interacted with
             : (isInteractionModeActive ?? isInteractedWith)
+    }
+
+    /**
+     * Creates an InteractionState by comparing a given value against the
+     * currently active value
+     */
+    static for<T>(
+        currentValue: T | undefined,
+        activeValue: T | undefined
+    ): InteractionState {
+        const isInteractedWith =
+            activeValue !== undefined && currentValue === activeValue
+        const isInteractionModeActive = activeValue !== undefined
+        return new InteractionState(isInteractedWith, isInteractionModeActive)
     }
 
     /**

@@ -107,16 +107,16 @@ describe("constructSearchResultDataTableContent for LineChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 
     it("lists columns when columns are plotted", () => {
@@ -126,15 +126,15 @@ describe("constructSearchResultDataTableContent for LineChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("Benin")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("Benin")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Fruit", time: "2009", value: "573" },
             { label: "Vegetables", time: "2009", value: "542" },
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 
     it("highlights focused entities", () => {
@@ -148,7 +148,7 @@ describe("constructSearchResultDataTableContent for LineChart", () => {
             grapherState,
         })
 
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", muted: true },
             { label: "Benin", muted: false },
             { label: "Eritrea", muted: true },
@@ -164,8 +164,8 @@ describe("constructSearchResultDataTableContent for LineChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
@@ -181,16 +181,16 @@ describe("constructSearchResultDataTableContent for LineChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 })
 
@@ -204,8 +204,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             {
                 label: "Philippines",
                 time: "2000–2009",
@@ -230,8 +230,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 
     it("lists columns when columns are plotted", () => {
@@ -243,8 +243,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("Benin")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("Benin")
+        expect(dataTable!.rows).toMatchObject([
             {
                 label: "Fruit",
                 time: "2000–2009",
@@ -262,8 +262,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 
     it("highlights focused entities", () => {
@@ -281,8 +281,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", muted: true },
             { label: "Benin", muted: false },
             { label: "Eritrea", muted: true },
@@ -299,8 +299,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             {
                 label: "Philippines",
                 startValue: "$663.99 billion",
@@ -335,8 +335,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             {
                 label: "Philippines",
                 startValue: "$663.99 billion",
@@ -361,8 +361,8 @@ describe("constructSearchResultDataTableContent for SlopeChart", () => {
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 })
 
@@ -376,16 +376,16 @@ describe("constructSearchResultDataTableContent for StackedAreaChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 
     it("lists columns when columns are plotted", () => {
@@ -397,15 +397,15 @@ describe("constructSearchResultDataTableContent for StackedAreaChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("Benin")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("Benin")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Fruit", time: "2009", value: "573" },
             { label: "Vegetables", time: "2009", value: "542" },
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 
     it("highlights focused entities", () => {
@@ -420,7 +420,7 @@ describe("constructSearchResultDataTableContent for StackedAreaChart", () => {
             grapherState,
         })
 
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", muted: true },
             { label: "Benin", muted: false },
             { label: "Eritrea", muted: true },
@@ -437,8 +437,8 @@ describe("constructSearchResultDataTableContent for StackedAreaChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
@@ -455,16 +455,16 @@ describe("constructSearchResultDataTableContent for StackedAreaChart", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
         ])
 
         // Check that the colors are unique
-        const colors = dataTable.rows.map((row) => row.color)
-        expect(new Set(colors)).toHaveLength(colors!.length)
+        const colors = dataTable!.rows.map((row) => row.color)
+        expect(new Set(colors)).toHaveLength(colors.length)
     })
 })
 
@@ -478,8 +478,8 @@ describe("constructSearchResultDataTableContent for DiscreteBar", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
@@ -495,8 +495,8 @@ describe("constructSearchResultDataTableContent for DiscreteBar", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("Benin")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("Benin")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Fruit", time: "2009", value: "573" },
             { label: "Vegetables", time: "2009", value: "542" },
         ])
@@ -514,7 +514,7 @@ describe("constructSearchResultDataTableContent for DiscreteBar", () => {
             grapherState,
         })
 
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", muted: true },
             { label: "Benin", muted: false },
             { label: "Eritrea", muted: true },
@@ -531,8 +531,8 @@ describe("constructSearchResultDataTableContent for DiscreteBar", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
@@ -549,8 +549,8 @@ describe("constructSearchResultDataTableContent for DiscreteBar", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             { label: "Philippines", time: "2009", value: "$682.03 billion" },
             { label: "Benin", time: "2009", value: "$233.42 billion" },
             { label: "Eritrea", time: "2009", value: "$63.2 billion" },
@@ -579,8 +579,8 @@ describe("constructSearchResultDataTableContent for WorldMap", () => {
             grapherState,
         })
 
-        expect(dataTable.title).toBe("GDP")
-        expect(dataTable.rows).toMatchObject([
+        expect(dataTable!.title).toBe("GDP")
+        expect(dataTable!.rows).toMatchObject([
             {
                 color: "#eff3ff",
                 label: "$1 billion-$3 billion",

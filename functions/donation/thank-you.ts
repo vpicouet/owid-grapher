@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/cloudflare"
-import Stripe from "stripe"
+import { Stripe } from "stripe"
 import { Env } from "../_common/env.js"
 import {
     DEFAULT_HEADERS,
@@ -39,7 +39,7 @@ const constructMessage = (data: MessageData): string => {
         "Together, we can make progress against those challenges.",
         "Donations like yours are essential to our work. They provide us with the stability and independence to expand our work and increase our impact — delivering more data, charts, and insights on an increasing number of pressing topics, all free and open to the world.",
         data.isSubscription &&
-            "We really appreciate your ongoing support! You’ll receive a receipt each time after your payment is processed. If you’d like to cancel your recurring donation at any point, you can do so at ${STRIPE_CUSTOMER_PORTAL_URL} or just email us at donate@ourworldindata.org and we’ll take care of that for you.",
+            `We really appreciate your ongoing support! You’ll receive a receipt each time after your payment is processed. If you’d like to cancel your recurring donation at any point, you can do so at ${STRIPE_CUSTOMER_PORTAL_URL} or just email us at donate@ourworldindata.org and we’ll take care of that for you.`,
         data.showOnList &&
             "In recognition of your support, we will be delighted to include your name as part of our List of Supporters: https://ourworldindata.org/funding. We will add your name the next time we update the list, which we do every few months. The amount of your donation will not be disclosed.",
         "Stay connected with our work: Follow us on social media or sign up for one of our newsletters here: https://ourworldindata.org/#subscribe (As a valued donor, we may also share an occasional donor-only update with you, from which you may unsubscribe at any time.)",
@@ -54,7 +54,7 @@ const constructMessage = (data: MessageData): string => {
 }
 
 function constructHtmlMessage(data: MessageData): string {
-    // The HTML comment is to make prettier format the string as HTML.
+    // The HTML comment is to make oxfmt format the string as HTML.
     return /* HTML */ `<p>Thank you for supporting Our World in Data!</p>
         <p>
             Your generous donation to Global Change Data Lab, the nonprofit
@@ -182,33 +182,38 @@ export const onRequestPost: PagesFunction<Env> = async ({
         const requestBodyRaw = await request.text()
 
         // Construct the event from the signed request payload
+        const stripeSignature = request.headers.get("stripe-signature")
+        if (!stripeSignature) {
+            return new Response(null, { status: 400 })
+        }
         const event = await stripe.webhooks.constructEventAsync(
             requestBodyRaw,
-            request.headers.get("stripe-signature"),
+            stripeSignature,
             env.STRIPE_WEBHOOK_SECRET
         )
 
         switch (event.type) {
             case "checkout.session.completed": {
                 const session = event.data.object
+                const email = session.customer_details?.email ?? ""
+                const metadata = session.metadata ?? {}
                 waitUntil(
                     sendThankYouEmail(env, {
-                        email: session.customer_details.email,
+                        email,
                         customerId: session.customer as string,
                         // We support two checkout modes: "payment" (for one-time payments) and "subscription"
                         // These are set when creating the checkout session, in checkout.ts
                         // see https://stripe.com/docs/api/checkout/sessions/object#checkout_session_object-mode
                         isSubscription: session.mode === "subscription",
-                        name: session.metadata.name,
-                        showOnList: session.metadata.showOnList === "true",
+                        name: metadata.name,
+                        showOnList: metadata.showOnList === "true",
                     }).catch(Sentry.captureException)
                 )
-                if (session.metadata.subscribeToDonorNewsletter === "true") {
+                if (metadata.subscribeToDonorNewsletter === "true") {
                     waitUntil(
-                        subscribeToNewsletter(
-                            env,
-                            session.customer_details.email
-                        ).catch(Sentry.captureException)
+                        subscribeToNewsletter(env, email).catch(
+                            Sentry.captureException
+                        )
                     )
                 }
                 break
@@ -227,7 +232,13 @@ export const onRequestPost: PagesFunction<Env> = async ({
         // Using "waitUntil" to make sure the worker doesn't exit before the
         // request to Slack is complete. Not using "await" to avoid delaying
         // sending the response to the client.
-        waitUntil(logError(error, filePath, env))
+        waitUntil(
+            logError(
+                stringifyUnknownError(error) ?? "Unknown error",
+                filePath,
+                env
+            )
+        )
         if (!(error instanceof JsonError) || error.status >= 500) {
             Sentry.captureException(error)
         }
@@ -235,7 +246,7 @@ export const onRequestPost: PagesFunction<Env> = async ({
             JSON.stringify({ error: stringifyUnknownError(error) }),
             {
                 headers: DEFAULT_HEADERS,
-                status: +error.status || 500,
+                status: error instanceof JsonError ? error.status : 500,
             }
         )
     }

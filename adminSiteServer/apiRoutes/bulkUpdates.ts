@@ -26,11 +26,11 @@ import { saveGrapher } from "./charts.js"
 import * as db from "../../db/db.js"
 import * as lodash from "lodash-es"
 import { Request } from "../authentication.js"
-import e from "express"
+import { HandlerResponse } from "../FunctionalRouter.js"
 
 export async function getChartBulkUpdate(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ): Promise<BulkGrapherConfigResponse<BulkChartEditResponseRow>> {
     const context: OperationContext = {
@@ -91,7 +91,7 @@ export async function getChartBulkUpdate(
 
 export async function updateBulkChartConfigs(
     req: Request,
-    res: e.Response<any, Record<string, any>>,
+    res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const patchesList = req.body as GrapherConfigPatch[]
@@ -107,7 +107,7 @@ export async function updateBulkChartConfigs(
             JOIN chart_configs cc ON cc.id = c.configId
             WHERE c.id IN (?)
         `,
-        [[...chartIds.values()]]
+        [chartIds.values().toArray()]
     )
     const configMap = new Map<number, GrapherInterface>(
         configsAndIds.map((item: any) => [
@@ -129,7 +129,6 @@ export async function updateBulkChartConfigs(
             user: res.locals.user,
             newConfig,
             existingConfig: oldValuesConfigMap.get(id),
-            referencedVariablesMightChange: false,
         })
     }
 
@@ -138,7 +137,7 @@ export async function updateBulkChartConfigs(
 
 export async function getVariableAnnotations(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadonlyTransaction
 ): Promise<BulkGrapherConfigResponse<VariableAnnotationsResponseRow>> {
     const context: OperationContext = {
@@ -201,7 +200,7 @@ export async function getVariableAnnotations(
 
 export async function updateVariableAnnotations(
     req: Request,
-    _res: e.Response<any, Record<string, any>>,
+    _res: HandlerResponse,
     trx: db.KnexReadWriteTransaction
 ) {
     const patchesList = req.body as GrapherConfigPatch[]
@@ -218,7 +217,7 @@ export async function updateVariableAnnotations(
           FROM variables v
           LEFT JOIN chart_configs cc ON v.grapherConfigIdAdmin = cc.id
           WHERE v.id IN (?)`,
-        [[...variableIds.values()]]
+        [variableIds.values().toArray()]
     )
     const configMap = new Map(
         configsAndIds.map((item: any) => [

@@ -30,6 +30,7 @@ import {
     autoDetectSeriesStrategy,
     autoDetectYColumnSlugs,
     getDefaultFailMessage,
+    getShortNameForEntity,
     makeSelectionArray,
 } from "../chart/ChartUtils"
 import { ColorScheme } from "../color/ColorScheme"
@@ -38,7 +39,13 @@ import { ColorScale, ColorScaleManager } from "../color/ColorScale"
 import { ColorScaleConfig } from "../color/ColorScaleConfig"
 import { OWID_NO_DATA_GRAY } from "../color/ColorConstants"
 import { CategoricalColorAssigner } from "../color/CategoricalColorAssigner"
-import { getColorKey, getDisplayName, getSeriesName } from "./LineChartHelpers"
+import {
+    AnnotationsMap,
+    getAnnotationsMap,
+    getColorKey,
+    getDisplayName,
+    getSeriesName,
+} from "./LineChartHelpers"
 import { FocusArray } from "../focus/FocusArray"
 import { AxisConfig } from "../axis/AxisConfig"
 import { HorizontalAxis, VerticalAxis } from "../axis/Axis"
@@ -142,8 +149,7 @@ export class LineChartState implements ChartState, ColorScaleManager {
     }
 
     @computed get colorColumnSlug(): string | undefined {
-        // Line charts only support numeric variables as color dimension
-        return this.manager.numericColorColumnSlug
+        return this.manager.colorColumnSlug
     }
 
     @computed get yColumns(): CoreColumn[] {
@@ -206,6 +212,10 @@ export class LineChartState implements ChartState, ColorScaleManager {
 
     getColorScaleColor(value: CoreValueType | undefined): Color {
         return this.colorScale.getColor(value) ?? DEFAULT_LINE_COLOR
+    }
+
+    @computed get annotationsMap(): AnnotationsMap | undefined {
+        return getAnnotationsMap(this.inputTable, this.yColumnSlugs[0])
     }
 
     @computed get hasNoDataBin(): boolean {
@@ -305,8 +315,9 @@ export class LineChartState implements ChartState, ColorScaleManager {
             hasMultipleEntitiesSelected,
             allowsMultiEntitySelection: canSelectMultipleEntities,
         })
+        const shortEntityName = getShortNameForEntity(entityName)
         const displayName = getDisplayName({
-            entityName,
+            entityName: shortEntityName ?? entityName,
             columnName,
             seriesStrategy,
             hasMultipleEntitiesSelected,
@@ -381,14 +392,6 @@ export class LineChartState implements ChartState, ColorScaleManager {
     @computed get errorInfo(): ChartErrorInfo {
         const message = getDefaultFailMessage(this.manager)
         if (message) return { reason: message }
-        if (
-            this.manager.startTime !== undefined &&
-            this.manager.startTime === this.manager.endTime
-        )
-            return {
-                reason: "Two time points needed",
-                help: "Click the timeline to select a second time point",
-            }
 
         const { entityTypePlural = "entities" } = this.manager
         if (!this.series.length)

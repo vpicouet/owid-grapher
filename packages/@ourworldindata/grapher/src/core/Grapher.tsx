@@ -8,6 +8,7 @@ import {
     autorun,
     reaction,
     makeObservable,
+    comparer,
 } from "mobx"
 import {
     bind,
@@ -20,9 +21,8 @@ import {
     strToQueryParams,
     queryParamsToStr,
     setWindowQueryStr,
-    EntityYearHighlight,
 } from "@ourworldindata/utils"
-import { BodyDiv } from "@ourworldindata/components"
+import { BodyPortal } from "@ourworldindata/components"
 import {
     ScaleType,
     AnnotationFieldsInTitle,
@@ -34,6 +34,7 @@ import {
     ArchiveContext,
     AdditionalGrapherDataFetchFn,
     GrapherVariant,
+    Time,
 } from "@ourworldindata/types"
 import { OwidTable } from "@ourworldindata/core-table"
 import {
@@ -48,7 +49,6 @@ import { TooltipContainer } from "../tooltip/Tooltip"
 import { EntitySelectorModal } from "../modal/EntitySelectorModal"
 import { DownloadModal } from "../modal/DownloadModal"
 import { observer } from "mobx-react"
-import "d3-transition"
 import { SourcesModal } from "../modal/SourcesModal"
 import { Command, CommandPalette } from "../controls/CommandPalette"
 import { EmbedModal } from "../modal/EmbedModal"
@@ -71,34 +71,35 @@ declare global {
     }
 }
 
-export const DEFAULT_MS_PER_TICK = 100
-
 // Exactly the same as GrapherInterface, but contains options that developers want but authors won't be touching.
 export interface GrapherProgrammaticInterface extends GrapherInterface {
     queryStr?: string
     bounds?: Bounds
     table?: OwidTable
+    baseUrl?: string
     bakedGrapherURL?: string
     adminBaseUrl?: string
     env?: string
-    entityYearHighlight?: EntityYearHighlight
+    highlightedTimesInLineChart?: Time[]
     baseFontSize?: number
     staticBounds?: Bounds
     variant?: GrapherVariant
-    isDisplayedAlongsideComplementaryTable?: boolean
+    useMinimalLabeling?: boolean
 
     hideTitle?: boolean
     hideSubtitle?: boolean
     hideNote?: boolean
     hideOriginUrl?: boolean
+    hideFullscreenButton?: boolean
+    hideDownloadButton?: boolean
 
     hideEntityControls?: boolean
+    hideControlsRow?: boolean
     forceHideAnnotationFieldsInTitle?: AnnotationFieldsInTitle
     hasTableTab?: boolean
     hideShareButton?: boolean
     hideExploreTheDataButton?: boolean
     hideRelatedQuestion?: boolean
-    isSocialMediaExport?: boolean
     enableMapSelection?: boolean
 
     enableKeyboardShortcuts?: boolean
@@ -106,7 +107,9 @@ export interface GrapherProgrammaticInterface extends GrapherInterface {
     isEmbeddedInAnOwidPage?: boolean
     isEmbeddedInADataPage?: boolean
     isConfigReady?: boolean
+    isDataReady?: boolean
     canHideExternalControlsInEmbed?: boolean
+    recommendedIframeEmbedHeight?: number
 
     narrativeChartInfo?: MinimalNarrativeChartInfo
     archiveContext?: ArchiveContext
@@ -126,7 +129,8 @@ interface AnalyticsContext {
 }
 
 export interface GrapherManager {
-    canonicalUrl?: string
+    baseUrl?: string
+    queryStr?: string
     selection?: SelectionArray
     focusArray?: FocusArray
     adminEditPath?: string
@@ -148,7 +152,7 @@ export class Grapher extends React.Component<GrapherProps> {
 
     // stored on Grapher so state is preserved when switching to full-screen mode
 
-    private legacyVariableDataJson:
+    private readonly legacyVariableDataJson:
         | MultipleOwidVariableDataDimensionsMap
         | undefined = undefined
     private hasLoggedGAViewEvent = false
@@ -282,7 +286,9 @@ export class Grapher extends React.Component<GrapherProps> {
             {
                 combo: "p",
                 fn: (): void => this.togglePlayingCommand(),
-                title: this.grapherState.isPlaying ? `Pause` : `Play`,
+                title: this.grapherState.isTimelineAnimationPlaying
+                    ? `Pause`
+                    : `Play`,
                 category: "Timeline",
             },
             {
@@ -564,21 +570,16 @@ export class Grapher extends React.Component<GrapherProps> {
 
                 {/* Tooltip: either pin to the bottom or render into the chart area */}
                 {this.grapherState.shouldPinTooltipToBottom ? (
-                    <BodyDiv>
+                    <BodyPortal>
                         <TooltipContainer
-                            tooltipProvider={this.grapherState}
-                            anchor={GrapherTooltipAnchor.bottom}
+                            tooltipManager={this.grapherState}
+                            anchor={GrapherTooltipAnchor.Bottom}
                         />
-                    </BodyDiv>
+                    </BodyPortal>
                 ) : (
                     <TooltipContainer
-                        tooltipProvider={this.grapherState}
-                        containerWidth={
-                            this.grapherState.captionedChartBounds.width
-                        }
-                        containerHeight={
-                            this.grapherState.captionedChartBounds.height
-                        }
+                        tooltipManager={this.grapherState}
+                        containerBounds={this.grapherState.captionedChartBounds}
                     />
                 )}
             </>
@@ -658,6 +659,8 @@ export class Grapher extends React.Component<GrapherProps> {
     // Binds chart properties to global window title and URL. This should only
     // ever be invoked from top-level JavaScript.
     private bindToWindow(): void {
+        if (!this.grapherState.bindUrlToWindow) return
+
         // There is a surprisingly considerable performance overhead to updating the url
         // while animating, so we debounce to allow e.g. smoother timelines
         const pushParams = (): void =>
@@ -676,6 +679,7 @@ export class Grapher extends React.Component<GrapherProps> {
         const updateWindowDimensions = action((): void => {
             this.grapherState.windowInnerWidth = window.innerWidth
             this.grapherState.windowInnerHeight = window.innerHeight
+            this.grapherState.screenHeight = window.screen.height
         })
         const onResize = _.debounce(updateWindowDimensions, 400, {
             leading: true,
@@ -690,11 +694,7 @@ export class Grapher extends React.Component<GrapherProps> {
         }
     }
 
-    override componentDidMount(): void {
-        this.setBaseFontSize()
-        this.setUpIntersectionObserver()
-        this.setUpWindowResizeEventHandler()
-        exposeInstanceOnWindow(this, "grapher")
+    private setUpGrapherLoadedEventDispatcher(): void {
         // Emit a custom event when the grapher is ready
         // We can use this in global scripts that depend on the grapher e.g. the site-screenshots tool
         this.grapherState.disposers.push(
@@ -709,20 +709,49 @@ export class Grapher extends React.Component<GrapherProps> {
                         )
                     }
                 }
-            ),
-            reaction(
-                () => this.grapherState.facetStrategy,
-                () => this.grapherState.focusArray.clear()
             )
         )
-        if (this.grapherState.bindUrlToWindow) this.bindToWindow()
-        if (this.grapherState.enableKeyboardShortcuts)
-            this.bindKeyboardShortcuts()
+    }
+
+    private clearFocusMode(): void {
+        // Make it easy to exit focus mode by clearing it when the selection
+        // or view changes. This is disabled in the admin to avoid clearing
+        // focus when authors are editing the chart
+        if (!this.grapherState.isAdmin) {
+            this.grapherState.disposers.push(
+                reaction(
+                    () => [
+                        this.grapherState.facetStrategy,
+                        this.grapherState.selection.selectedEntityNames,
+                        this.grapherState.activeTab,
+                    ],
+                    () => this.grapherState.focusArray.clear(),
+                    // Use structural comparison to detect changes in array
+                    // contents, not just reference
+                    { equals: comparer.structural }
+                )
+            )
+        }
+    }
+
+    override componentDidMount(): void {
+        exposeInstanceOnWindow(this, "grapher")
+
+        this.setBaseFontSize()
+        this.setUpIntersectionObserver()
+        this.setUpWindowResizeEventHandler()
+        this.setUpGrapherLoadedEventDispatcher()
+
+        this.bindToWindow()
+        this.bindKeyboardShortcuts()
+
+        this.clearFocusMode()
     }
 
     private _shortcutsBound = false
     private bindKeyboardShortcuts(): void {
-        if (this._shortcutsBound) return
+        if (!this.grapherState.enableKeyboardShortcuts || this._shortcutsBound)
+            return
         this.keyboardShortcuts.forEach((shortcut) => {
             Mousetrap.bind(shortcut.combo, () => {
                 shortcut.fn()

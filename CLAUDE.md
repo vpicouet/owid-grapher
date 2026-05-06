@@ -1,16 +1,16 @@
 # Bash commands
 
 - yarn typecheck: runs the typescript typechecker across all files
-- yarn testLintChanged: run eslint on changed files
-- yarn testPrettierChanged: run prettier on changed files
-- yarn fixPrettierChanged: attempt to fix prettier issues on changed files
+- yarn testLintChanged: run oxlint on changed files
+- yarn testFormatChanged: check formatting on changed files
+- yarn fixFormatChanged: fix formatting on changed files
 - yarn test run --reporter dot: run unit tests. Uses vitest, can take one or more test filenames to only run a subset.
 - make migrate: apply migrations
 - make dbtest: run database and api tests
 
-When you have completed implementing a big set of changes, run `yarn typecheck` and fix any errors you have.
-
 When you want to create a git commit, refer to docs/agent-guidelines/commit-messages.md for instructions.
+
+When creating new skills in `.claude/skills/`, always include `metadata: { internal: true }` in the SKILL.md frontmatter unless explicitly asked for the skill to be public. This prevents external skill indexes from crawling and listing our internal skills.
 
 ## Code style
 
@@ -19,6 +19,8 @@ When you want to create a git commit, refer to docs/agent-guidelines/commit-mess
 - Avoid the use of the `any` type. Only use it if you have to and ask for permission.
 - In Grapher and the admin, where we use MobX 6, we use a somewhat nonstandard setup. We use class based components with TC-39 stage 3 decorators, but only for @computed and @action properties. The observable props are not marked with @observable, but are instead listed in the constructor in a `makeObservable` call. The `makeObservable` call must mention all obserable props, but none of the @computed or @action ones.
 - For CSS, we mostly use named style classes following the BEM conventions in separate .scss files. We usually avoid inline styles - only use those if the component you are working on already makes use of them for a similar use case. Components usually have a companion scss file with the same name. The entry point for our site styles is /site/owid.scss, the entry point for grapher styles is /packages/@ourworldindata/grapher/src/core/grapher.scss
+- In SCSS files, do NOT use parent selector nesting (`&__element`, `&--modifier`). Write out full class names (`.block__element`) so it's easy to search/navigate between JSX and SCSS.
+- Check [docs/browser-support.md](./docs/browser-support.md) before using modern JS or CSS features. It lists our supported browsers, the "most breaking" features we rely on, and features we can't yet use.
 
 # Codebase overview
 
@@ -37,11 +39,21 @@ Some key directories, going roughly along the dependency chain from the most sta
 - ./baker - code that "bakes" our website by rendering React to static HTML
 - ./adminSiteServer - internal API for our admin
 - ./adminSiteClient - client UI of the admin
+- ./bespoke - self-contained custom data viz components embedded in articles via Shadow DOM. Each project under bespoke/projects/ has its own build. See bespoke/readme.md for details.
 - ./devTools - various utilities
 - ./functions - CloudFlare Functions. Most of our website is static but all our charts under https://ourworldindata.org/grapher/* are behind CF functions. These handle dynamic thumbnail generation, data downloads for end users etc.
 
 # Database documentation
 
 Our main datastore is a mysql 8 database. The documentation for this lives in db/docs - there is README.md file which is a good overview and starting point, then one TABLE-NAME.yml file per table describing the table in more detail. ALWAYS list the directory db/docs/ to understand which tables are available and read the relevant table description files before constructing a query or writing a migration.
+When creating a new migration, make sure to read the [database README](./db/readme.md).
 
-You can run (read only) queries against the database with `yarn query "QUERY TEXT"` - e.g. if you need to understand the contents of a table of the cardinality of various tables.
+You can run (read only) queries against the database with `yarn query "QUERY TEXT"` - e.g. if you need to understand the contents of a table or the cardinality of various tables. Use `yarn query -s "QUERY TEXT"` to query the staging database for the current git branch (e.g., on branch `images-pageviews` it connects to `staging-site-images-pageviews`).
+
+# Additional documentation
+
+More details of our gdocs pipeline are described in these files:
+
+- ./docs/agent-guidelines/gdocs-cms-pipeline.md - detailed overview of our archieml pipeline from gdocs to our database. Read this before you work on gdocs related things.
+- ./docs/agent-guidelines/gdocs-class-hierarchy.md - overview of the different types of gdocs and how they differ and how to create new types.
+- ./docs/agent-guidelines/gdocs-attachments.md - outlines the attachments mechanism and how we use it to give the react components that ultimately render our site the necessary context

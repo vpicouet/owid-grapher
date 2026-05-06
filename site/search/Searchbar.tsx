@@ -1,20 +1,26 @@
 import { faSearch } from "@fortawesome/free-solid-svg-icons"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useCallback, useRef } from "react"
 import { SearchInput } from "./SearchInput.js"
 import { SearchActiveFilters } from "./SearchActiveFilters.js"
 import { SearchAutocomplete } from "./SearchAutocomplete.js"
 import { SearchCountrySelector } from "./SearchCountrySelector.js"
-import { FilterType } from "./searchTypes.js"
+import { FilterType } from "@ourworldindata/types"
 import { createFocusInputOnClickHandler } from "./searchUtils.js"
 import { SearchAutocompleteContextProvider } from "./SearchAutocompleteContextProvider.js"
 import { SearchResetButton } from "./SearchResetButton.js"
 import { useSearchContext } from "./SearchContext.js"
 import { useSelectedRegionNames } from "./searchHooks.js"
 
-export const Searchbar = ({ allTopics }: { allTopics: string[] }) => {
+export const Searchbar = ({
+    allTopics,
+    autoFocus,
+}: {
+    allTopics: string[]
+    autoFocus: boolean
+}) => {
     const {
-        state: { filters, query, requireAllCountries },
+        state,
         actions: {
             setQuery,
             addCountry,
@@ -22,17 +28,18 @@ export const Searchbar = ({ allTopics }: { allTopics: string[] }) => {
             removeTopic,
             toggleRequireAllCountries,
             reset,
+            removeFilter,
         },
     } = useSearchContext()
 
-    //
-    const selectedRegionNames = useSelectedRegionNames(true)
-    // Storing this in local state so that query params don't update during typing
+    const { filters, query, requireAllCountries } = state
+
+    const selectedRegionNames = useSelectedRegionNames()
+    // Storing this in local state so that query params don't update during
+    // typing. Whenever the state semantically changes, we update the local
+    // query by triggering a re-mount (see key prop on Searchbar in parent
+    // component).
     const [localQuery, setLocalQuery] = useState(query)
-    // sync local query with global query when browser navigation occurs
-    useEffect(() => {
-        setLocalQuery(query)
-    }, [query])
 
     const inputRef = useRef<HTMLInputElement>(null)
 
@@ -44,8 +51,10 @@ export const Searchbar = ({ allTopics }: { allTopics: string[] }) => {
             removeCountry(lastFilter.name)
         } else if (lastFilter.type === FilterType.TOPIC) {
             removeTopic(lastFilter.name)
+        } else {
+            removeFilter(lastFilter)
         }
-    }, [filters, removeCountry, removeTopic])
+    }, [filters, removeCountry, removeFilter, removeTopic])
 
     // Allow clicks on the search bar to focus the input. This is useful on
     // mobile when the search bar stretches vertically and reveals white space
@@ -70,6 +79,7 @@ export const Searchbar = ({ allTopics }: { allTopics: string[] }) => {
                         setLocalQuery={setLocalQuery}
                         setGlobalQuery={setQuery}
                         onBackspaceEmpty={removeLastFilter}
+                        autoFocus={autoFocus}
                         resetButton={
                             <SearchResetButton
                                 disabled={!(localQuery || filters.length)}

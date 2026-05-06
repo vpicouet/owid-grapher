@@ -4,15 +4,12 @@ import { load } from "archieml"
 import { createHash } from "crypto"
 import {
     OwidGdocPostContent,
-    TocHeadingWithTitleSupertitle,
     recursivelyMapArticleContent,
     OwidGdocStickyNavItem,
     OwidGdocType,
     checkNodeIsSpan,
     EnrichedBlockSimpleText,
     lowercaseObjectKeys,
-    OwidEnrichedGdocBlock,
-    traverseEnrichedBlock,
     ALL_CHARTS_ID,
     KEY_INSIGHTS_ID,
     RESEARCH_AND_WRITING_ID,
@@ -23,8 +20,7 @@ import {
     parseRefs,
     parseText,
 } from "./rawToEnriched.js"
-import urlSlug from "url-slug"
-import { extractUrl, parseAuthors, spansToSimpleString } from "./gdocUtils.js"
+import { extractUrl, parseAuthors } from "./gdocUtils.js"
 import { htmlToSimpleTextBlock } from "./htmlToEnriched.js"
 import { RESEARCH_AND_WRITING_DEFAULT_HEADING } from "@ourworldindata/types"
 
@@ -98,73 +94,6 @@ export function generateStickyNav(
     )
 
     return stickyNavItems
-}
-
-export function generateToc(
-    body: OwidEnrichedGdocBlock[] | undefined,
-    isTocForSidebar: boolean = false
-): TocHeadingWithTitleSupertitle[] {
-    if (!body) return []
-
-    // For linear topic pages, we record h1s & h2s
-    // For the sdg-toc, we record h2s & h3s (as it was developed before we decided to use h1s as our top level heading)
-    // It would be nice to standardise this but it would require a migration, updating CSS, updating Gdocs, etc.
-    const [primary, secondary] = isTocForSidebar ? [1, 2] : [2, 3]
-    const toc: TocHeadingWithTitleSupertitle[] = []
-
-    body.forEach((block) =>
-        traverseEnrichedBlock(block, (child) => {
-            if (child.type === "heading") {
-                const { level, text, supertitle } = child
-                const titleString = spansToSimpleString(text)
-                const supertitleString = supertitle
-                    ? spansToSimpleString(supertitle)
-                    : ""
-                if (titleString && (level === primary || level === secondary)) {
-                    toc.push({
-                        title: titleString,
-                        supertitle: supertitleString,
-                        text: titleString,
-                        slug: urlSlug(`${supertitleString} ${titleString}`),
-                        isSubheading: level === secondary,
-                    })
-                }
-            }
-            if (isTocForSidebar && child.type === "all-charts") {
-                toc.push({
-                    title: child.heading,
-                    text: child.heading,
-                    slug: ALL_CHARTS_ID,
-                    isSubheading: false,
-                })
-            }
-        })
-    )
-
-    if (isTocForSidebar) {
-        toc.push(
-            {
-                title: "Endnotes",
-                text: "Endnotes",
-                slug: "article-endnotes",
-                isSubheading: false,
-            },
-            {
-                title: "Citation",
-                text: "Citation",
-                slug: "article-citation",
-                isSubheading: false,
-            },
-            {
-                title: "Licence",
-                text: "Licence",
-                slug: "article-licence",
-                isSubheading: false,
-            }
-        )
-    }
-
-    return toc
 }
 
 export function formatCitation(
@@ -308,7 +237,11 @@ export const archieToEnriched = (
     // this property was originally named byline even though it was a comma-separated list of authors
     // once this has been deployed for a while and we've migrated the property name in all gdocs,
     // we can remove this parsed.byline vestige
-    parsed.authors = parseAuthors(parsed.byline || parsed.authors)
+    const { authors, authorRoles } = parseAuthors(
+        parsed.byline || parsed.authors
+    )
+    parsed.authors = authors
+    parsed.authorRoles = authorRoles
 
     additionalEnrichmentFunction(parsed)
 

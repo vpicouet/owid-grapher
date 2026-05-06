@@ -1,37 +1,46 @@
 import * as Sentry from "@sentry/node"
 import express from "express"
-import crypto from "crypto"
 import * as db from "../db/db.js"
-import {
-    CLOUDFLARE_AUD,
-    SECRET_KEY,
-    SESSION_COOKIE_AGE,
-    ADMIN_BASE_URL,
-    ENV,
-} from "../settings/serverSettings.js"
-import { BCryptHasher } from "../db/hashers.js"
+import { CLOUDFLARE_AUD } from "../settings/serverSettings.js"
 import * as jose from "jose"
-import { DbPlainSession, DbPlainUser, JsonError } from "@ourworldindata/utils"
+import {
+    AdminApiKeysTableName,
+    UsersTableName,
+    type DbAdminApiKey,
+} from "@ourworldindata/types"
+import { DbPlainUser } from "@ourworldindata/utils"
 import { execWrapper } from "../db/execWrapper.js"
+import { hashApiKey } from "../serverUtils/apiKey.js"
 
 export type Request = express.Request
 
-export type Response = express.Response<
-    any,
-    { user: DbPlainUser; session: Session }
->
+export type Response = express.Response<any, { user: DbPlainUser }>
 
-interface Session {
-    id: string
-    expiryDate: Date
+const API_KEY_HEADER = "authorization"
+const ACT_AS_USER_HEADER = "x-act-as-user"
+const CLOUDFLARE_COOKIE_NAME = "CF_Authorization"
+const CLOUDFLARE_TEAM_DOMAIN = "https://owid.cloudflareaccess.com"
+const DEV_ADMIN_EMAIL = "admin@example.com"
+
+// Hoist to module scope so it's created once and reused across requests.
+const jwks = jose.createRemoteJWKSet(
+    new URL(`${CLOUDFLARE_TEAM_DOMAIN}/cdn-cgi/access/certs`)
+)
+
+async function setAuthenticatedUser(
+    res: express.Response,
+    user: DbPlainUser,
+    trx: db.KnexReadWriteTransaction
+): Promise<void> {
+    res.locals.user = user
+    Sentry.setUser({
+        email: user.email,
+        username: user.fullName,
+    })
+    await updateUserLastSeen(trx, user.id)
 }
 
-const CLOUDFLARE_COOKIE_NAME = "CF_Authorization"
-
-/*
- * See authentication.php for detailed descriptions.
- */
-export async function authCloudflareSSOMiddleware(
+export async function cloudflareAuthMiddleware(
     req: express.Request,
     res: express.Response,
     next: express.NextFunction
@@ -39,8 +48,7 @@ export async function authCloudflareSSOMiddleware(
     const jwt = req.cookies[CLOUDFLARE_COOKIE_NAME]
     if (!jwt) return next()
 
-    const audTag = CLOUDFLARE_AUD
-    if (!audTag) {
+    if (!CLOUDFLARE_AUD) {
         console.error(
             "Missing or empty audience tag. Please add CLOUDFLARE_AUD key in settings."
         )
@@ -49,16 +57,11 @@ export async function authCloudflareSSOMiddleware(
 
     // Validate the JWT token using the public key from Cloudflare Access
     // see https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/#javascript-example
-    const teamDomain = "https://owid.cloudflareaccess.com"
-    const certsUrl = `${teamDomain}/cdn-cgi/access/certs`
-
-    const jwks = jose.createRemoteJWKSet(new URL(certsUrl))
-
     let verified: jose.JWTVerifyResult<jose.JWTPayload>
     try {
         verified = await jose.jwtVerify(jwt, jwks, {
-            audience: audTag,
-            issuer: teamDomain,
+            audience: CLOUDFLARE_AUD,
+            issuer: CLOUDFLARE_TEAM_DOMAIN,
         })
     } catch (err) {
         // Authorization token invalid: verification failed, token expired or wrong audience.
@@ -76,9 +79,10 @@ export async function authCloudflareSSOMiddleware(
     // Here in the middleware we don't have access to the transaction yet so we get a knexinstance manually
     const user = await db
         .knexInstance()
-        .table("users")
+        .table(UsersTableName)
         .where({ email: payload.email })
-        .first()
+        .first<DbPlainUser>()
+
     if (!user) {
         console.error(
             `User with email ${payload.email} not found. Please contact an administrator.`
@@ -86,186 +90,255 @@ export async function authCloudflareSSOMiddleware(
         return next()
     }
 
-    // Authenticate as the user stored in the token
-    const { id: sessionId } = await logInAsUser(user)
-    res.cookie("sessionid", sessionId, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: ENV !== "development",
+    await db.knexReadWriteTransaction(async (trx) => {
+        await setAuthenticatedUser(res, user, trx)
     })
-
-    // Prevents redirect to external URLs
-    return res.redirect(
-        getSafeRedirectUrl(req.query.next as string | undefined)
-    )
+    return next()
 }
 
-export async function logOut(req: express.Request, res: express.Response) {
-    if (res.locals.user)
-        await db.knexReadWriteTransaction((trx) =>
-            db.knexRaw(trx, `DELETE FROM sessions WHERE session_key = ?`, [
-                res.locals.session.id,
-            ])
-        )
-
-    res.clearCookie("sessionid")
-    res.clearCookie(CLOUDFLARE_COOKIE_NAME)
-    return res.redirect("/admin")
-}
-
-export async function authMiddleware(
+export async function apiKeyAuthMiddleware(
     req: express.Request,
     res: express.Response,
     next: express.NextFunction
 ) {
-    let user: DbPlainUser | null = null
-    let session: Session | undefined
+    if (res.locals.user) return next()
 
-    const sessionid = req.cookies["sessionid"]
-    if (sessionid) {
-        const userAndSession = await db.knexReadWriteTransaction(
-            async (trx) => {
-                // Expire old sessions
-                await db.knexRaw(
-                    trx,
-                    "DELETE FROM sessions WHERE expire_date < NOW()"
-                )
+    const apiKey = getApiKeyFromRequest(req)
+    if (!apiKey) return next()
 
-                const rows = await db.knexRaw<DbPlainSession>(
-                    trx,
-                    `SELECT * FROM sessions WHERE session_key = ?`,
-                    [sessionid]
-                )
-                if (rows.length) {
-                    const sessionData = Buffer.from(
-                        rows[0].session_data,
-                        "base64"
-                    ).toString("utf8")
-                    const sessionJson = JSON.parse(
-                        sessionData.split(":").slice(1).join(":")
-                    )
+    await db.knexReadWriteTransaction(async (trx) => {
+        const apiKeyRow = await findAdminApiKey(apiKey, trx)
+        if (!apiKeyRow) {
+            console.error("Invalid admin API key.")
+            return
+        }
 
-                    const user = await trx
-                        .table("users")
-                        .where({ email: sessionJson.user_email })
-                        .first<DbPlainUser>()
-                    if (!user)
-                        throw new JsonError(
-                            "Invalid session (no such user)",
-                            500
-                        )
-                    const session = {
-                        id: sessionid,
-                        expiryDate: rows[0].expire_date,
+        const user = await trx<DbPlainUser>(UsersTableName)
+            .where({ id: apiKeyRow.userId })
+            .first()
+
+        if (!user) {
+            console.error(
+                `User with id ${apiKeyRow.userId} not found. Please contact an administrator.`
+            )
+            return
+        }
+
+        let authenticatedUser = user
+        const actAsUserId = getActAsUserIdFromRequest(req)
+        if (!user.isSuperuser && actAsUserId !== undefined) {
+            console.error("Non-superuser attempted to use x-act-as-user.", {
+                userId: user.id,
+                actAsUserId,
+            })
+            return
+        }
+
+        if (user.isSuperuser && actAsUserId !== undefined) {
+            if (!user.isActive) {
+                console.error(
+                    "Inactive superuser attempted to use x-act-as-user.",
+                    {
+                        userId: user.id,
+                        actAsUserId,
                     }
-
-                    await trx
-                        .table("users")
-                        .where({ id: user.id })
-                        .update({ lastSeen: new Date() })
-                    return { user, session }
-                }
-                return null
+                )
+                return
             }
-        )
-        user = userAndSession?.user ?? null
-        session = userAndSession?.session
+
+            const actAsUser = await trx<DbPlainUser>(UsersTableName)
+                .where({ id: actAsUserId })
+                .first()
+            if (!actAsUser) {
+                console.error(
+                    `User with id ${actAsUserId} not found. Please contact an administrator.`
+                )
+                return
+            }
+            logActAsUser(req, user.id, actAsUserId)
+            authenticatedUser = actAsUser
+        }
+
+        await setAuthenticatedUser(res, authenticatedUser, trx)
+        await updateApiKeyLastUsed(apiKeyRow.id, trx)
+    })
+    return next()
+}
+
+export async function tailscaleAuthMiddleware(
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+) {
+    if (res.locals.user) return next()
+
+    const clientIp = getClientIp(req)
+
+    if (!clientIp) {
+        console.error("Could not determine client IP address.")
+        return next()
     }
 
+    const ipToUserMap = await getTailscaleIpToUserMap()
+
+    const githubUserName = ipToUserMap[clientIp]
+
+    if (!githubUserName) {
+        return next()
+    }
+
+    let user
+    try {
+        user = await db
+            .knexInstance()
+            .table(UsersTableName)
+            .where({ githubUsername: githubUserName })
+            .first<DbPlainUser>()
+    } catch (error) {
+        console.error(`Error looking up user by githubUsername: ${error}`)
+        return next()
+    }
+
+    if (!user) {
+        console.error(
+            `User with githubUsername ${githubUserName} not found in MySQL.`
+        )
+        return next()
+    }
+
+    await db.knexReadWriteTransaction(async (trx) => {
+        await setAuthenticatedUser(res, user, trx)
+    })
+
+    return next()
+}
+
+export async function devAuthMiddleware(
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+) {
+    if (res.locals.user) return next()
+
+    const user = await getDevAdminUser()
+    if (!user) {
+        console.error(
+            `Dev admin user ${DEV_ADMIN_EMAIL} not found. Run \`make refresh\` to seed it or create it manually.`
+        )
+        return next()
+    }
+
+    await db.knexReadWriteTransaction(async (trx) => {
+        await setAuthenticatedUser(res, user, trx)
+    })
+    return next()
+}
+
+export function requireAdminAuthMiddleware(
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+) {
     // Authed urls shouldn't be cached
     res.set("Cache-Control", "private, no-cache")
 
-    if (user?.isActive) {
-        res.locals.session = session
-        res.locals.user = user
-
-        Sentry.setUser({
-            email: user.email,
-            username: user.fullName,
-        })
-
+    if (res.locals.user?.isActive) {
         return next()
-    } else if (!req.path.startsWith("/admin") || req.path === "/admin/login")
-        return next()
-
-    return res.redirect(`/admin/login?next=${encodeURIComponent(req.url)}`)
-}
-
-function saltedHmac(salt: string, value: string): string {
-    const hmac = crypto.createHmac("sha1", salt + SECRET_KEY)
-    hmac.update(value)
-    return hmac.digest("hex")
-}
-
-// Prevents redirect to external URLs
-export function getSafeRedirectUrl(nextUrl: string | undefined) {
-    if (!nextUrl) return "/admin"
-    try {
-        const redirectUrl = new URL(nextUrl, ADMIN_BASE_URL)
-        if (!redirectUrl.pathname.startsWith("/")) {
-            throw new Error(
-                `Invalid redirect URL: ${nextUrl}. Redirecting to /admin.`
-            )
-        }
-        return redirectUrl.pathname + redirectUrl.search + redirectUrl.hash
-    } catch (err) {
-        console.error(err)
-        return "/admin"
     }
+
+    const status = res.locals.user ? 403 : 401
+    const message =
+        status === 403
+            ? "User is inactive. Please contact an administrator."
+            : "Unauthorized"
+
+    return res.status(status).send(message)
 }
 
-export async function logInAsUser(user: Pick<DbPlainUser, "email" | "id">) {
-    // Create a random string of 32 characters. Use base64url because that one's cookie-safe without any issues.
-    const sessionId = crypto
-        .randomBytes(32)
-        .toString("base64url")
-        .substring(0, 32)
-
-    const sessionJson = JSON.stringify({
-        user_email: user.email,
-    })
-    const sessionHash = saltedHmac(
-        "django.contrib.sessions.SessionStore",
-        sessionJson
-    )
-    const sessionData = Buffer.from(`${sessionHash}:${sessionJson}`).toString(
-        "base64"
-    )
-
-    const now = new Date()
-    const expiryDate = new Date(now.getTime() + 1000 * SESSION_COOKIE_AGE)
-
-    await db.knexReadWriteTransaction(async (trx) => {
-        await db.knexRaw(
-            trx,
-            `INSERT INTO sessions (session_key, session_data, expire_date) VALUES (?, ?, ?)`,
-            [sessionId, sessionData, expiryDate]
-        )
-
-        await trx
-            .table("users")
-            .where({ id: user.id })
-            .update({ lastLogin: now })
-    })
-
-    return { id: sessionId, expiryDate: expiryDate }
+export async function logOut(_req: express.Request, res: express.Response) {
+    res.clearCookie(CLOUDFLARE_COOKIE_NAME)
+    return res.redirect("/admin")
 }
 
-export async function logInWithCredentials(
-    email: string,
-    password: string
-): Promise<Session> {
-    // Here in the middleware we don't have access to the transaction yet so we get a knexinstance manually
-    const user = await db.knexInstance().table("users").where({ email }).first()
+async function getDevAdminUser(): Promise<DbPlainUser | undefined> {
+    return db.knexReadWriteTransaction(async (trx) => {
+        return await trx<DbPlainUser>(UsersTableName)
+            .where({ email: DEV_ADMIN_EMAIL })
+            .first()
+    })
+}
 
-    if (!user) throw new Error("No such user")
+function getClientIp(req: express.Request): string | undefined {
+    let ip =
+        (req.headers["x-forwarded-for"] as string) ||
+        req.socket.remoteAddress ||
+        req.ip
+    if (ip?.startsWith("::ffff:")) {
+        ip = ip.replace("::ffff:", "")
+    }
+    return ip
+}
 
-    const hasher = new BCryptHasher()
-    if (await hasher.verify(password, user.password))
-        // Login successful
-        return logInAsUser(user)
+function getApiKeyFromRequest(req: express.Request): string | undefined {
+    const authorizationHeader = req.get(API_KEY_HEADER)
+    if (!authorizationHeader) return undefined
+    const trimmed = authorizationHeader.trim()
+    if (!trimmed) return undefined
+    const bearerPrefix = "Bearer "
+    if (!trimmed.startsWith(bearerPrefix)) return undefined
+    const token = trimmed.slice(bearerPrefix.length).trim()
+    return token.length ? token : undefined
+}
 
-    throw new Error("Invalid password")
+function getActAsUserIdFromRequest(req: express.Request): number | undefined {
+    const header = req.get(ACT_AS_USER_HEADER)
+    if (!header) return undefined
+    const trimmed = header.trim()
+    if (!trimmed) return undefined
+    const parsed = Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsed) || parsed <= 0) return undefined
+    return parsed
+}
+
+function logActAsUser(
+    req: express.Request,
+    superuserId: number,
+    actAsUserId: number
+): void {
+    console.info("Admin API key act-as", {
+        superuserId,
+        actAsUserId,
+        method: req.method,
+        path: req.originalUrl,
+    })
+}
+
+async function findAdminApiKey(
+    apiKey: string,
+    trx: db.KnexReadWriteTransaction
+) {
+    const keyHash = hashApiKey(apiKey)
+    return await trx<DbAdminApiKey>(AdminApiKeysTableName)
+        .where({ keyHash })
+        .first("id", "userId")
+}
+
+async function updateApiKeyLastUsed(
+    apiKeyId: number,
+    trx: db.KnexReadWriteTransaction
+) {
+    await trx<DbAdminApiKey>(AdminApiKeysTableName)
+        .where({ id: apiKeyId })
+        .update({ lastUsedAt: new Date() })
+}
+
+async function updateUserLastSeen(
+    trx: db.KnexReadWriteTransaction,
+    userId: number
+) {
+    await trx<DbPlainUser>(UsersTableName).where({ id: userId }).update({
+        lastSeen: new Date(),
+    })
 }
 
 interface TailscaleStatus {
@@ -287,80 +360,6 @@ interface TailscaleStatus {
             LoginName?: string
         }
     }
-}
-
-export async function tailscaleAuthMiddleware(
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction
-) {
-    // If there's a sessionid in cookies, proceed to `authMiddleware` middleware
-    if (req.cookies["sessionid"]) {
-        return next()
-    }
-
-    // Extract client's IP address
-    const clientIp = getClientIp(req)
-
-    if (!clientIp) {
-        console.error("Could not determine client IP address.")
-        return next()
-    }
-
-    // Get Tailscale IP-to-User mapping
-    const ipToUserMap = await getTailscaleIpToUserMap()
-
-    // Get the Tailscale display name / github username associated with the client's IP address
-    const githubUserName = ipToUserMap[clientIp]
-
-    // Next if user is not found, user can still log in as admin
-    if (!githubUserName) {
-        return next()
-    }
-
-    let user
-    try {
-        // Look up user by 'githubUsername'
-        user = await db
-            .knexInstance()
-            .table("users")
-            .where({ githubUsername: githubUserName })
-            .first()
-    } catch (error) {
-        console.error(`Error looking up user by githubUsername: ${error}`)
-        return next()
-    }
-
-    if (!user) {
-        console.error(
-            `User with githubUsername ${githubUserName} not found in MySQL.`
-        )
-        return next()
-    }
-
-    // Authenticate as the user stored in the token
-    const { id: sessionId } = await logInAsUser(user)
-    res.cookie("sessionid", sessionId, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: ENV !== "development",
-    })
-
-    // Save the sessionid in cookies for `authMiddleware` to log us in
-    req.cookies["sessionid"] = sessionId
-
-    return next()
-}
-
-function getClientIp(req: express.Request): string | undefined {
-    let ip =
-        (req.headers["x-forwarded-for"] as string) ||
-        req.socket.remoteAddress ||
-        req.ip
-    if (ip && ip.startsWith("::ffff:")) {
-        ip = ip.replace("::ffff:", "")
-    }
-    return ip
 }
 
 async function getTailscaleIpToUserMap(): Promise<Record<string, string>> {

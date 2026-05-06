@@ -13,7 +13,7 @@ import {
     IRLineBreak,
 } from "./MarkdownTextWrap.js"
 
-describe("MarkdownTextWrap", () => {
+describe(MarkdownTextWrap, () => {
     it("heavier fontWeight should be wider than plain IRText", () => {
         const string = "abcdefghijklmnopqrstuvwxyz"
 
@@ -48,14 +48,12 @@ describe("MarkdownTextWrap", () => {
             text: "abcdefghijklmnopqrstuvwxyz",
             fontSize: 14,
             maxWidth: 200,
-            fontFamily: FontFamily["comic sans ms"],
+            fontFamily: FontFamily.Lato,
             fontWeight: 800,
         })
 
-        const output = element.renderHTML()
-
-        expect(output?.props.style).toMatchObject({
-            fontFamily: FontFamily["comic sans ms"],
+        expect(element.style).toMatchObject({
+            fontFamily: FontFamily.Lato,
             fontWeight: 800,
             fontSize: 14,
         })

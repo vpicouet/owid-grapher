@@ -1,5 +1,9 @@
 name: CI
-on: [push, pull_request]
+on:
+    pull_request:
+    push:
+        branches:
+            - master
 
 jobs:
     # Checks for prettify errors, TypeScript errors and runs vitest tests.
@@ -46,7 +50,7 @@ jobs:
             - name: Run typecheck
               run: yarn typecheck
 
-    prettier:
+    format:
         runs-on: ubuntu-latest
 
         steps:
@@ -57,10 +61,10 @@ jobs:
               with:
                   runPostinstallScripts: false
 
-            - name: Run prettier
-              run: yarn testPrettierAll
+            - name: Check formatting
+              run: yarn testFormatAll
 
-    eslint:
+    oxlint:
         runs-on: ubuntu-latest
 
         steps:
@@ -71,9 +75,8 @@ jobs:
               with:
                   runPostinstallScripts: false
 
-            - name: Run eslint
-              # the --max-warnings makes eslint exit with non-zero exit code even for warnings
-              run: yarn testLint --max-warnings=0
+            - name: Run oxlint
+              run: yarn testLint
 
     # Runs `bundlemon` on the code to see if our Vite build assets exceed a given file size.
     bundlemon:

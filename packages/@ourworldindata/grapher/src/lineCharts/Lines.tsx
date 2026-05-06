@@ -3,24 +3,36 @@ import React from "react"
 import {
     Bounds,
     PointVector,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     pointsToPath,
 } from "@ourworldindata/utils"
 import { computed, makeObservable } from "mobx"
 import { observer } from "mobx-react"
-import { GRAPHER_OPACITY_MUTE } from "../core/GrapherConstants"
 import {
     DEFAULT_LINE_COLOR,
     DEFAULT_LINE_OUTLINE_WIDTH,
     DEFAULT_MARKER_RADIUS,
     DEFAULT_STROKE_WIDTH,
-    LinesProps,
+    LINE_STYLE,
     PlacedLineChartSeries,
     RenderLineChartSeries,
 } from "./LineChartConstants"
+import { Emphasis } from "../interaction/Emphasis"
 import { getSeriesKey } from "../chart/ChartUtils"
-import { GRAPHER_BACKGROUND_DEFAULT } from "../color/ColorConstants"
+import { GRAPHER_BACKGROUND } from "../color/ColorConstants"
 import { MultiColorPolyline } from "../scatterCharts/MultiColorPolyline"
+import { DualAxis } from "../axis/Axis.js"
+
+export interface LinesProps {
+    dualAxis: DualAxis
+    series: RenderLineChartSeries[]
+    hidePoints?: boolean
+    lineStrokeWidth?: number
+    lineOutlineWidth?: number
+    markerRadius?: number
+    isStatic?: boolean
+    multiColor?: boolean
+}
 
 @observer
 export class Lines extends React.Component<LinesProps> {
@@ -41,7 +53,7 @@ export class Lines extends React.Component<LinesProps> {
         return this.props.markerRadius ?? DEFAULT_MARKER_RADIUS
     }
 
-    @computed private get strokeWidth(): number {
+    @computed private get baseStrokeWidth(): number {
         return this.props.lineStrokeWidth ?? DEFAULT_STROKE_WIDTH
     }
 
@@ -50,11 +62,16 @@ export class Lines extends React.Component<LinesProps> {
     }
 
     @computed private get outlineColor(): string {
-        return this.props.backgroundColor ?? GRAPHER_BACKGROUND_DEFAULT
+        return GRAPHER_BACKGROUND
     }
 
-    // Don't display point markers if there are very many of them for performance reasons
-    // Note that we're using circle elements instead of marker-mid because marker performance in Safari 10 is very poor for some reason
+    /**
+     * Don't display point markers if there are very many of them for
+     * performance reasons
+     *
+     * Note that we're using circle elements instead of marker-mid because
+     * marker performance in Safari 10 is very poor for some reason
+     */
     @computed private get hasMarkers(): boolean {
         if (this.props.hidePoints) return false
         const totalPoints = _.sum(
@@ -70,23 +87,14 @@ export class Lines extends React.Component<LinesProps> {
     }
 
     private seriesHasMarkers(series: RenderLineChartSeries): boolean {
-        if (
-            series.hover.background ||
-            series.isProjection ||
-            // if the series has a line, but there is another one that hasn't, then
-            // don't show markers since the plotted line is likely a smoothed version
-            (this.hasMarkersOnlySeries && !series.plotMarkersOnly)
-        )
-            return false
-        return !series.focus.background || series.hover.active
-    }
+        // Don't show markers for projected data
+        if (series.isProjection) return false
 
-    private seriesIsInForeground(series: RenderLineChartSeries): boolean {
-        return (
-            series.hover.active ||
-            series.focus.active ||
-            (series.focus.idle && series.hover.idle)
-        )
+        // If the series has a line, but there is another one that hasn't, then
+        // don't show markers since the plotted line is likely a smoothed version
+        if (this.hasMarkersOnlySeries && !series.plotMarkersOnly) return false
+
+        return series.emphasis !== Emphasis.Muted
     }
 
     private renderLine(
@@ -95,23 +103,21 @@ export class Lines extends React.Component<LinesProps> {
         if (series.plotMarkersOnly) return
         const { isProjection } = series
 
-        const isInForeground = this.seriesIsInForeground(series)
+        const style = LINE_STYLE[series.emphasis]
 
         const color = series.placedPoints[0]?.color ?? DEFAULT_LINE_COLOR
 
+        const strokeWidth = style.strokeWidthFactor * this.baseStrokeWidth
+        const strokeOpacity = style.opacity
         const strokeDasharray = isProjection ? "2,3" : undefined
-        const strokeWidth = isInForeground
-            ? this.strokeWidth
-            : 0.66 * this.strokeWidth
-        const strokeOpacity = isInForeground ? 1 : GRAPHER_OPACITY_MUTE
 
-        const showOutline = isInForeground
+        const showOutline = style.showOutline
         const outlineColor = this.outlineColor
         const outlineWidth = strokeWidth + this.outlineWidth * 2
 
         const outline = (
             <LinePath
-                id={makeIdForHumanConsumption("outline", series.displayName)}
+                id={makeFigmaId("outline", series.displayName)}
                 placedPoints={series.placedPoints}
                 stroke={outlineColor}
                 strokeWidth={outlineWidth.toFixed(1)}
@@ -120,7 +126,7 @@ export class Lines extends React.Component<LinesProps> {
 
         const line = this.props.multiColor ? (
             <MultiColorPolyline
-                id={makeIdForHumanConsumption("line", series.seriesName)}
+                id={makeFigmaId("line", series.seriesName)}
                 points={series.placedPoints}
                 strokeLinejoin="round"
                 strokeWidth={strokeWidth.toFixed(1)}
@@ -129,7 +135,7 @@ export class Lines extends React.Component<LinesProps> {
             />
         ) : (
             <LinePath
-                id={makeIdForHumanConsumption("line", series.seriesName)}
+                id={makeFigmaId("line", series.seriesName)}
                 placedPoints={series.placedPoints}
                 stroke={color}
                 strokeWidth={strokeWidth.toFixed(1)}
@@ -163,9 +169,7 @@ export class Lines extends React.Component<LinesProps> {
 
         if (hideMarkers && !forceMarkers) return
 
-        const opacity = this.seriesIsInForeground(series)
-            ? 1
-            : GRAPHER_OPACITY_MUTE
+        const opacity = LINE_STYLE[series.emphasis].opacity
 
         const outlineColor = series.plotMarkersOnly
             ? this.outlineColor
@@ -175,12 +179,10 @@ export class Lines extends React.Component<LinesProps> {
             : undefined
 
         return (
-            <g id={makeIdForHumanConsumption("datapoints", series.displayName)}>
+            <g id={makeFigmaId("datapoints", series.displayName)}>
                 {series.placedPoints.map((value, index) => (
                     <circle
-                        id={makeIdForHumanConsumption(
-                            horizontalAxis.formatTick(value.time)
-                        )}
+                        id={makeFigmaId(horizontalAxis.formatTick(value.time))}
                         key={index}
                         cx={value.x}
                         cy={value.y}
@@ -209,9 +211,7 @@ export class Lines extends React.Component<LinesProps> {
     }
 
     private renderStatic(): React.ReactElement {
-        return (
-            <g id={makeIdForHumanConsumption("lines")}>{this.renderLines()}</g>
-        )
+        return <g id={makeFigmaId("lines")}>{this.renderLines()}</g>
     }
 
     private renderInteractive(): React.ReactElement {
@@ -244,7 +244,6 @@ interface LinePathProps extends React.SVGProps<SVGPathElement> {
 
 function LinePath(props: LinePathProps): React.ReactElement {
     const { placedPoints, ...pathProps } = props
-    const coords = placedPoints.map(({ x, y }) => [x, y] as [number, number])
     return (
         <path
             fill="none"
@@ -252,7 +251,7 @@ function LinePath(props: LinePathProps): React.ReactElement {
             strokeLinejoin="round"
             stroke={DEFAULT_LINE_COLOR}
             {...pathProps}
-            d={pointsToPath(coords)}
+            d={pointsToPath(placedPoints)}
         />
     )
 }

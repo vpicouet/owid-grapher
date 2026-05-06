@@ -46,7 +46,7 @@ export function fileToBase64(
         file: Blob | RcFile,
         filename?: string
     ): string | undefined {
-        if ("name" in file) return file.name as string
+        if ("name" in file) return file.name
         return filename
     }
 
@@ -116,8 +116,9 @@ export async function fetchFigmaProvidedImageUrl(
     }
 }
 
-export function makeImageSrc(cloudflareId: string, width: number) {
-    return `${CLOUDFLARE_IMAGES_URL}/${encodeURIComponent(cloudflareId)}/w=${width}`
+export function makeImageSrc(cloudflareId: string, variant: number | "public") {
+    const suffix = typeof variant === "number" ? `w=${variant}` : "public"
+    return `${CLOUDFLARE_IMAGES_URL}/${encodeURIComponent(cloudflareId)}/${suffix}`
 }
 
 function extractIdsFromFigmaUrl(

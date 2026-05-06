@@ -1,8 +1,9 @@
 import * as _ from "lodash-es"
 import * as React from "react"
-import { OwidGdocType } from "@ourworldindata/types"
+import { OwidGdocType, ArchiveContext } from "@ourworldindata/types"
 import { OwidGdocPageProps } from "@ourworldindata/utils"
 import { match, P } from "ts-pattern"
+import { useIsClient } from "usehooks-ts"
 import { GdocPost } from "./pages/GdocPost.js"
 import { DataInsightPage } from "./pages/DataInsight.js"
 import { Fragment } from "./pages/Fragment.js"
@@ -12,27 +13,54 @@ import AboutPage from "./pages/AboutPage.js"
 import { AttachmentsContext } from "./AttachmentsContext.js"
 import { DocumentContext } from "./DocumentContext.js"
 import { AnnouncementPage } from "./pages/Announcement.js"
+import { Profile } from "./pages/Profile.js"
+import { ADMIN_BASE_URL } from "../../settings/clientSettings.js"
+import { CookieKey } from "@ourworldindata/grapher"
+import { SiteQueryClientProvider } from "../SiteQueryClientProvider.js"
 
-function AdminLinks() {
+type OwidGdocProps = OwidGdocPageProps & {
+    isPreviewing?: boolean
+    archiveContext?: ArchiveContext
+}
+
+function hasAdminCookie(): boolean {
+    try {
+        return document.cookie.includes(CookieKey.isAdmin)
+    } catch {
+        return false
+    }
+}
+
+function AdminLinks({ id }: Pick<OwidGdocPageProps, "id">) {
+    const isClient = useIsClient()
+    if (!isClient || !id || !hasAdminCookie()) return null
+
     return (
-        <div id="gdoc-admin-bar">
-            <a href="#" id="gdoc-link">
+        <div className="gdoc-admin-bar">
+            <a
+                href={`https://docs.google.com/document/d/${id}/edit`}
+                id="gdoc-link"
+                target="_blank"
+                rel="noopener"
+            >
                 Gdoc
             </a>
             <span>/</span>
-            <a href="#" id="admin-link">
+            <a
+                href={`${ADMIN_BASE_URL}/admin/gdocs/${id}/preview`}
+                id="admin-link"
+                target="_blank"
+                rel="noopener"
+            >
                 Admin
             </a>
         </div>
     )
 }
 
-type OwidGdocProps = OwidGdocPageProps & {
-    isPreviewing?: boolean
-}
-
 export function OwidGdoc({
     isPreviewing = false,
+    archiveContext,
     ...props
 }: OwidGdocProps): React.ReactElement {
     const content = match(props)
@@ -65,6 +93,9 @@ export function OwidGdoc({
         ))
         .with({ content: { type: OwidGdocType.Fragment } }, (props) => (
             <Fragment {...props} />
+        ))
+        .with({ content: { type: OwidGdocType.Profile } }, (props) => (
+            <Profile {...props} />
         ))
         .with(P.any, (gdoc) => (
             <div
@@ -99,13 +130,17 @@ export function OwidGdoc({
                     "linkedNarrativeCharts",
                     {}
                 ),
+                linkedStaticViz: _.get(props, "linkedStaticViz", {}),
+                linkedCallouts: _.get(props, "linkedCallouts", {}),
                 // lodash doesn't use fallback when value is null
                 tags: props.tags ?? [],
             }}
         >
-            <DocumentContext.Provider value={{ isPreviewing }}>
-                <AdminLinks />
-                {content}
+            <DocumentContext.Provider value={{ isPreviewing, archiveContext }}>
+                <SiteQueryClientProvider>
+                    <AdminLinks id={props.id} />
+                    {content}
+                </SiteQueryClientProvider>
             </DocumentContext.Provider>
         </AttachmentsContext.Provider>
     )

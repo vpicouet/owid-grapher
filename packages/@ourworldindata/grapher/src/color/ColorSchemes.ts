@@ -94,6 +94,7 @@ function getPreferredSchemesByType(
             ColorSchemeName.BinaryMapPaletteC,
             ColorSchemeName.BinaryMapPaletteD,
             ColorSchemeName.BinaryMapPaletteE,
+            ColorSchemeName.OwidCategoricalMap,
         ])
         .exhaustive()
 }
@@ -103,7 +104,8 @@ const initColorScheme = (scheme: ColorSchemeInterface): ColorScheme =>
         scheme.displayName ?? scheme.name,
         scheme.colorSets,
         scheme.singleColorScale,
-        scheme.isDistinct
+        scheme.isDistinct,
+        scheme.colorMap
     )
 
 const _colorSchemes = new Map<ColorSchemeName, ColorScheme>()

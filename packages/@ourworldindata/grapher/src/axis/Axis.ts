@@ -18,16 +18,15 @@ import {
 import { ComparisonLineConfig } from "@ourworldindata/types"
 import { AxisConfig, AxisManager } from "./AxisConfig"
 import { MarkdownTextWrap } from "@ourworldindata/components"
-import { ColumnTypeMap, CoreColumn } from "@ourworldindata/core-table"
+import { CoreColumn } from "@ourworldindata/core-table"
 import {
     DEFAULT_GRAPHER_BOUNDS,
-    GRAPHER_FONT_SCALE_10_5,
     GRAPHER_FONT_SCALE_11,
     GRAPHER_FONT_SCALE_12,
 } from "../core/GrapherConstants.js"
-import { makeAxisLabel } from "../chart/ChartUtils"
+import { makeAxisLabel } from "./AxisUtils.js"
 import * as R from "remeda"
-import { isValidVerticalComparisonLineConfig } from "../comparisonLine/ComparisonLineHelpers"
+import { ComparisonLines } from "../comparisonLine/ComparisonLines"
 
 interface TickLabelPlacement {
     value: number
@@ -321,22 +320,21 @@ abstract class AbstractAxis {
         if (this.config.ticks) {
             // If custom ticks are supplied, use them without any transformations or additions.
             const [minValue, maxValue] = d3_scale.domain()
-            return (
-                this.config.ticks
-                    // replace ±Infinity with minimum/maximum
-                    .map((tick) => {
-                        if (tick.value === -Infinity)
-                            return { ...tick, value: minValue }
-                        if (tick.value === Infinity)
-                            return { ...tick, value: maxValue }
-                        return tick
-                    })
-                    // filter out custom ticks outside the plottable area
-                    .filter(
-                        (tick) =>
-                            tick.value >= minValue && tick.value <= maxValue
-                    )
-            )
+            const processedTicks = this.config.ticks
+                // replace ±Infinity with minimum/maximum
+                .map((tick) => {
+                    if (tick.value === -Infinity)
+                        return { ...tick, value: minValue }
+                    if (tick.value === Infinity)
+                        return { ...tick, value: maxValue }
+                    return tick
+                })
+                // filter out custom ticks outside the plottable area
+                .filter(
+                    (tick) => tick.value >= minValue && tick.value <= maxValue
+                )
+
+            return _.uniqBy(processedTicks, (tick) => tick.value)
         } else if (this.isLogScale) {
             // Show a bit more ticks for log axes
             const maxLabelledTicks = Math.round(this.totalTicksTarget * 1.25)
@@ -385,16 +383,16 @@ abstract class AbstractAxis {
 
             if (ticks.length > maxLabelledTicks) {
                 if (ticks.length <= maxTicks) {
-                    // Convert all "in-between" lines to faint grid lines without labels
-                    ticks = ticks.map((tick) => {
-                        if (tick.priority === 3)
-                            tick = {
-                                ...tick,
-                                faint: true,
-                                gridLineOnly: true,
-                            }
-                        return tick
-                    })
+                    // Convert all "in-between" lines to faint grid lines without labels,
+                    // but only do so if there are at least 2 labelled ticks
+                    const priorityTicks = ticks.filter((t) => t.priority < 3)
+                    if (priorityTicks.length >= 2) {
+                        ticks = ticks.map((tick) =>
+                            tick.priority === 3
+                                ? { ...tick, faint: true, gridLineOnly: true }
+                                : tick
+                        )
+                    }
                 } else {
                     // Remove some tickmarks again because the chart would get too overwhelming
                     // otherwise
@@ -422,7 +420,7 @@ abstract class AbstractAxis {
             ticks = ticks.filter((t) => t.value % 1 === 0)
 
         // mark value=0 ticks as solid for non-time columns
-        if (!(this.formatColumn instanceof ColumnTypeMap.Time)) {
+        if (!this.formatColumn?.isTimeColumn) {
             ticks = ticks.map((tick) =>
                 tick.value === 0 ? { ...tick, solid: true } : tick
             )
@@ -503,7 +501,11 @@ abstract class AbstractAxis {
             console.error(`Placed value is undefined for ${value}`)
             return value
         }
-        return parseFloat(placedValue.toFixed(1))
+        return this.snapToSubpixel(placedValue)
+    }
+
+    snapToSubpixel(value: number): number {
+        return parseFloat(value.toFixed(1))
     }
 
     /** This function returns the inverse of place - i.e. given a screen space
@@ -553,8 +555,7 @@ abstract class AbstractAxis {
 
         const axisLabel = makeAxisLabel({
             label: this.label,
-            unit: this.formatColumn?.unit,
-            shortUnit: this.formatColumn?.shortUnit,
+            displayUnit: this.formatColumn?.displayUnit,
         })
 
         const logScaleNotice = "plotted on a logarithmic axis"
@@ -864,7 +865,8 @@ interface DualAxisProps {
 // e.g. if the y axis becomes wider because a label is present, the x axis then has less
 // space to work with, and vice versa
 export class DualAxis {
-    private props: DualAxisProps
+    private readonly props: DualAxisProps
+
     constructor(props: DualAxisProps) {
         makeObservable(this)
         this.props = props
@@ -909,7 +911,7 @@ export class DualAxis {
                 // Make space for the y-axis label if plotted above the axis
                 .padTop(this.props.verticalAxis.labelOffsetTop)
                 // Make space for vertical comparison line labels if any
-                .padTop(this.comparisonLineLabelOffset)
+                .padTop(this.comparisonLines.topPadding)
                 .padTop(
                     this.shouldShowLogNotice
                         ? this.props.verticalAxis.logNoticeHeight
@@ -922,24 +924,11 @@ export class DualAxis {
         return this.props.bounds ?? DEFAULT_GRAPHER_BOUNDS
     }
 
-    @computed get comparisonLines(): ComparisonLineConfig[] {
-        return this.props.comparisonLines ?? []
-    }
-
-    @computed get comparisonLineLabelFontSize(): number {
-        return Math.floor(
-            GRAPHER_FONT_SCALE_10_5 * this.props.verticalAxis.fontSize
-        )
-    }
-
-    @computed private get comparisonLineLabelOffset(): number {
-        const hasVerticalComparisonLines = this.comparisonLines.some((line) =>
-            isValidVerticalComparisonLineConfig(line)
-        )
-
-        if (!hasVerticalComparisonLines) return 0
-
-        return this.comparisonLineLabelFontSize
+    @computed get comparisonLines(): ComparisonLines {
+        return new ComparisonLines(this.props.comparisonLines ?? [], {
+            dualAxis: this,
+            fontSize: this.props.verticalAxis.fontSize,
+        })
     }
 
     @computed private get shouldShowLogNotice(): boolean {

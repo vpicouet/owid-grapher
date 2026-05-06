@@ -1,23 +1,20 @@
-import {
-    GrapherInterface,
-    OwidVariableDataMetadataDimensions,
-    ArchiveContext,
-    OwidVariableId,
-} from "@ourworldindata/types"
+import { GrapherInterface, ArchiveContext } from "@ourworldindata/types"
 import React from "react"
 import { Grapher, GrapherProgrammaticInterface } from "./Grapher.js"
-import { loadVariableDataAndMetadata } from "./loadVariable.js"
+import { Bounds } from "@ourworldindata/utils"
 import { fetchInputTableForConfig } from "./loadGrapherTableHelpers.js"
 import { legacyToCurrentGrapherQueryParams } from "./GrapherUrlMigrations.js"
 import { unstable_batchedUpdates } from "react-dom"
-import { Bounds } from "@ourworldindata/utils"
 import { migrateGrapherConfigToLatestVersion } from "../schema/migrations/migrate.js"
-import { useMaybeGlobalGrapherStateRef } from "../chart/GuidedChartUtils.js"
+import { useMaybeGlobalGrapherStateRef } from "../chart/guidedChartUtils.js"
+import { loadCatalogData } from "./loadCatalogData.js"
+import { useIsomorphicLayoutEffect } from "usehooks-ts"
 
 export interface FetchingGrapherProps {
     config?: GrapherProgrammaticInterface
     configUrl?: string
     dataApiUrl: string
+    catalogUrl: string
     archiveContext: ArchiveContext | undefined
     queryStr?: string
     externalBounds?: Bounds
@@ -35,18 +32,22 @@ export function FetchingGrapher(
 
     const grapherState = useMaybeGlobalGrapherStateRef({
         ...props.config,
-        additionalDataLoaderFn: (
-            varId: OwidVariableId
-        ): Promise<OwidVariableDataMetadataDimensions> =>
-            loadVariableDataAndMetadata(varId, props.dataApiUrl, {
-                noCache: props.noCache,
+        additionalDataLoaderFn: (catalogKey) =>
+            loadCatalogData(catalogKey, {
+                baseUrl: props.catalogUrl,
+                assetMap:
+                    props.archiveContext?.type === "archive-page"
+                        ? props.archiveContext.assets.runtime
+                        : undefined,
             }),
         queryStr: props.queryStr,
         bounds: props.externalBounds,
         isConfigReady: !props.configUrl,
     })
 
-    React.useEffect(() => {
+    // Keep the MobX state in sync before paint so Grapher doesn't render a
+    // frame at stale/default bounds.
+    useIsomorphicLayoutEffect(() => {
         if (props.externalBounds) {
             grapherState.current.externalBounds = props.externalBounds
         }
@@ -61,7 +62,7 @@ export function FetchingGrapher(
     React.useEffect(() => {
         const abortController = new AbortController()
 
-        async function fetchConfigAndLoadData(): Promise<void> {
+        async function fetchAndApplyConfig(): Promise<void> {
             if (props.configUrl) {
                 try {
                     const fetchedConfig = await fetch(props.configUrl, {
@@ -106,7 +107,7 @@ export function FetchingGrapher(
                 }
             }
         }
-        void fetchConfigAndLoadData()
+        void fetchAndApplyConfig()
 
         return (): void => {
             abortController.abort()
@@ -115,6 +116,8 @@ export function FetchingGrapher(
 
     React.useEffect(() => {
         let isCancelled = false
+
+        grapherState.current.isDataReady = false
 
         async function fetchData(): Promise<void> {
             const inputTable = await fetchInputTableForConfig({
@@ -131,6 +134,8 @@ export function FetchingGrapher(
             if (isCancelled) return
 
             if (inputTable) grapherState.current.inputTable = inputTable
+
+            grapherState.current.isDataReady = true
         }
         void fetchData()
 
@@ -148,5 +153,14 @@ export function FetchingGrapher(
         grapherState,
     ])
 
-    return <Grapher grapherState={grapherState.current} />
+    return (
+        <Grapher
+            // Force remount when the slug changes to make sure the GA
+            // grapher_view event is fired when navigating between different
+            // graphers using the same FetchingGrapher instance (e.g. in the
+            // All charts block)
+            key={grapherState.current.slug}
+            grapherState={grapherState.current}
+        />
+    )
 }

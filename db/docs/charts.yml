@@ -24,6 +24,8 @@ fields:
         description: Foreign key to chart_configs table. Charts store their configuration separately to enable inheritance and efficient updates. The chart_configs table contains the actual config, the slug of the chart etc., so in many queries, these two tables have to be joined.
     isInheritanceEnabled:
         description: When true, chart inherits configuration from parent variable's grapherConfigIdAdmin or grapherConfigIdETL. This allows variables to define default chart settings that are automatically applied to all inheriting charts.
+    forceDatapage:
+        description: When true, force rendering this chart as a data page using metadata from the first Y indicator.
     createdAt:
         description: Timestamp when the chart was created
     updatedAt:
@@ -36,5 +38,3 @@ fields:
         description: Foreign key to users table. Tracks who last made substantive edits to the chart.
     publishedByUserId:
         description: Foreign key to users table. Tracks who published the chart.
-    isIndexable:
-        description: Whether the chart should be indexed by search engines and appear in search results. Charts are indexable if not tagged 'Unlisted' and have at least one public parent tag.

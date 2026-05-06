@@ -17,9 +17,9 @@ export const GRAPHER_ROUTE_FOLDER = "grapher"
 
 export const GRAPHER_PAGE_BODY_CLASS = "StandaloneGrapherOrExplorerPage"
 export const GRAPHER_IS_IN_IFRAME_CLASS = "IsInIframe"
-export const GRAPHER_TIMELINE_CLASS = "timeline-component"
+export const GRAPHER_TIMELINE_CLASS = "GrapherTimeline"
 export const GRAPHER_SIDE_PANEL_CLASS = "side-panel"
-export const GRAPHER_SETTINGS_CLASS = "settings-menu-contents"
+export const GRAPHER_SETTINGS_CLASS = "GrapherSettingsPopover"
 
 // The Figma plugin uses these class names to identify sections of the chart
 export const GRAPHER_CHART_AREA_CLASS = "chart-area"
@@ -37,6 +37,10 @@ export const DEFAULT_GRAPHER_HEIGHT = 600
 // Keep in sync with $grapher-thumbnail-width and $grapher-thumbnail-height in Grapher.scss
 export const GRAPHER_THUMBNAIL_WIDTH = 300
 export const GRAPHER_THUMBNAIL_HEIGHT = 160
+
+// Image widths used for generating srcSet (1x and 2x for high-DPI displays)
+export const GRAPHER_IMAGE_WIDTH_1X = 850
+export const GRAPHER_IMAGE_WIDTH_2X = 1700
 
 export const GRAPHER_SQUARE_SIZE = 540
 
@@ -59,13 +63,11 @@ export const GRAPHER_FRAME_PADDING_HORIZONTAL = 16
 
 export const STATIC_EXPORT_DETAIL_SPACING = 8
 
-export const GRAPHER_OPACITY_MUTE = 0.5
+export const GRAPHER_OPACITY_MUTED = 0.5
 
 export const GRAPHER_AREA_OPACITY_DEFAULT = 0.8
-export const GRAPHER_AREA_OPACITY_MUTE = 0.3
-export const GRAPHER_AREA_OPACITY_FOCUS = 1
-
-export const GRAPHER_TEXT_OUTLINE_FACTOR = 0.25
+export const GRAPHER_AREA_OPACITY_MUTED = 0.3
+export const GRAPHER_AREA_OPACITY_HIGHLIGHTED = 1
 
 export const BASE_FONT_SIZE = 16
 
@@ -78,6 +80,7 @@ export const GRAPHER_FONT_SCALE_12 = 12 / BASE_FONT_SIZE
 export const GRAPHER_FONT_SCALE_12_8 = 12.8 / BASE_FONT_SIZE
 export const GRAPHER_FONT_SCALE_13 = 13 / BASE_FONT_SIZE
 export const GRAPHER_FONT_SCALE_14 = 14 / BASE_FONT_SIZE
+export const GRAPHER_FONT_SCALE_18 = 18 / BASE_FONT_SIZE
 
 // keep in sync with $max-tooltip-width in Tooltip.scss
 export const GRAPHER_MAX_TOOLTIP_WIDTH = 400
@@ -95,8 +98,7 @@ export const isWorldEntityName = (entityName: EntityName): boolean =>
 
 export const CONTINENTS_INDICATOR_ID = 900801 // "Countries Continent"
 export const POPULATION_INDICATOR_ID_USED_IN_ADMIN = 953899 // "Population (various sources, 2024-07-15)"
-export const POPULATION_INDICATOR_ID_USED_IN_ENTITY_SELECTOR = 953903 // "Population (historical) (various sources, 2024-07-15)"
-export const GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ENTITY_SELECTOR = 900793 // "GDP per capita - Maddison Project Database (2024-04-26)"
+export const GDP_PER_CAPITA_INDICATOR_ID_USED_IN_ADMIN = 1204826 // "GDP per capita, PPP (constant 2021 international $)"
 
 export const isContinentsVariableId = (id: string | number): boolean =>
     id.toString() === CONTINENTS_INDICATOR_ID.toString()
@@ -109,20 +111,19 @@ const population_regex =
     /^grapher\/demography\/[\d-]+\/population\/(population#population|historical#population_historical)$/
 
 /**
- * Manually configured list of sources that define geographic regions.
+ * Manually configured list of providers that define geographic regions.
  *
- * By convention, entities are named with the format 'RegionName (Source)',
+ * By convention, entities are named with the format 'RegionName (Provider)',
  * such as 'Africa (UN)' or 'Africa (FAO)'.
  *
- * These source identifiers are used to compile group of regions for the
+ * These provider identifiers are used to compile groups of regions for the
  * filter dropdown in the entity selector and on the data tab.
  *
  * Ideally, all regions would be defined in the ETL's regions file,
  * but currently we need to maintain this manual configuration until the
  * regions file is more complete.
  */
-export const CUSTOM_REGION_SOURCE_IDS = [
-    "un",
+export const ADDITIONAL_REGION_DATA_PROVIDERS = [
     "fao",
     "ei",
     "pip",
@@ -134,7 +135,14 @@ export const CUSTOM_REGION_SOURCE_IDS = [
     "undp",
     "wid",
     "oecd",
+    "unsd",
+    "unm49",
+    "maddison",
+    "ilo",
 ] as const
+
+export type AdditionalRegionDataProvider =
+    (typeof ADDITIONAL_REGION_DATA_PROVIDERS)[number]
 
 export const isPopulationVariableETLPath = (path: string): boolean => {
     return population_regex.test(path)
@@ -162,5 +170,13 @@ export enum GrapherModal {
     Embed = "embed",
 }
 
-export const CHART_TYPES_THAT_SWITCH_TO_DISCRETE_BAR_WHEN_SINGLE_TIME: GrapherChartType[] =
-    [GRAPHER_CHART_TYPES.LineChart, GRAPHER_CHART_TYPES.SlopeChart]
+export const CHART_TYPES_THAT_SHOW_ALL_ENTITIES: GrapherChartType[] = [
+    GRAPHER_CHART_TYPES.ScatterPlot,
+    GRAPHER_CHART_TYPES.Marimekko,
+]
+
+export interface FontSettings {
+    fontSize: number
+    fontWeight: number
+    lineHeight: number
+}

@@ -15,6 +15,13 @@ import { OriginList } from "./OriginList.js"
 import { SourceList } from "./SourceList.js"
 import { VariableList, VariableListItem } from "./VariableList.js"
 import {
+    BAKED_BASE_URL,
+    GRAPHER_DYNAMIC_THUMBNAIL_URL,
+    EXPLORER_DYNAMIC_THUMBNAIL_URL,
+    BAKED_GRAPHER_URL,
+} from "../settings/clientSettings.js"
+import { EXPLORERS_ROUTE_FOLDER } from "@ourworldindata/explorer"
+import {
     SearchWord,
     buildSearchWordsFromSearchString,
     filterFunctionForSearchWords,
@@ -22,10 +29,34 @@ import {
 } from "../adminShared/search.js"
 import { AdminAppContext, AdminAppContextType } from "./AdminAppContext.js"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faDownload, faHatWizard } from "@fortawesome/free-solid-svg-icons"
-import { ETL_WIZARD_URL } from "../settings/clientSettings.js"
-import { Button } from "antd"
-import urljoin from "url-join"
+import {
+    faDownload,
+    faMagnifyingGlass,
+    faChartColumn,
+} from "@fortawesome/free-solid-svg-icons"
+import { Button, Divider, Space, Typography } from "antd"
+
+interface ExplorerListItem {
+    slug: string
+    title: string | null
+    isPublished: boolean
+    createdAt: string
+    lastEditedAt: string
+    lastEditedByUserName: string | null
+    pageviewsPerDay: number
+}
+
+interface MultiDimListItem {
+    id: number
+    slug: string | null
+    catalogPath: string
+    title: string | null
+    titleVariant: string | null
+    published: boolean
+    createdAt: string
+    updatedAt: string
+    grapherViewsPerDay: number
+}
 
 interface DatasetPageData {
     id: number
@@ -47,13 +78,15 @@ interface DatasetPageData {
     metadataEditedByUserId: number
     metadataEditedByUserName: string
 
-    availableTags: { id: number; name: string; parentName: string }[]
+    availableTags: { id: number; name: string }[]
     tags: { id: number; name: string }[]
     variables: VariableListItem[]
     charts: ChartListItem[]
     variableSources: OwidSource[]
 
     origins: OwidOrigin[]
+    explorers: ExplorerListItem[]
+    multiDims: MultiDimListItem[]
 }
 
 class DatasetEditable {
@@ -94,12 +127,241 @@ class DatasetEditable {
     }
 }
 
+interface ExplorerListProps {
+    explorers: ExplorerListItem[]
+}
+
+@observer
+class ExplorerList extends Component<ExplorerListProps> {
+    constructor(props: ExplorerListProps) {
+        super(props)
+        makeObservable(this)
+    }
+
+    override render() {
+        const { explorers } = this.props
+
+        if (explorers.length === 0) {
+            return <p>No explorers use variables from this dataset.</p>
+        }
+
+        return (
+            <table className="table table-bordered">
+                <thead>
+                    <tr>
+                        <th className="table-preview-col">Preview</th>
+                        <th>Slug</th>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Views per day</th>
+                        <th>Last updated</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {explorers.map((explorer) => (
+                        <tr key={explorer.slug}>
+                            <td className="table-preview-col table-preview-col--centered">
+                                {explorer.isPublished ? (
+                                    <a
+                                        href={`${BAKED_BASE_URL}/${EXPLORERS_ROUTE_FOLDER}/${explorer.slug}`}
+                                    >
+                                        <img
+                                            src={`${EXPLORER_DYNAMIC_THUMBNAIL_URL}/${explorer.slug}.png`}
+                                            width={850}
+                                            height={600}
+                                            className="chartPreview"
+                                        />
+                                    </a>
+                                ) : null}
+                            </td>
+                            <td>
+                                <Link
+                                    native
+                                    to={`/${EXPLORERS_ROUTE_FOLDER}/${explorer.slug}`}
+                                >
+                                    {explorer.slug}
+                                </Link>
+                            </td>
+                            <td>{explorer.title || <em>No title</em>}</td>
+                            <td>
+                                {explorer.isPublished ? (
+                                    <a
+                                        href={`${BAKED_BASE_URL}/${EXPLORERS_ROUTE_FOLDER}/${explorer.slug}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >
+                                        Published
+                                    </a>
+                                ) : (
+                                    <span className="text-secondary">
+                                        Unpublished
+                                    </span>
+                                )}
+                            </td>
+                            <td>
+                                {explorer.pageviewsPerDay?.toLocaleString() ??
+                                    "0"}
+                            </td>
+                            <td>
+                                <Timeago
+                                    time={explorer.lastEditedAt}
+                                    by={explorer.lastEditedByUserName}
+                                />
+                            </td>
+                            <td>
+                                <Timeago time={explorer.createdAt} />
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        )
+    }
+}
+
+interface MultiDimListProps {
+    multiDims: MultiDimListItem[]
+}
+
+/**
+ * Helper function to extract directory path from catalog path
+ * Example: "health/latest/vaccination_coverage#vaccination_coverage" -> "health/latest"
+ */
+function getGitHubPathFromCatalogPath(catalogPath: string): string | null {
+    // Remove everything after and including the # if present
+    const pathWithoutFragment = catalogPath.split("#")[0]
+    // Get directory path (everything before the last /)
+    const parts = pathWithoutFragment.split("/")
+    return parts.slice(0, -1).join("/")
+}
+
+@observer
+class MultiDimList extends Component<MultiDimListProps> {
+    constructor(props: MultiDimListProps) {
+        super(props)
+        makeObservable(this)
+    }
+
+    override render() {
+        const { multiDims } = this.props
+
+        if (multiDims.length === 0) {
+            return (
+                <p>
+                    No multi-dimensional data pages use variables from this
+                    dataset.
+                </p>
+            )
+        }
+
+        return (
+            <table className="table table-bordered">
+                <thead>
+                    <tr>
+                        <th className="table-preview-col">Preview</th>
+                        <th>Slug</th>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Grapher views/day</th>
+                        <th>Last updated</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {multiDims.map((mdim) => (
+                        <tr key={mdim.id}>
+                            <td className="table-preview-col table-preview-col--centered">
+                                {mdim.published && mdim.slug ? (
+                                    <a
+                                        href={`${BAKED_GRAPHER_URL}/${mdim.slug}`}
+                                    >
+                                        <img
+                                            src={`${GRAPHER_DYNAMIC_THUMBNAIL_URL}/${mdim.slug}.png`}
+                                            height={600}
+                                            width={850}
+                                            className="chartPreview"
+                                        />
+                                    </a>
+                                ) : null}
+                            </td>
+                            <td>
+                                {mdim.slug ? (
+                                    (() => {
+                                        const githubPath =
+                                            getGitHubPathFromCatalogPath(
+                                                mdim.catalogPath
+                                            )
+                                        return githubPath ? (
+                                            <a
+                                                href={`https://github.com/owid/etl/tree/master/etl/steps/export/multidim/${githubPath}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                            >
+                                                {mdim.slug}
+                                            </a>
+                                        ) : (
+                                            mdim.slug
+                                        )
+                                    })()
+                                ) : (
+                                    <em>No slug</em>
+                                )}
+                            </td>
+                            <td>
+                                {mdim.title ? (
+                                    <>
+                                        {mdim.title}
+                                        {mdim.titleVariant && (
+                                            <>, {mdim.titleVariant}</>
+                                        )}
+                                    </>
+                                ) : (
+                                    <em>No title</em>
+                                )}
+                            </td>
+                            <td>
+                                {mdim.published ? (
+                                    mdim.slug ? (
+                                        <a
+                                            href={`${BAKED_GRAPHER_URL}/${mdim.slug}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            Published
+                                        </a>
+                                    ) : (
+                                        "Published"
+                                    )
+                                ) : (
+                                    <span className="text-secondary">
+                                        Unpublished
+                                    </span>
+                                )}
+                            </td>
+                            <td>
+                                {mdim.grapherViewsPerDay?.toLocaleString() ??
+                                    "0"}
+                            </td>
+                            <td>
+                                <Timeago time={mdim.updatedAt} />
+                            </td>
+                            <td>
+                                <Timeago time={mdim.createdAt} />
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        )
+    }
+}
+
 interface DatasetTagEditorProps {
     newDataset: DatasetEditable
     availableTags: {
         id: number
         name: string
-        parentName: string
     }[]
 }
 
@@ -199,22 +461,27 @@ class DatasetEditor extends Component<DatasetEditorProps> {
     }
 
     @computed get collectionUrl(): string | null {
-        const { dataset } = this.props
-        const publishedCharts = dataset.charts.filter(
-            (chart) => chart.isPublished
-        )
-
+        const { publishedCharts } = this
         if (publishedCharts.length === 0) {
             return null
         }
 
         // Sort by pageviews descending (most views first)
         const sortedSlugs = publishedCharts
-            .sort((a, b) => b.pageviewsPerDay - a.pageviewsPerDay)
+            .sort((a, b) => b.grapherViewsPerDay - a.grapherViewsPerDay)
             .map((chart) => chart.slug)
 
         const chartsParam = sortedSlugs.join("+")
         return `https://ourworldindata.org/collection/custom?charts=${chartsParam}`
+    }
+
+    @computed get publishedCharts(): ChartListItem[] {
+        const { dataset } = this.props
+        return dataset.charts.filter((chart) => chart.isPublished)
+    }
+
+    @computed get hasPublishedCharts(): boolean {
+        return this.publishedCharts.length > 0
     }
 
     @action.bound onSearchInput(input: string) {
@@ -414,6 +681,22 @@ class DatasetEditor extends Component<DatasetEditorProps> {
                     </section>
                 )
 
+            case "explorers":
+                return (
+                    <section>
+                        <h3>Explorers</h3>
+                        <ExplorerList explorers={dataset.explorers} />
+                    </section>
+                )
+
+            case "multiDims":
+                return (
+                    <section>
+                        <h3>Multi-dimensional data pages</h3>
+                        <MultiDimList multiDims={dataset.multiDims} />
+                    </section>
+                )
+
             case "settings":
                 return (
                     <section>
@@ -472,10 +755,33 @@ class DatasetEditor extends Component<DatasetEditorProps> {
         const { activeTab } = this
         const tabs = [
             { key: "metadata", label: "Metadata" },
-            { key: "indicators", label: "Indicators" },
-            { key: "charts", label: "Charts" },
-            { key: "settings", label: "Settings" },
+            {
+                key: "indicators",
+                label: `Indicators (${dataset.variables.length})`,
+            },
+            { key: "charts", label: `Charts (${dataset.charts.length})` },
         ]
+
+        // Add explorers tab only if there are explorers
+        if (dataset.explorers && dataset.explorers.length > 0) {
+            tabs.push({
+                key: "explorers",
+                label: `Explorers (${dataset.explorers.length})`,
+            })
+        }
+
+        // Add multi-dims tab only if there are multi-dims
+        if (dataset.multiDims && dataset.multiDims.length > 0) {
+            tabs.push({
+                key: "multiDims",
+                label: `Multi-dims (${dataset.multiDims.length})`,
+            })
+        }
+
+        tabs.push({ key: "settings", label: "Settings" })
+        const searchUrl = `${BAKED_BASE_URL}/search?${new URLSearchParams({
+            datasetProducts: dataset.name,
+        })}`
 
         return (
             <main className="DatasetEditPage">
@@ -508,41 +814,56 @@ class DatasetEditor extends Component<DatasetEditorProps> {
                         />
                     </p>
 
-                    <Link
-                        native
-                        to={`/datasets/${dataset.id}.csv`}
-                        className="btn btn-primary"
-                    >
-                        <FontAwesomeIcon icon={faDownload} /> Download CSV
-                    </Link>
-                    {/* Link to Wizard dataset preview */}
-                    <a
-                        href={urljoin(
-                            ETL_WIZARD_URL,
-                            `datasets?datasetId=${dataset.id}`
-                        )}
-                        target="_blank"
-                        className="btn btn-tertiary"
-                        rel="noopener"
-                    >
+                    <Space>
                         <Button
-                            type="default"
-                            icon={<FontAwesomeIcon icon={faHatWizard} />}
+                            type="primary"
+                            size="middle"
+                            href={`/admin/datasets/${dataset.id}.csv`}
+                            icon={<FontAwesomeIcon icon={faDownload} />}
                         >
-                            Explore in Wizard
+                            Download CSV
                         </Button>
-                    </a>
-                    {/* Link to view all published charts in a collection */}
-                    {this.collectionUrl && (
-                        <a
-                            href={this.collectionUrl}
-                            target="_blank"
-                            className="btn btn-secondary"
-                            rel="noopener"
-                        >
-                            View all published charts
-                        </a>
-                    )}
+                        {this.hasPublishedCharts && (
+                            <>
+                                <Divider type="vertical" />
+                                <Space size={0}>
+                                    <Typography.Text type="secondary">
+                                        View published charts:
+                                    </Typography.Text>
+                                    <Button
+                                        type="text"
+                                        size="middle"
+                                        href={searchUrl}
+                                        target="_blank"
+                                        rel="noopener"
+                                        icon={
+                                            <FontAwesomeIcon
+                                                icon={faMagnifyingGlass}
+                                            />
+                                        }
+                                    >
+                                        in search
+                                    </Button>
+                                    {this.collectionUrl && (
+                                        <Button
+                                            type="text"
+                                            size="middle"
+                                            href={this.collectionUrl}
+                                            target="_blank"
+                                            rel="noopener"
+                                            icon={
+                                                <FontAwesomeIcon
+                                                    icon={faChartColumn}
+                                                />
+                                            }
+                                        >
+                                            in collection
+                                        </Button>
+                                    )}
+                                </Space>
+                            </>
+                        )}
+                    </Space>
                 </section>
 
                 {/* TAB NAVIGATION */}

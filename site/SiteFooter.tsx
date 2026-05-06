@@ -1,9 +1,6 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faRss } from "@fortawesome/free-solid-svg-icons"
-import {
-    ArchiveMetaInformation,
-    SiteFooterContext,
-} from "@ourworldindata/utils"
+import { faInbox, faRss } from "@fortawesome/free-solid-svg-icons"
+import { ArchiveContext, SiteFooterContext } from "@ourworldindata/types"
 import { viteAssetsForSite } from "./viteUtils.js"
 import { ScriptLoadErrorDetector } from "./NoJSDetector.js"
 import { ABOUT_LINKS, PROD_URL, RSS_FEEDS, SOCIALS } from "./SiteConstants.js"
@@ -19,7 +16,7 @@ interface SiteFooterProps {
     context?: SiteFooterContext
     debug?: boolean
     isPreviewing?: boolean
-    archiveInfo?: ArchiveMetaInformation
+    archiveContext?: ArchiveContext
 }
 
 const linkBaseUrl = IS_ARCHIVE ? PROD_URL : ""
@@ -33,18 +30,20 @@ const EXPLORE_LINKS: LinkData[] = [
 ]
 
 const RESOURCE_LINKS: LinkData[] = [
-    { title: "Latest Articles", url: "/latest" },
+    { title: "Latest", url: "/latest" },
     { title: "SDG Tracker", url: "/sdgs" },
     { title: "Teaching with OWID", url: "/teaching" },
 ]
 
 const LEGAL_LINKS: LinkData[] = [
     { title: "Privacy policy", url: "/privacy-policy" },
+    { title: "Cookie notice", url: "/cookie-notice" },
     { title: "Legal disclaimer", url: "/organization#legal-disclaimer" },
     {
         title: "Grapher license",
         url: "https://github.com/owid/owid-grapher/blob/master/LICENSE.md",
     },
+    { title: "Send feedback", url: "/feedback" },
 ]
 
 const FooterLink = (props: LinkData) => {
@@ -109,10 +108,15 @@ const FooterLinkColumnsArchive = () => (
 )
 
 export const SiteFooter = (props: SiteFooterProps) => {
+    const archiveContext = props.archiveContext
+    const isOnArchivalPage = archiveContext?.type === "archive-page"
+    const staticAssetMap = isOnArchivalPage
+        ? archiveContext?.assets?.static
+        : undefined
     const scripts: string[] = []
-    if (props.archiveInfo)
+    if (archiveContext)
         scripts.push(
-            `window._OWID_ARCHIVE_INFO = ${JSON.stringify(props.archiveInfo)};`
+            `window._OWID_ARCHIVE_CONTEXT = ${JSON.stringify(archiveContext)};`
         )
 
     scripts.push(
@@ -186,7 +190,7 @@ export const SiteFooter = (props: SiteFooterProps) => {
                         </a>
                     </div>
                 </div>
-                {props.archiveInfo ? (
+                {isOnArchivalPage ? (
                     <FooterLinkColumnsArchive />
                 ) : (
                     <FooterLinkColumnsProd />
@@ -203,6 +207,12 @@ export const SiteFooter = (props: SiteFooterProps) => {
                                 <FontAwesomeIcon icon={social.icon} />
                             </a>
                         ))}
+                        <a
+                            href="/subscribe"
+                            data-track-note="footer_social_email"
+                        >
+                            <FontAwesomeIcon icon={faInbox} />
+                        </a>
                     </div>
                     <div className="footer-base__legal">
                         <FooterLinkList links={LEGAL_LINKS} />
@@ -210,11 +220,7 @@ export const SiteFooter = (props: SiteFooterProps) => {
                 </div>
 
                 <div className={SITE_TOOLS_CLASS} />
-                {
-                    viteAssetsForSite({
-                        staticAssetMap: props.archiveInfo?.assets?.static,
-                    }).forFooter
-                }
+                {viteAssetsForSite({ staticAssetMap }).forFooter}
                 <ScriptLoadErrorDetector />
                 <script
                     type="module"

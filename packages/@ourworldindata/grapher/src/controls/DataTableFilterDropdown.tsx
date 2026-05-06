@@ -7,19 +7,16 @@ import { DataTableConfig } from "../dataTable/DataTableConstants"
 import { OwidTable } from "@ourworldindata/core-table"
 import { SelectionArray } from "../selection/SelectionArray"
 import { makeSelectionArray } from "../chart/ChartUtils"
-import {
-    EntityRegionTypeGroup,
-    entityRegionTypeLabels,
-} from "../core/EntitiesByRegionType"
+import { RegionGroup, regionGroupLabels } from "../core/RegionGroups"
 
 export interface DataTableFilterDropdownManager {
     dataTableConfig: DataTableConfig
-    tableForDisplay: OwidTable
+    tableForDisplayBeforeEntityFilter: OwidTable
     isOnTableTab?: boolean
     dataTableSelection?: SelectionArray | EntityName[]
     canChangeAddOrHighlightEntities?: boolean
     shouldShowSelectionOnlyInDataTable?: boolean
-    entityRegionTypeGroups?: EntityRegionTypeGroup[]
+    regionGroups?: RegionGroup[]
     isSemiNarrow?: boolean
 }
 
@@ -62,7 +59,8 @@ export class DataTableFilterDropdown extends React.Component<{
     }
 
     @computed private get availableEntityNameSet(): Set<EntityName> {
-        return this.manager.tableForDisplay.availableEntityNameSet
+        return this.manager.tableForDisplayBeforeEntityFilter
+            .availableEntityNameSet
     }
 
     @action.bound private onChange(selected: DropdownOption | null): void {
@@ -100,14 +98,14 @@ export class DataTableFilterDropdown extends React.Component<{
             })
         }
 
-        if (this.manager.entityRegionTypeGroups) {
+        if (this.manager.regionGroups) {
             options.push(
-                ...this.manager.entityRegionTypeGroups
+                ...this.manager.regionGroups
                     .map(
-                        ({ regionType, entityNames }) =>
+                        ({ regionGroupKey, entityNames }) =>
                             ({
-                                value: regionType,
-                                label: entityRegionTypeLabels[regionType],
+                                value: regionGroupKey,
+                                label: regionGroupLabels[regionGroupKey],
                                 count: entityNames.filter((entityName) =>
                                     this.availableEntityNameSet.has(entityName)
                                 ).length,

@@ -1,6 +1,6 @@
 import * as _ from "lodash-es"
 import * as db from "../../db.js"
-import { getUrlTarget, MarkdownTextWrap } from "@ourworldindata/components"
+import { getUrlTarget, toPlaintext } from "@ourworldindata/components"
 import {
     LinkedChart,
     LinkedIndicator,
@@ -16,7 +16,6 @@ import {
     OwidGdocPublicationContext,
     BreadcrumbItem,
     OwidGdocMinimalPostInterface,
-    urlToSlug,
     GRAPHER_TAB_CONFIG_OPTIONS,
     GRAPHER_QUERY_PARAM_KEYS,
     DbInsertPostGdocLink,
@@ -24,16 +23,18 @@ import {
     formatDate,
     excludeUndefined,
     Url,
+    getRegionByNameOrVariantName,
 } from "@ourworldindata/utils"
-import { BAKED_GRAPHER_URL } from "../../../settings/serverSettings.js"
-import { docs as googleDocs } from "@googleapis/docs"
+import { docs as googleDocs, type docs_v1 } from "@googleapis/docs"
 import { gdocToArchie } from "./gdocToArchie.js"
 import { archieToEnriched } from "./archieToEnriched.js"
 import { getChartConfigById, mapSlugsToIds } from "../Chart.js"
 import {
     BAKED_BASE_URL,
     GRAPHER_DYNAMIC_THUMBNAIL_URL,
+    IS_ARCHIVE,
 } from "../../../settings/clientSettings.js"
+import { PROD_URL } from "../../../site/SiteConstants.js"
 import { EXPLORERS_ROUTE_FOLDER } from "@ourworldindata/explorer"
 import { match, P } from "ts-pattern"
 import {
@@ -43,6 +44,7 @@ import {
     spansToSimpleString,
 } from "./gdocUtils.js"
 import { OwidGoogleAuth } from "../../OwidGoogleAuth.js"
+import { acceptAllGdocSuggestions } from "./acceptAllGdocSuggestions.js"
 import { enrichedBlocksToMarkdown } from "./enrichedToMarkdown.js"
 import { getDatapageIndicatorId } from "../Variable.js"
 import { createLinkForNarrativeChart, createLinkFromUrl } from "../Link.js"
@@ -50,6 +52,7 @@ import {
     getMultiDimDataPageBySlug,
     multiDimDataPageExists,
 } from "../MultiDimDataPage.js"
+import { getMultiDimRedirectTargets } from "../MultiDimRedirects.js"
 import {
     ARCHIVED_THUMBNAIL_FILENAME,
     ChartConfigType,
@@ -70,17 +73,30 @@ import {
     ArchivedPageVersion,
     DbRawPostGdoc,
     PostsGdocsTableName,
+    LinkedStaticViz,
+    LinkedCallouts,
 } from "@ourworldindata/types"
 import {
     getAllNarrativeChartNames,
     getNarrativeChartsInfo,
 } from "../NarrativeChart.js"
-import * as R from "remeda"
-import { getDods } from "../Dod.js"
 import {
-    getLatestChartArchivedVersionsIfEnabled,
-    getLatestMultiDimArchivedVersionsIfEnabled,
-} from "../archival/archivalDb.js"
+    loadAndClearLinkedCallouts,
+    computeAvailableEntityCodes,
+} from "./dataCallouts.js"
+import pMap from "p-map"
+
+import { indexBy } from "remeda"
+import {
+    getLinkedStaticVizByNames,
+    getEnrichedStaticVizList,
+} from "../StaticViz.js"
+import { getDods } from "../Dod.js"
+import { getLatestArchivedExplorerPageVersionsIfEnabled } from "../ArchivedExplorerVersion.js"
+import { getLatestArchivedMultiDimPageVersionsIfEnabled } from "../ArchivedMultiDimVersion.js"
+import { getLatestArchivedChartPageVersionsIfEnabled } from "../ArchivedChartVersion.js"
+
+const BASE_URL = IS_ARCHIVE ? PROD_URL : BAKED_BASE_URL
 
 export async function getLinkedIndicatorsForCharts(
     knex: db.KnexReadonlyTransaction,
@@ -127,19 +143,45 @@ export async function loadLinkedChartsForSlugs(
 
     const slugToIdMap = await mapSlugsToIds(knex)
 
-    const [archivedChartVersions, archivedMultiDimVersions] = await Promise.all(
-        [
-            getLatestChartArchivedVersionsIfEnabled(
-                knex,
-                excludeUndefined(grapherSlugs.map((slug) => slugToIdMap[slug]))
-            ),
-            getLatestMultiDimArchivedVersionsIfEnabled(knex),
-        ]
-    )
+    const [
+        archivedChartVersions,
+        archivedMultiDimVersions,
+        archivedExplorerVersions,
+        grapherMultiDimRedirects,
+        explorerMultiDimRedirects,
+    ] = await Promise.all([
+        getLatestArchivedChartPageVersionsIfEnabled(
+            knex,
+            excludeUndefined(grapherSlugs.map((slug) => slugToIdMap[slug]))
+        ),
+        getLatestArchivedMultiDimPageVersionsIfEnabled(knex),
+        getLatestArchivedExplorerPageVersionsIfEnabled(knex, explorerSlugs),
+        getMultiDimRedirectTargets(knex, grapherSlugs, "/grapher/"),
+        getMultiDimRedirectTargets(knex, explorerSlugs, "/explorers/"),
+    ])
 
     // TODO: rewrite this as a single query instead of N queries
     const linkedGrapherCharts = await Promise.all(
         grapherSlugs.map(async (originalSlug) => {
+            const multiDimRedirect = grapherMultiDimRedirects.get(originalSlug)
+
+            if (multiDimRedirect) {
+                const targetSlug = multiDimRedirect.targetSlug
+                const multiDim = await getMultiDimDataPageBySlug(
+                    knex,
+                    targetSlug,
+                    { onlyPublished: false }
+                )
+                if (!multiDim) return
+
+                return makeMultiDimLinkedChart(multiDim.config, originalSlug, {
+                    archivedPageVersion:
+                        archivedMultiDimVersions[multiDim.id] || undefined,
+                    queryStr: multiDimRedirect.queryStr,
+                    resolvedSlug: targetSlug,
+                })
+            }
+
             const chartId = slugToIdMap[originalSlug]
             if (chartId) {
                 const chart = await getChartConfigById(knex, chartId)
@@ -173,11 +215,41 @@ export async function loadLinkedChartsForSlugs(
     const publishedExplorersBySlug = await db.getPublishedExplorersBySlug(knex)
 
     const linkedExplorerCharts = excludeNullish(
-        explorerSlugs.map((originalSlug) => {
-            const explorer = publishedExplorersBySlug[originalSlug]
-            if (!explorer) return
-            return makeExplorerLinkedChart(explorer, originalSlug)
-        })
+        await Promise.all(
+            explorerSlugs.map(async (originalSlug) => {
+                const multiDimRedirect =
+                    explorerMultiDimRedirects.get(originalSlug)
+
+                if (multiDimRedirect) {
+                    const targetSlug = multiDimRedirect.targetSlug
+                    const multiDim = await getMultiDimDataPageBySlug(
+                        knex,
+                        targetSlug,
+                        { onlyPublished: false }
+                    )
+                    if (!multiDim) return
+
+                    return makeMultiDimLinkedChart(
+                        multiDim.config,
+                        originalSlug,
+                        {
+                            archivedPageVersion:
+                                archivedMultiDimVersions[multiDim.id] ||
+                                undefined,
+                            queryStr: multiDimRedirect.queryStr,
+                            resolvedSlug: targetSlug,
+                        }
+                    )
+                }
+
+                const explorer = publishedExplorersBySlug[originalSlug]
+                if (!explorer) return
+                return makeExplorerLinkedChart(explorer, originalSlug, {
+                    archivedPageVersion:
+                        archivedExplorerVersions[originalSlug] || undefined,
+                })
+            })
+        )
     )
 
     return [...linkedGrapherCharts, ...linkedExplorerCharts]
@@ -187,6 +259,7 @@ export class GdocBase implements OwidGdocBaseInterface {
     id!: string
     slug: string = ""
     declare content: OwidGdocContent
+    contentMd5 = ""
     published: boolean = false
     createdAt: Date = new Date()
     publishedAt: Date | null = null
@@ -207,6 +280,8 @@ export class GdocBase implements OwidGdocBaseInterface {
     linkedDocuments: Record<string, OwidGdocMinimalPostInterface> = {}
     latestDataInsights: LatestDataInsight[] = []
     linkedNarrativeCharts?: Record<string, NarrativeChartInfo> = {}
+    linkedStaticViz?: Record<string, LinkedStaticViz> = {}
+    linkedCallouts: LinkedCallouts = {}
     _omittableFields: string[] = []
 
     constructor(id?: string) {
@@ -263,7 +338,8 @@ export class GdocBase implements OwidGdocBaseInterface {
             this.markdown =
                 enrichedBlocksToMarkdown(
                     this.enrichedBlockSources.flat(),
-                    true
+                    true,
+                    { linkedCallouts: this.linkedCallouts }
                 ) ?? null
         } catch (e) {
             console.error("Error when converting content to markdown", e)
@@ -313,10 +389,18 @@ export class GdocBase implements OwidGdocBaseInterface {
     }
 
     async loadLinkedAuthors(knex: db.KnexReadonlyTransaction): Promise<void> {
-        this.linkedAuthors = await getMinimalAuthorsByNames(
+        const authors = await getMinimalAuthorsByNames(
             knex,
             this.content.authors
         )
+        const authorRoles = this.content.authorRoles
+        if (authorRoles) {
+            for (const author of authors) {
+                const role = authorRoles[author.name]
+                if (role) author.role = role
+            }
+        }
+        this.linkedAuthors = authors
     }
 
     get links(): DbInsertPostGdocLink[] {
@@ -383,7 +467,8 @@ export class GdocBase implements OwidGdocBaseInterface {
             for (const block of enrichedBlockSource) {
                 traverseEnrichedBlock(block, (block) => {
                     if (block.type === "key-indicator") {
-                        slugs.add(urlToSlug(block.datapageUrl))
+                        const slug = Url.fromURL(block.datapageUrl).slug ?? ""
+                        slugs.add(slug)
                     }
                 })
             }
@@ -415,6 +500,13 @@ export class GdocBase implements OwidGdocBaseInterface {
             .filter(
                 (link) => link.linkType === ContentGraphLinkType.NarrativeChart
             )
+            .map((link) => link.target)
+
+        return filteredLinks
+    }
+    get linkedStaticVizNames(): string[] {
+        const filteredLinks = this.links
+            .filter((link) => link.linkType === ContentGraphLinkType.StaticViz)
             .map((link) => link.target)
 
         return filteredLinks
@@ -451,6 +543,19 @@ export class GdocBase implements OwidGdocBaseInterface {
                 }
                 return links
             })
+            .with({ type: "static-viz" }, (block) => {
+                return [
+                    {
+                        target: block.name,
+                        linkType: ContentGraphLinkType.StaticViz,
+                        queryString: "",
+                        hash: "",
+                        text: "",
+                        componentType: block.type,
+                        sourceId: this.id,
+                    },
+                ]
+            })
             .with({ type: "person" }, (block) => {
                 if (!block.url) return []
                 return [
@@ -471,6 +576,13 @@ export class GdocBase implements OwidGdocBaseInterface {
                 }),
             ])
             .with({ type: "chart" }, (block) => [
+                createLinkFromUrl({
+                    url: block.url,
+                    sourceId: this.id,
+                    componentType: block.type,
+                }),
+            ])
+            .with({ type: "data-callout" }, (block) => [
                 createLinkFromUrl({
                     url: block.url,
                     sourceId: this.id,
@@ -521,27 +633,6 @@ export class GdocBase implements OwidGdocBaseInterface {
                             text: `Resource panel link ${i + 1}`,
                         })
                     )
-                })
-
-                return links
-            })
-            .with({ type: "scroller" }, (block) => {
-                const links: DbInsertPostGdocLink[] = []
-
-                block.blocks.forEach(({ url, text }, i) => {
-                    const chartLink = createLinkFromUrl({
-                        url,
-                        sourceId: this.id,
-                        componentType: block.type,
-                        text: `Scroller block ${i + 1}`,
-                    })
-                    links.push(chartLink)
-                    text.value.forEach((span) => {
-                        traverseEnrichedSpan(span, (span) => {
-                            const spanLink = this.extractLinkFromSpan(span)
-                            if (spanLink) links.push(spanLink)
-                        })
-                    })
                 })
 
                 return links
@@ -733,6 +824,32 @@ export class GdocBase implements OwidGdocBaseInterface {
                 }
                 return links
             })
+            .with({ type: "country-profile-selector" }, (block) => [
+                createLinkFromUrl({
+                    url: block.url,
+                    sourceId: this.id,
+                    componentType: block.type,
+                    text: block.title ?? "Country profile selector",
+                }),
+            ])
+            .with({ type: "chart-rows" }, (block) =>
+                block.rows.map((row) =>
+                    createLinkFromUrl({
+                        url: row.url,
+                        sourceId: this.id,
+                        componentType: block.type,
+                        text: "",
+                    })
+                )
+            )
+            .with({ type: "pull-chart" }, (block) => [
+                createLinkFromUrl({
+                    url: block.url,
+                    sourceId: this.id,
+                    componentType: block.type,
+                    text: "",
+                }),
+            ])
             .with(
                 {
                     // no urls directly on any of these blocks
@@ -743,6 +860,7 @@ export class GdocBase implements OwidGdocBaseInterface {
                         "aside",
                         "blockquote",
                         "callout",
+                        "conditional-section",
                         "code",
                         "cookie-notice",
                         "donors",
@@ -750,10 +868,10 @@ export class GdocBase implements OwidGdocBaseInterface {
                         "expander",
                         "entry-summary",
                         "gray-section",
+                        "explore-data-section",
                         "heading",
                         "horizontal-rule",
                         "html",
-                        "script",
                         "key-indicator-collection",
                         "list",
                         "missing-data",
@@ -764,15 +882,20 @@ export class GdocBase implements OwidGdocBaseInterface {
                         "guided-chart",
                         "sdg-grid",
                         "sdg-toc",
+                        "ltp-toc",
                         "side-by-side",
                         "simple-text",
                         "sticky-left",
                         "sticky-right",
                         "text",
                         "homepage-search",
+                        "featured-metrics",
+                        "featured-data-insights",
                         "latest-data-insights",
                         "socials", // only external links
-                        "subscribe-banner"
+                        "subscribe-banner",
+                        "bespoke-component",
+                        "data-callout-group"
                     ),
                 },
                 () => []
@@ -892,22 +1015,53 @@ export class GdocBase implements OwidGdocBaseInterface {
         this.linkedNarrativeCharts = _.keyBy(result, "name")
     }
 
-    async fetchAndEnrichGdoc(): Promise<void> {
+    async loadLinkedStaticViz(knex: db.KnexReadonlyTransaction): Promise<void> {
+        const dbResults = await getLinkedStaticVizByNames(
+            knex,
+            this.linkedStaticVizNames
+        )
+        this.linkedStaticViz = _.keyBy(dbResults, "name")
+    }
+
+    /**
+     * Load data for all data-callout blocks.
+     * For each callout, we fetch the chart config and construct the values JSON.
+     * Then clear any callouts that have incomplete data.
+     */
+    async loadAndClearLinkedCallouts(
+        knex: db.KnexReadonlyTransaction
+    ): Promise<void> {
+        const result = await loadAndClearLinkedCallouts(this.content, { knex })
+        this.content = result.content
+        this.linkedCallouts = result.linkedCallouts
+    }
+
+    async fetchAndEnrichGdoc(
+        acceptSuggestions: boolean = false
+    ): Promise<void> {
         const docsClient = googleDocs({
             version: "v1",
             auth: OwidGoogleAuth.getGoogleReadonlyAuth(),
         })
 
         // Retrieve raw data from Google
+        const suggestionsViewMode = acceptSuggestions
+            ? "SUGGESTIONS_INLINE"
+            : "PREVIEW_WITHOUT_SUGGESTIONS"
+
         const { data } = await docsClient.documents.get({
             documentId: this.id,
-            suggestionsViewMode: "PREVIEW_WITHOUT_SUGGESTIONS",
+            suggestionsViewMode,
         })
 
-        this.revisionId = data.revisionId ?? null
+        const normalizedDocument: docs_v1.Schema$Document = acceptSuggestions
+            ? acceptAllGdocSuggestions(data)
+            : data
+
+        this.revisionId = normalizedDocument.revisionId ?? null
 
         // Convert the doc to ArchieML syntax
-        const { text } = await gdocToArchie(data)
+        const { text } = await gdocToArchie(normalizedDocument)
 
         // Convert the ArchieML to our enriched JSON structure
         this.content = archieToEnriched(text, this._enrichSubclassContent)
@@ -931,7 +1085,7 @@ export class GdocBase implements OwidGdocBaseInterface {
 
         const authorErrors = this.content.authors.reduce(
             (errors: OwidGdocErrorMessage[], name): OwidGdocErrorMessage[] => {
-                if (!this.linkedAuthors.find((a) => a.name === name)) {
+                if (!this.linkedAuthors.some((a) => a.name === name)) {
                     errors.push({
                         property: "linkedAuthors",
                         message: `Author "${name}" does not exist or is not published`,
@@ -971,11 +1125,25 @@ export class GdocBase implements OwidGdocBaseInterface {
             publishedExplorersBySlug,
             narrativeChartNames,
             dods,
+            staticViz,
+            grapherMultiDimRedirects,
+            explorerMultiDimRedirects,
         ] = await Promise.all([
             mapSlugsToIds(knex),
             db.getPublishedExplorersBySlug(knex),
             getAllNarrativeChartNames(knex),
-            getDods(knex).then((dods) => R.indexBy(dods, (dod) => dod.name)),
+            getDods(knex).then((dods) => indexBy(dods, (dod) => dod.name)),
+            getEnrichedStaticVizList(knex),
+            getMultiDimRedirectTargets(
+                knex,
+                this.linkedChartSlugs.grapher,
+                "/grapher/"
+            ),
+            getMultiDimRedirectTargets(
+                knex,
+                this.linkedChartSlugs.explorer,
+                "/explorers/"
+            ),
         ])
 
         const linkErrors: OwidGdocErrorMessage[] = []
@@ -983,8 +1151,9 @@ export class GdocBase implements OwidGdocBaseInterface {
             await match(link)
                 .with({ linkType: ContentGraphLinkType.Gdoc }, () => {
                     const id = getUrlTarget(link.target)
-                    const doesGdocExist = Boolean(this.linkedDocuments[id])
-                    const isGdocPublished = this.linkedDocuments[id]?.published
+                    const linkedDoc = this.linkedDocuments[id]
+                    const doesGdocExist = Boolean(linkedDoc)
+                    const isGdocPublished = linkedDoc?.published
                     if (!doesGdocExist || !isGdocPublished) {
                         linkErrors.push({
                             property: "linkedDocuments",
@@ -996,10 +1165,61 @@ export class GdocBase implements OwidGdocBaseInterface {
                             type: OwidGdocErrorMessageType.Warning,
                         })
                     }
+
+                    // Validate profile links: must have ?entity=X with a valid, available entity
+                    // (skip for country-profile-selector, which links to the profile itself)
+                    if (
+                        linkedDoc?.type === OwidGdocType.Profile &&
+                        doesGdocExist &&
+                        isGdocPublished &&
+                        link.componentType !== "country-profile-selector"
+                    ) {
+                        const queryParams = Url.fromURL(
+                            link.queryString
+                        ).queryParams
+                        const entityParam = queryParams.entity
+                        if (!entityParam) {
+                            linkErrors.push({
+                                property: "linkedDocuments",
+                                message: `Link with text "${link.text}" to profile "${linkedDoc.slug}" must include a ?entity= parameter (e.g. ?entity=France).`,
+                                type: OwidGdocErrorMessageType.Error,
+                            })
+                        } else {
+                            const region =
+                                getRegionByNameOrVariantName(entityParam)
+                            if (!region) {
+                                linkErrors.push({
+                                    property: "linkedDocuments",
+                                    message: `Link with text "${link.text}" to profile "${linkedDoc.slug}" has unknown entity "${entityParam}".`,
+                                    type: OwidGdocErrorMessageType.Error,
+                                })
+                            } else if (
+                                linkedDoc.availableEntityCodes &&
+                                !linkedDoc.availableEntityCodes.includes(
+                                    region.code
+                                )
+                            ) {
+                                linkErrors.push({
+                                    property: "linkedDocuments",
+                                    message: `Link with text "${link.text}" to profile "${linkedDoc.slug}": entity "${entityParam}" is not available for this profile.`,
+                                    type: OwidGdocErrorMessageType.Error,
+                                })
+                            }
+                        }
+                    }
                 })
                 .with({ linkType: ContentGraphLinkType.Grapher }, async () => {
+                    const grapherRedirect = grapherMultiDimRedirects.get(
+                        link.target
+                    )
+                    const hasMultiDimRedirect =
+                        grapherRedirect !== undefined &&
+                        (grapherRedirect.targetSlug !== link.target ||
+                            !!grapherRedirect.queryStr)
+
                     if (
                         !chartIdsBySlug[link.target] &&
+                        !hasMultiDimRedirect &&
                         !(await multiDimDataPageExists(knex, {
                             slug: link.target,
                             published: true,
@@ -1007,16 +1227,31 @@ export class GdocBase implements OwidGdocBaseInterface {
                     ) {
                         linkErrors.push({
                             property: "content",
-                            message: `Grapher chart with slug ${link.target} does not exist or is not published`,
+                            message: `Grapher chart with slug "${link.target}" does not exist or is not published`,
                             type: OwidGdocErrorMessageType.Error,
                         })
                     }
                 })
-                .with({ linkType: ContentGraphLinkType.Explorer }, () => {
-                    if (!publishedExplorersBySlug[link.target]) {
+                .with({ linkType: ContentGraphLinkType.Explorer }, async () => {
+                    const explorerRedirect = explorerMultiDimRedirects.get(
+                        link.target
+                    )
+                    const hasMultiDimRedirect =
+                        explorerRedirect !== undefined &&
+                        (explorerRedirect.targetSlug !== link.target ||
+                            !!explorerRedirect.queryStr)
+
+                    if (
+                        !publishedExplorersBySlug[link.target] &&
+                        !hasMultiDimRedirect &&
+                        !(await multiDimDataPageExists(knex, {
+                            slug: link.target,
+                            published: true,
+                        }))
+                    ) {
                         linkErrors.push({
                             property: "content",
-                            message: `Explorer chart with slug ${link.target} does not exist or is not published`,
+                            message: `Explorer chart with slug "${link.target}" does not exist or is not published`,
                             type: OwidGdocErrorMessageType.Error,
                         })
                     }
@@ -1041,6 +1276,22 @@ export class GdocBase implements OwidGdocBaseInterface {
                         })
                     }
                 })
+                .with(
+                    {
+                        linkType: ContentGraphLinkType.StaticViz,
+                    },
+                    () => {
+                        if (
+                            !staticViz.some((viz) => viz.name === link.target)
+                        ) {
+                            linkErrors.push({
+                                property: "content",
+                                message: `Static viz with name "${link.target}" does not exist`,
+                                type: OwidGdocErrorMessageType.Error,
+                            })
+                        }
+                    }
+                )
                 .with({ linkType: ContentGraphLinkType.GuidedChart }, () => {
                     // Validate that guided chart query parameters are spelled correctly
                     const url = Url.fromURL(link.target)
@@ -1088,7 +1339,16 @@ export class GdocBase implements OwidGdocBaseInterface {
             enrichedBlockSource.forEach((block) =>
                 traverseEnrichedBlock(block, (block) => {
                     if (block.type === "key-indicator" && block.datapageUrl) {
-                        const slug = urlToSlug(block.datapageUrl)
+                        const slug = Url.fromURL(block.datapageUrl).slug
+                        if (!slug) {
+                            contentErrors.push({
+                                property: "body",
+                                type: OwidGdocErrorMessageType.Error,
+                                message: `Key indicator's dataPageUrl is not valid: ${block.datapageUrl}`,
+                            })
+                            return
+                        }
+
                         const linkedChart = this.linkedCharts?.[slug]
                         if (linkedChart && !linkedChart.indicatorId) {
                             contentErrors.push({
@@ -1113,6 +1373,10 @@ export class GdocBase implements OwidGdocBaseInterface {
         ]
     }
 
+    // NOTE: The Algolia bulk indexer (getPagesRecords in baker/algolia/utils/pages.ts)
+    // only calls loadAndClearLinkedCallouts — the sole step that mutates
+    // this.content.body.  If you add a step here that also mutates body content,
+    // update the Algolia indexer to call it too.
     async loadState(knex: db.KnexReadonlyTransaction): Promise<void> {
         await this.loadLinkedAuthors(knex)
         await this.loadLinkedDocuments(knex)
@@ -1120,6 +1384,8 @@ export class GdocBase implements OwidGdocBaseInterface {
         await this.loadLinkedCharts(knex)
         await this.loadLinkedIndicators(knex) // depends on linked charts
         await this.loadNarrativeChartsInfo(knex)
+        await this.loadLinkedStaticViz(knex)
+        await this.loadAndClearLinkedCallouts(knex) // clones and reassigns this.content
         await this._loadSubclassAttachments(knex) // for GdocHomepage, mutates linkedCharts and linkedDocuments
         await this.validate(knex)
     }
@@ -1183,7 +1449,26 @@ export async function getMinimalGdocPostsByIds(
             WHERE id in (:ids)`,
         { ids }
     )
-    return rows.map(rawGdocToMinimalPost)
+    const posts = rows.map(rawGdocToMinimalPost)
+
+    // Enrich profile-type docs with data-availability-filtered entity codes
+    await pMap(
+        rows,
+        async (row, i) => {
+            if (posts[i].type !== OwidGdocType.Profile) return
+
+            const content = JSON.parse(row.content)
+            if (!content.scope) return
+
+            posts[i].availableEntityCodes = await computeAvailableEntityCodes(
+                knex,
+                content
+            )
+        },
+        { concurrency: 4 }
+    )
+
+    return posts
 }
 
 export async function getMinimalAuthorsByNames(
@@ -1216,13 +1501,11 @@ export async function makeGrapherLinkedChart(
 ): Promise<LinkedChart> {
     const resolvedSlug = config.slug ?? ""
     const resolvedTitle = config.title ?? ""
-    const subtitle = new MarkdownTextWrap({
-        text: config.subtitle || "",
-        fontSize: 12,
-    }).plaintext
-    const resolvedUrl = `${BAKED_GRAPHER_URL}/${resolvedSlug}`
+    const subtitle = toPlaintext(config.subtitle ?? "")
+    const resolvedUrl = `${BASE_URL}/grapher/${resolvedSlug}`
     const tab = config.tab ?? GRAPHER_TAB_CONFIG_OPTIONS.chart
     const indicatorId = await getDatapageIndicatorId(knex, config)
+
     return {
         configType: ChartConfigType.Grapher,
         originalSlug,
@@ -1245,7 +1528,10 @@ export function makeExplorerLinkedChart(
         thumbnail?: string
         tags?: string[]
     },
-    originalSlug: string
+    originalSlug: string,
+    options?: {
+        archivedPageVersion?: ArchivedPageVersion
+    }
 ): LinkedChart {
     return {
         configType: ChartConfigType.Explorer,
@@ -1253,30 +1539,41 @@ export function makeExplorerLinkedChart(
         originalSlug,
         title: explorer.title ?? "",
         subtitle: explorer.subtitle ?? "",
-        resolvedUrl: `${BAKED_BASE_URL}/${EXPLORERS_ROUTE_FOLDER}/${originalSlug}`,
+        resolvedUrl: `${BASE_URL}/${EXPLORERS_ROUTE_FOLDER}/${originalSlug}`,
         thumbnail:
             explorer.thumbnail ||
             `${BAKED_BASE_URL}/${DEFAULT_THUMBNAIL_FILENAME}`,
         tags: explorer.tags ?? [],
+        archivedPageVersion: options?.archivedPageVersion,
     }
 }
 
 export function makeMultiDimLinkedChart(
     config: MultiDimDataPageConfigEnriched,
-    slug: string,
-    { archivedPageVersion }: { archivedPageVersion?: ArchivedPageVersion } = {}
+    originalSlug: string,
+    {
+        archivedPageVersion,
+        queryStr,
+        resolvedSlug,
+    }: {
+        archivedPageVersion?: ArchivedPageVersion
+        queryStr?: string
+        resolvedSlug?: string
+    } = {}
 ): LinkedChart {
     let title = config.title.title
     const titleVariant = config.title.titleVariant
     if (titleVariant) {
         title = `${title} ${titleVariant}`
     }
+    const slug = resolvedSlug ?? originalSlug
+    const resolvedUrl = `${BASE_URL}/grapher/${slug}${queryStr ? `?${queryStr}` : ""}`
     return {
         configType: ChartConfigType.MultiDim,
-        originalSlug: slug,
+        originalSlug,
         title,
         dimensionSlugs: config.dimensions.map((d) => d.slug),
-        resolvedUrl: `${BAKED_GRAPHER_URL}/${slug}`,
+        resolvedUrl,
         tags: [],
         archivedPageVersion,
     }

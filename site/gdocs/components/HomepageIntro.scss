@@ -34,16 +34,19 @@
     display: none;
     @include md-down {
         display: flex;
+        gap: 24px;
     }
 }
 
 .homepage-intro__featured-tile {
+    display: block;
     border: 1px solid $blue-10;
     padding: 16px;
     color: $blue-90;
     align-self: start;
     margin-bottom: 24px;
     transition: border-color 0.125s;
+
     &:hover {
         border-color: $blue-30;
     }
@@ -63,8 +66,8 @@
     @include md-down {
         width: 302px;
         height: 100%;
-        &:first-child {
-            margin-right: 24px;
+        &:last-child {
+            margin-right: -24px;
         }
     }
 }
@@ -75,7 +78,7 @@
     color: $vermillion;
     padding: 2px 4px;
     border-radius: 2px;
-    margin-right: 8px;
+    margin-right: 5px;
 }
 
 .homepage-intro__featured-work-kicker {
@@ -121,9 +124,6 @@
     }
 
     h4 {
-        font-size: 1.25rem;
-        line-height: 1.5rem;
-        color: $blue-90;
         margin: 0;
         flex: 0 0 calc(100% - 56px - 16px);
     }
@@ -250,12 +250,12 @@
 
     .newsletter-subscription-form__subheader {
         @include body-2-regular;
-        color: $blue-65;
+        color: $blue-70;
     }
 
     .newsletter-subscription-form__label-frequency {
         display: inline;
-        margin-left: 6px;
+        margin-left: 2px;
     }
 
     .newsletter-subscription-form__email-submit {
@@ -268,7 +268,7 @@
     }
 
     .newsletter-subscription-form__privacy-notice {
-        color: $blue-65;
+        color: $blue-70;
     }
 
     @include md-down {
@@ -299,7 +299,7 @@
 
     .homepage-intro__donation-message {
         margin: 0;
-        color: $blue-65;
+        color: $blue-70;
     }
 
     .homepage-intro__donation-link {

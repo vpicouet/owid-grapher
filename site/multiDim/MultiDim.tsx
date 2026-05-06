@@ -1,3 +1,4 @@
+import { runInAction } from "mobx"
 import {
     useCallback,
     useContext,
@@ -11,9 +12,10 @@ import {
     getCachingInputTableFetcher,
     Grapher,
     GrapherProgrammaticInterface,
-    loadVariableDataAndMetadata,
     useMaybeGlobalGrapherStateRef,
     GuidedChartContext,
+    loadCatalogData,
+    useElementBounds,
 } from "@ourworldindata/grapher"
 import {
     extractMultiDimChoicesFromSearchParams,
@@ -22,12 +24,18 @@ import {
     MultiDimDataPageConfig,
     MultiDimDimensionChoices,
 } from "@ourworldindata/utils"
-import { ArchiveContext } from "@ourworldindata/types"
-import { useElementBounds } from "../hooks.js"
+import {
+    AdditionalGrapherDataFetchFn,
+    ArchiveContext,
+} from "@ourworldindata/types"
 import { cachedGetGrapherConfigByUuid } from "./api.js"
 import MultiDimEmbedSettingsPanel from "./MultiDimEmbedSettingsPanel.js"
 import { useBaseGrapherConfig, useMultiDimAnalytics } from "./hooks.js"
-import { DATA_API_URL } from "../../settings/clientSettings.js"
+import {
+    BAKED_GRAPHER_URL,
+    CATALOG_URL,
+    DATA_API_URL,
+} from "../../settings/clientSettings.js"
 
 export default function MultiDim({
     config,
@@ -49,14 +57,14 @@ export default function MultiDim({
             ? archiveContext.assets.runtime
             : undefined
     const manager = useRef(localGrapherConfig?.manager ?? {})
-    const grapherRef = useMaybeGlobalGrapherStateRef({
+    const grapherStateRef = useMaybeGlobalGrapherStateRef({
         manager: manager.current,
         queryStr,
-        additionalDataLoaderFn: (varId: number) =>
-            loadVariableDataAndMetadata(varId, DATA_API_URL, {
+        additionalDataLoaderFn: ((catalogKey) =>
+            loadCatalogData(catalogKey, {
+                baseUrl: CATALOG_URL,
                 assetMap,
-                noCache: isPreviewing,
-            }),
+            })) as AdditionalGrapherDataFetchFn,
         archiveContext,
         isConfigReady: false,
     })
@@ -84,8 +92,13 @@ export default function MultiDim({
         )
         return config.filterToAvailableChoices(choices).selectedChoices
     })
+    // We want to preserve the grapher tab when switching between views, except
+    // when the switch happens via a guided chart link.
+    const [shouldPreserveTab, setShouldPreserveTab] = useState(true)
+    const [additionalQueryParams, setAdditionalQueryParams] =
+        useState<GrapherQueryParams | null>(null)
 
-    const handleSettingsChange = useCallback(
+    const handleBaseSettingsChange = useCallback(
         (settings: MultiDimDimensionChoices) => {
             const { selectedChoices } =
                 config.filterToAvailableChoices(settings)
@@ -94,7 +107,28 @@ export default function MultiDim({
         [config]
     )
 
-    useMultiDimAnalytics(slug, config, settings)
+    const handleSettingsChange = useCallback(
+        (settings: MultiDimDimensionChoices) => {
+            handleBaseSettingsChange(settings)
+            setShouldPreserveTab(true)
+            setAdditionalQueryParams(null)
+        },
+        [handleBaseSettingsChange]
+    )
+
+    const handleGuidedChartSettingsChange = useCallback(
+        (
+            settings: MultiDimDimensionChoices,
+            queryParams: GrapherQueryParams
+        ) => {
+            handleBaseSettingsChange(settings)
+            setShouldPreserveTab(false)
+            setAdditionalQueryParams(queryParams)
+        },
+        [handleBaseSettingsChange]
+    )
+
+    useMultiDimAnalytics(slug, config, settings, grapherContainerRef)
 
     // Register with GuidedChartContext for guided chart link support
     const guidedChartContext = useContext(GuidedChartContext)
@@ -103,20 +137,25 @@ export default function MultiDim({
         if (guidedChartContext?.registerMultiDim && !hasRegistered.current) {
             guidedChartContext.registerMultiDim({
                 config,
-                onSettingsChange: handleSettingsChange,
+                onSettingsChange: handleGuidedChartSettingsChange,
                 grapherContainerRef: grapherContainerRef,
             })
             hasRegistered.current = true
         }
-    }, [guidedChartContext, config, handleSettingsChange])
+    }, [guidedChartContext, config, handleGuidedChartSettingsChange])
 
+    // NOTE (Martin): We used to use `grapherState.isDataReady` here to prevent
+    // an edge case race condition on a slow network from setting incorrect
+    // data. However, that caused flickering when switching between guided chart
+    // links, which was even worse and I didn't figure out how else to fix it
+    // than to remove the `grapherState.isDataReady` usage.
     useEffect(() => {
         // Prevent a race condition from setting incorrect data.
         // https://react.dev/learn/synchronizing-with-effects#fetching-data
         let ignoreFetchedData = false
 
-        const grapher = grapherRef.current
-        if (!grapher) return
+        const grapherState = grapherStateRef.current
+        if (!grapherState) return
 
         const newView = config.findViewByDimensions(settings)
         if (!newView) {
@@ -137,15 +176,19 @@ export default function MultiDim({
         manager.current.adminEditPath = adminEditPath
         manager.current.analyticsContext = analyticsContext
         manager.current.adminCreateNarrativeChartPath = `narrative-charts/create?type=multiDim&chartConfigId=${newView.fullConfigId}`
+        if (slug) manager.current.baseUrl = `${BAKED_GRAPHER_URL}/${slug}`
 
         const newGrapherParams: GrapherQueryParams = {
-            ...grapher.changedParams,
+            ...grapherState.changedParams,
+            ...settings,
+            ...additionalQueryParams,
+        }
+        if (shouldPreserveTab) {
             // If the grapher has data, preserve the active tab in the new view,
             // otherwise use the tab from the URL.
-            tab: grapher.hasData
-                ? grapher.mapGrapherTabToQueryParam(grapher.activeTab)
-                : (searchParams.get("tab") ?? undefined),
-            ...settings,
+            newGrapherParams.tab = grapherState.hasData
+                ? grapherState.mapGrapherTabToQueryParam(grapherState.activeTab)
+                : (searchParams.get("tab") ?? undefined)
         }
 
         // reset map state if switching to a chart
@@ -154,7 +197,7 @@ export default function MultiDim({
             newGrapherParams.mapSelect = ""
         }
 
-        const previousTab = grapher.activeTab
+        const previousTab = grapherState.activeTab
 
         cachedGetGrapherConfigByUuid(
             newView.fullConfigId,
@@ -171,36 +214,41 @@ export default function MultiDim({
                 if (slug) {
                     grapherConfig.slug = slug // Needed for the URL used for sharing.
                 }
-                grapher.setAuthoredVersion(grapherConfig)
-                grapher.reset()
-                grapher.updateFromObject(grapherConfig)
-                grapher.isConfigReady = true
-                const loadDataPromise = grapherDataLoader
+                runInAction(() => {
+                    grapherState.setAuthoredVersion(grapherConfig)
+                    grapherState.reset()
+                    grapherState.updateFromObject(grapherConfig)
+                    grapherState.isConfigReady = true
+                    grapherState.populateFromQueryParams(newGrapherParams)
+                })
+
+                await grapherDataLoader
                     .current(
                         grapherConfig.dimensions ?? [],
                         grapherConfig.selectedEntityColors
                     )
                     .then((table) => {
                         if (table) {
-                            grapher.inputTable = table
+                            runInAction(() => {
+                                grapherState.inputTable = table
+                            })
                         }
                     })
-                grapher.populateFromQueryParams(newGrapherParams)
 
                 // The below code needs to run after the data has been loaded, so that it has access
                 // to the table and its time range
-                await loadDataPromise
-
-                // When switching between mdim views, we usually preserve the tab.
-                // However, if the new chart doesn't support the previously selected tab,
-                // Grapher automatically switches to a supported one. In such cases,
-                // we call onChartSwitching to make adjustments that ensure the new view
-                // is sensible (e.g. updating the time selection when switching from a
-                // single-time chart like a discrete bar chart to a multi-time chart like
-                // a line chart).
-                const currentTab = grapher.activeTab
-                if (previousTab !== currentTab)
-                    grapher.onChartSwitching(previousTab, currentTab)
+                runInAction(() => {
+                    // When switching between mdim views, we usually preserve the tab.
+                    // However, if the new chart doesn't support the previously selected tab,
+                    // Grapher automatically switches to a supported one. In such cases,
+                    // we call adjustStateForTab to make adjustments that ensure the new view
+                    // is sensible (e.g. updating the time selection when switching from a
+                    // single-time chart like a discrete bar chart to a multi-time chart like
+                    // a line chart).
+                    const currentTab = grapherState.activeTab
+                    if (previousTab !== currentTab)
+                        grapherState.adjustStateForTab(currentTab)
+                })
             })
             .catch(Sentry.captureException)
         return () => {
@@ -214,16 +262,20 @@ export default function MultiDim({
         searchParams,
         settings,
         slug,
+        shouldPreserveTab,
+        additionalQueryParams,
         baseGrapherConfig,
         manager,
-        grapherRef,
+        grapherStateRef,
     ])
 
     useEffect(() => {
-        if (grapherRef.current) {
-            grapherRef.current.externalBounds = bounds
+        if (grapherStateRef.current) {
+            runInAction(() => {
+                grapherStateRef.current.externalBounds = bounds
+            })
         }
-    }, [bounds, grapherRef])
+    }, [bounds, grapherStateRef])
 
     return (
         <div className="multi-dim-container full-width-on-mobile">
@@ -240,7 +292,7 @@ export default function MultiDim({
                 ref={grapherContainerRef}
             >
                 <Grapher
-                    grapherState={grapherRef.current}
+                    grapherState={grapherStateRef.current}
                     {...baseGrapherConfig}
                 />
             </div>

@@ -17,11 +17,6 @@ import { Integer } from "./Various.js"
 export type TableSlug = string // a url friendly name for a table
 export type ColumnSlugs = string // slugs cannot have spaces, so this is a space delimited array of ColumnSlugs
 
-export enum SortOrder {
-    asc = "asc",
-    desc = "desc",
-}
-
 /**
  * A concrete point in time (year or date). It's always supposed to be a finite number, but we
  * cannot enforce this in TypeScript.
@@ -198,6 +193,15 @@ export interface CoreColumnDef extends ColumnColorScale {
     tolerance?: number // If set, some charts can use this for an interpolation strategy.
     toleranceStrategy?: ToleranceStrategy // Tolerance strategy to use for interpolation
     skipParsing?: boolean // If set, the values will never run through the type parser
+    // Denotes the relationship of this column to another column
+    derivedFrom?: {
+        columnSlug: ColumnSlug
+        relationship:
+            | "annotations"
+            | "originalTime"
+            | "originalStartTime"
+            | "originalValue"
+    }
 
     // Column information used for display only
     name?: string // The display name for the column

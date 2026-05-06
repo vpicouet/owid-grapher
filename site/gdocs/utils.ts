@@ -1,11 +1,6 @@
-import { useContext } from "react"
-
+import { useContext, createContext } from "react"
 import {
-    getCanonicalUrl,
-    getLinkType,
-    getUrlTarget,
-} from "@ourworldindata/components"
-import {
+    CalloutFunction,
     ImageMetadata,
     LinkedChart,
     OwidGdocPostContent,
@@ -13,19 +8,49 @@ import {
     LinkedIndicator,
     OwidGdocDataInsightContent,
     ContentGraphLinkType,
-    SubNavId,
     OwidGdocDataInsightInterface,
     OwidGdocPostInterface,
     OwidEnrichedGdocBlockTypeMap,
+    LinkedStaticViz,
+    OwidGdocType,
 } from "@ourworldindata/types"
+
+import {
+    getCanonicalUrl,
+    getLinkType,
+    getUrlTarget,
+} from "@ourworldindata/components"
 import {
     formatAuthors,
+    getCalloutValue,
+    getRegionByNameOrVariantName,
+    makeLinkedCalloutKey,
     traverseEnrichedBlock,
     Url,
 } from "@ourworldindata/utils"
 import { AttachmentsContext } from "./AttachmentsContext.js"
-import { SubnavItem, subnavs } from "../SiteConstants.js"
-import { BAKED_BASE_URL } from "../../settings/clientSettings.js"
+import { PROD_URL } from "../SiteConstants.js"
+import { BAKED_BASE_URL, IS_ARCHIVE } from "../../settings/clientSettings.js"
+
+const getOrigin = (url: string, base?: string): string | undefined => {
+    try {
+        return new URL(url, base).origin
+    } catch {
+        return undefined
+    }
+}
+
+export function isExternalUrl(
+    linkType: ContentGraphLinkType,
+    url: string
+): boolean {
+    if (linkType !== ContentGraphLinkType.Url) return false
+    const bakedOrigin = getOrigin(BAKED_BASE_URL)
+    if (!bakedOrigin) return false
+    const linkOrigin = getOrigin(url, bakedOrigin)
+    if (!linkOrigin) return false
+    return linkOrigin !== bakedOrigin
+}
 
 export const breadcrumbColorForCoverColor = (
     coverColor: OwidGdocPostContent["cover-color"]
@@ -58,7 +83,12 @@ export const breadcrumbColorForCoverColor = (
 
 export const useLinkedAuthor = (
     name: string
-): { name: string; slug: string | null; featuredImage: string | null } => {
+): {
+    name: string
+    slug: string | null
+    featuredImage: string | null
+    role?: string
+} => {
     const { linkedAuthors } = useContext(AttachmentsContext)
     const author = linkedAuthors?.find((author) => author.name === name)
     if (!author) return { name, slug: null, featuredImage: null }
@@ -66,6 +96,36 @@ export const useLinkedAuthor = (
 }
 
 type LinkedDocument = OwidGdocMinimalPostInterface & { url: string }
+
+export const getLinkedDocumentUrl = (
+    linkedDocument: Pick<OwidGdocMinimalPostInterface, "slug" | "type">,
+    originalUrl: string,
+    baseUrl: string = BAKED_BASE_URL
+): string => {
+    if (IS_ARCHIVE) {
+        baseUrl = PROD_URL
+    }
+
+    const parsedUrl = Url.fromURL(originalUrl)
+
+    let slug = linkedDocument.slug
+    if (linkedDocument.type === OwidGdocType.Profile) {
+        const entityParam = parsedUrl.queryParams.entity
+        if (entityParam) {
+            const region = getRegionByNameOrVariantName(entityParam)
+            if (region) {
+                slug = `${slug}/${region.slug}`
+            }
+        }
+    }
+
+    const canonicalUrl = getCanonicalUrl(baseUrl, {
+        slug,
+        content: { type: linkedDocument.type },
+    })
+
+    return `${canonicalUrl}${parsedUrl.hash}`
+}
 
 export const useLinkedDocument = (
     url: string
@@ -90,13 +150,34 @@ export const useLinkedDocument = (
         errorMessage = `Article with slug "${linkedDocument.slug}" isn't published.`
     }
 
+    // Validate ?entity=X for profile-type docs (when provided)
+    const parsedUrl = Url.fromURL(url)
+    const entityParam = parsedUrl.queryParams.entity
+    if (
+        linkedDocument.type === OwidGdocType.Profile &&
+        entityParam &&
+        !errorMessage
+    ) {
+        const region = getRegionByNameOrVariantName(entityParam)
+        if (!region) {
+            errorMessage = `Unknown entity name "${entityParam}" in profile link.`
+        } else if (!linkedDocument.availableEntityCodes) {
+            errorMessage = `Unable to determine available entities for profile "${linkedDocument.slug}".`
+        } else if (!linkedDocument.availableEntityCodes.includes(region.code)) {
+            errorMessage = `Entity "${entityParam}" is not available for profile "${linkedDocument.slug}".`
+        }
+    }
+
+    // Don't return a linked document with a URL when there's a country
+    // validation error — this prevents rendering a broken link
+    if (errorMessage) {
+        return { errorMessage }
+    }
+
     return {
         linkedDocument: {
             ...linkedDocument,
-            url: getCanonicalUrl(BAKED_BASE_URL, {
-                slug: linkedDocument.slug,
-                content: { type: linkedDocument.type },
-            }),
+            url: getLinkedDocumentUrl(linkedDocument, url),
         },
         errorMessage,
     }
@@ -109,7 +190,7 @@ export const useLinkedChart = (
     const linkType = getLinkType(url)
     if (linkType !== "grapher" && linkType !== "explorer") return {}
 
-    const queryString = Url.fromURL(url).queryStr
+    const parsedOriginalUrl = Url.fromURL(url)
     const urlTarget = getUrlTarget(url)
     const linkedChart = linkedCharts?.[urlTarget]
     if (!linkedChart) {
@@ -118,14 +199,13 @@ export const useLinkedChart = (
         }
     }
 
-    return {
-        linkedChart: {
-            ...linkedChart,
-            // linkedCharts doesn't store any querystring information, because it's indexed by slug
-            // Instead we get the querystring from the original URL and append it to resolvedUrl
-            resolvedUrl: `${linkedChart.resolvedUrl}${queryString}`,
-        },
-    }
+    const parsedResolvedUrl = Url.fromURL(linkedChart.resolvedUrl)
+    const resolvedUrl = parsedResolvedUrl.setQueryParams({
+        ...parsedResolvedUrl.queryParams,
+        ...parsedOriginalUrl.queryParams,
+    }).fullUrl
+
+    return { linkedChart: { ...linkedChart, resolvedUrl } }
 }
 
 export const useLinkedIndicator = (
@@ -163,28 +243,50 @@ export const useLinkedNarrativeChart = (name: string) => {
     return linkedNarrativeCharts?.[name]
 }
 
+export const useLinkedStaticViz = (
+    name: string
+): LinkedStaticViz | undefined => {
+    const { linkedStaticViz } = useContext(AttachmentsContext)
+    return linkedStaticViz?.[name]
+}
+
+/**
+ * Context provided to span-callout spans within a data-callout block.
+ * Contains the URL and entity from the parent data-callout, and the
+ * linked callout data from attachments.
+ */
+export interface DataCalloutContextType {
+    url: string
+}
+
+export const DataCalloutContext = createContext<DataCalloutContextType | null>(
+    null
+)
+
+export function useCalloutValue(
+    functionName: CalloutFunction,
+    parameters: string[]
+): string | undefined {
+    const { linkedCallouts = {} } = useContext(AttachmentsContext)
+    const calloutContext = useContext(DataCalloutContext)
+
+    if (!calloutContext) return undefined
+
+    const key = makeLinkedCalloutKey(calloutContext.url)
+
+    const linkedCallout = linkedCallouts[key]
+
+    if (!linkedCallout?.values) return undefined
+
+    return getCalloutValue(linkedCallout.values, functionName, parameters)
+}
+
 export function getShortPageCitation(
     authors: string[],
     title: string,
     publishedAt: Date | null
 ) {
     return `${formatAuthors(authors)} (${publishedAt?.getFullYear()}) - “${title}”`
-}
-
-export const getSubnavItem = (
-    id: string | undefined,
-    subnavItems: SubnavItem[]
-) => {
-    // We want to avoid matching elements with potentially undefined id.
-    // Static typing prevents id from being undefined but this might not be
-    // the case in a future API powered version.
-    return id ? subnavItems.find((item) => item.id === id) : undefined
-}
-
-export const getTopSubnavigationParentItem = (
-    subnavId: SubNavId
-): SubnavItem | undefined => {
-    return subnavs[subnavId]?.[0]
 }
 
 /**

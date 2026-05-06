@@ -15,7 +15,6 @@ import {
     faEye,
     faCoffee,
     faSatelliteDish,
-    faDownload,
     faHatWizard,
     faSitemap,
     faPanorama,
@@ -24,6 +23,7 @@ import {
     faStar,
     faCircleInfo,
     faFolder,
+    faMonument,
 } from "@fortawesome/free-solid-svg-icons"
 
 import { ETL_WIZARD_URL } from "../settings/clientSettings.js"
@@ -73,6 +73,11 @@ export const AdminSidebar = (): React.ReactElement => (
             <li>
                 <Link to="/images">
                     <FontAwesomeIcon icon={faImage} fixedWidth /> Images
+                </Link>
+            </li>
+            <li>
+                <Link to="/static-viz">
+                    <FontAwesomeIcon icon={faMonument} fixedWidth /> Static Viz
                 </Link>
             </li>
             <li>
@@ -136,12 +141,6 @@ export const AdminSidebar = (): React.ReactElement => (
                     <FontAwesomeIcon icon={faSitemap} fixedWidth /> Tag Graph
                 </Link>
             </li>
-            <li>
-                <Link to="/bulk-downloads">
-                    <FontAwesomeIcon icon={faDownload} fixedWidth /> Bulk
-                    downloads
-                </Link>
-            </li>
             <li className="header">SETTINGS</li>
             <li>
                 <Link to="/users/">
@@ -152,6 +151,12 @@ export const AdminSidebar = (): React.ReactElement => (
                 <Link to="/redirects">
                     <FontAwesomeIcon icon={faArrowRight} fixedWidth /> Chart
                     Redirects
+                </Link>
+            </li>
+            <li>
+                <Link to="/multi-dim-redirects">
+                    <FontAwesomeIcon icon={faArrowRight} fixedWidth />{" "}
+                    <span style={{ fontSize: 12 }}>Multi-dim redirects</span>
                 </Link>
             </li>
             <li>
@@ -170,6 +175,12 @@ export const AdminSidebar = (): React.ReactElement => (
                 <Link to="/deploys">
                     <FontAwesomeIcon icon={faSatelliteDish} fixedWidth /> Deploy
                     status
+                </Link>
+            </li>
+            <li>
+                <Link to="/callout-functions">
+                    <FontAwesomeIcon icon={faCircleInfo} fixedWidth /> Callout
+                    functions
                 </Link>
             </li>
         </ul>

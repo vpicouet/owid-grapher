@@ -1,69 +1,92 @@
-import {
-    Color,
-    EntityName,
-    OwidVariableRow,
-    SeriesName,
-} from "@ourworldindata/types"
+import { OwidVariableRow, SeriesName, Time } from "@ourworldindata/types"
 import { ChartSeries } from "../chart/ChartInterface"
 import {
     GRAPHER_AREA_OPACITY_DEFAULT,
-    GRAPHER_AREA_OPACITY_FOCUS,
-    GRAPHER_AREA_OPACITY_MUTE,
+    GRAPHER_AREA_OPACITY_HIGHLIGHTED,
+    GRAPHER_AREA_OPACITY_MUTED,
 } from "../core/GrapherConstants"
-import { TextWrap } from "@ourworldindata/components"
+import { Point } from "@ourworldindata/utils"
 import { InteractionState } from "../interaction/InteractionState.js"
+import { Emphasis } from "../interaction/Emphasis"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
 
-export const BAR_OPACITY = {
-    DEFAULT: GRAPHER_AREA_OPACITY_DEFAULT,
-    FOCUS: GRAPHER_AREA_OPACITY_FOCUS,
-    MUTE: GRAPHER_AREA_OPACITY_MUTE,
+const opacityByEmphasis: Record<Emphasis, number> = {
+    [Emphasis.Default]: GRAPHER_AREA_OPACITY_DEFAULT,
+    [Emphasis.Elevated]: GRAPHER_AREA_OPACITY_DEFAULT,
+    [Emphasis.Highlighted]: GRAPHER_AREA_OPACITY_HIGHLIGHTED,
+    [Emphasis.Muted]: GRAPHER_AREA_OPACITY_MUTED,
+} as const
+
+export interface StackedAreaStyleConfig {
+    fillOpacity: number
+    borderOpacity: number
+    borderWidth: number
 }
 
-export const AREA_OPACITY = {
-    DEFAULT: GRAPHER_AREA_OPACITY_DEFAULT,
-    FOCUS: GRAPHER_AREA_OPACITY_FOCUS,
-    MUTE: GRAPHER_AREA_OPACITY_MUTE,
-} as const
+export interface StackedBarStyleConfig {
+    opacity: number
+}
 
-export const BORDER_OPACITY = {
-    DEFAULT: 0.7,
-    FOCUS: 1,
-    MUTE: 0.3,
-} as const
+const DEFAULT_STACKED_AREA_STYLE: StackedAreaStyleConfig = {
+    fillOpacity: opacityByEmphasis.default,
+    borderOpacity: 0.7,
+    borderWidth: 0.5,
+}
 
-export const BORDER_WIDTH = {
-    DEFAULT: 0.5,
-    FOCUS: 1.5,
-} as const
+export const STACKED_AREA_STYLE: Record<Emphasis, StackedAreaStyleConfig> = {
+    [Emphasis.Default]: DEFAULT_STACKED_AREA_STYLE,
+    [Emphasis.Elevated]: DEFAULT_STACKED_AREA_STYLE,
+    [Emphasis.Highlighted]: {
+        fillOpacity: opacityByEmphasis.highlighted,
+        borderOpacity: 1,
+        borderWidth: 1.5,
+    },
+    [Emphasis.Muted]: {
+        fillOpacity: opacityByEmphasis.muted,
+        borderOpacity: 0.3,
+        borderWidth: 0.5,
+    },
+}
 
+export const STACKED_BAR_STYLE: Record<Emphasis, StackedBarStyleConfig> = {
+    [Emphasis.Default]: { opacity: opacityByEmphasis.default },
+    [Emphasis.Elevated]: { opacity: opacityByEmphasis.default },
+    [Emphasis.Highlighted]: { opacity: opacityByEmphasis.highlighted },
+    [Emphasis.Muted]: { opacity: opacityByEmphasis.muted },
+}
+
+export const LEGEND_STYLE_FOR_STACKED_CHARTS: LegendStyleConfig = {
+    marker: {
+        default: { opacity: opacityByEmphasis.default },
+        highlighted: { opacity: opacityByEmphasis.highlighted },
+        muted: { opacity: opacityByEmphasis.muted },
+    },
+    text: {
+        muted: { opacity: opacityByEmphasis.muted },
+    },
+}
+
+/** Either categorical (e.g. country names), or ordinal (e.g. years)  */
 export type StackedPointPositionType = string | number
 
-export type StackedPlacedPoint = [number, number]
-
-// PositionType can be categorical (e.g. country names), or ordinal (e.g. years).
 export interface StackedPoint<PositionType extends StackedPointPositionType> {
     position: PositionType
     value: number
     valueOffset: number
     time: number
-    interpolated?: boolean
-    fake?: boolean
+    formattedTime?: string
     color?: string
+    missing?: boolean
+    interpolated?: boolean
 }
 
-export interface StackedSeries<PositionType extends StackedPointPositionType>
-    extends ChartSeries {
-    points: StackedPoint<PositionType>[]
-    columnSlug?: string
-    isProjection?: boolean
-    isAllZeros?: boolean
-    focus?: InteractionState
-}
-
-export interface StackedPlacedSeries<
+export interface PlacedStackedPoint<
     PositionType extends StackedPointPositionType,
-> extends StackedSeries<PositionType> {
-    placedPoints: Array<StackedPlacedPoint>
+> extends StackedPoint<PositionType> {
+    x: number
+    y: number
+    barWidth: number
+    barHeight: number
 }
 
 export interface StackedRawSeries<
@@ -73,27 +96,46 @@ export interface StackedRawSeries<
     isProjection?: boolean
     rows: OwidVariableRow<PositionType>[]
     focus: InteractionState
-}
-
-export interface Bar {
-    color: Color
-    seriesName: string
-    columnSlug: string
-    point: StackedPoint<EntityName>
-}
-
-export interface Item {
-    entityName: string
     shortEntityName?: string
-    bars: Bar[]
-    totalValue: number
-    focus: InteractionState
 }
 
-export interface SizedItem extends Item {
-    label: TextWrap
+export interface StackedSeries<
+    PositionType extends StackedPointPositionType,
+> extends ChartSeries {
+    points: StackedPoint<PositionType>[]
+    columnSlug?: string
+    isProjection?: boolean
+    isAllZeros?: boolean
+    shortEntityName?: string
+    focus?: InteractionState
 }
 
-export interface PlacedItem extends SizedItem {
-    yPosition: number
+export interface PlacedStackedBarSeries<
+    PositionType extends StackedPointPositionType,
+> extends StackedSeries<PositionType> {
+    placedPoints: PlacedStackedPoint<PositionType>[]
+}
+
+export interface PlacedStackedAreaSeries<
+    PositionType extends StackedPointPositionType,
+> extends StackedSeries<PositionType> {
+    /** Top edge border of the area */
+    placedPoints: Point[]
+    /** Points defining the filled area polygon */
+    areaPoints: Point[]
+}
+
+export interface RenderStackedBarSeries<
+    PositionType extends StackedPointPositionType,
+> extends PlacedStackedBarSeries<PositionType> {
+    emphasis?: Emphasis
+    hover?: InteractionState
+    hoverTime?: Time
+}
+
+export interface RenderStackedAreaSeries<
+    PositionType extends StackedPointPositionType,
+> extends PlacedStackedAreaSeries<PositionType> {
+    emphasis?: Emphasis
+    hover?: InteractionState
 }
