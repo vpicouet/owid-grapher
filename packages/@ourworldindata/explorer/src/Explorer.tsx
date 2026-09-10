@@ -1234,6 +1234,25 @@ export class Explorer
     }
 
     @computed get requiredColumnSlugs() {
-        return this.grapherState?.newSlugs ?? []
+        // MSO customization: for explorers built in FromGrapherId mode (our
+        // pipeline — `graphers` rows reference existing chart IDs, columns come
+        // from variableIds, not inline CSV slugs), `newSlugs` is always empty
+        // because it only tracks slugs of inline-CSV columns. With an empty
+        // requiredColumnSlugs, EntityPicker.availableEntitiesForCurrentView
+        // falls back to grapherTable.availableEntityNameSet — every entity that
+        // appears in ANY column of the joined table, including the continent
+        // `color` dimension (variableId 900801) our pipeline attaches for the
+        // Marimekko view. That inflates the "has data" set to ~270 entities so
+        // NO country selector is ever greyed out, even when the active Y metric
+        // only covers a handful of countries.
+        // Fall back to the active Y column slugs (which in FromGrapherId mode
+        // are the stringified Y variableIds) so entity greying reflects the
+        // metric actually being shown. Verified 2026-09-10: nuclear-warhead
+        // explorer went from 1/202 greyed to 192/202 (only the 11 nuclear
+        // powers + World stay selectable), matching OWID's own food-prices
+        // explorer behaviour.
+        const newSlugs = this.grapherState?.newSlugs ?? []
+        if (newSlugs.length) return newSlugs
+        return this.grapherState?.yColumnSlugs ?? []
     }
 }
