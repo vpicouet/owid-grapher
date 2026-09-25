@@ -6,33 +6,51 @@ import {
     PostReference,
     SeriesName,
 } from "@ourworldindata/utils"
-import { ContentGraphLinkType } from "@ourworldindata/types"
-import { action, computed, observable, when, makeObservable } from "mobx"
+import {
+    ContentGraphLinkType,
+    OwidChartDimensionInterface,
+} from "@ourworldindata/types"
+import {
+    action,
+    computed,
+    observable,
+    when,
+    makeObservable,
+    reaction,
+    IReactionDisposer,
+} from "mobx"
 import { EditorFeatures } from "./EditorFeatures.js"
 import { Admin } from "./Admin.js"
 import {
     defaultGrapherConfig,
     getCachingInputTableFetcher,
     GrapherState,
-    loadVariableDataAndMetadata,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import { NarrativeChartMinimalInformation } from "./ChartEditor.js"
 import { IndicatorChartInfo } from "./IndicatorChartEditor.js"
 import { DataInsightMinimalInformation } from "../adminShared/AdminTypes.js"
-import { DATA_API_URL } from "../settings/clientSettings.js"
+import { CATALOG_URL, DATA_API_URL } from "../settings/clientSettings.js"
 
-export type EditorTab =
-    | "basic"
-    | "data"
-    | "text"
-    | "customize"
-    | "map"
-    | "scatter"
-    | "marimekko"
-    | "revisions"
-    | "refs"
-    | "export"
-    | "debug"
+const EDITOR_TABS = [
+    "basic",
+    "data",
+    "text",
+    "customize",
+    "map",
+    "scatter",
+    "marimekko",
+    "revisions",
+    "refs",
+    "export",
+    "debug",
+] as const
+
+export type EditorTab = (typeof EDITOR_TABS)[number]
+
+function isValidEditorTab(tab: string): tab is EditorTab {
+    return EDITOR_TABS.includes(tab as EditorTab)
+}
 
 export interface AbstractChartEditorManager {
     admin: Admin
@@ -64,8 +82,8 @@ export abstract class AbstractChartEditor<
     manager: Manager
 
     grapherState = new GrapherState({
-        additionalDataLoaderFn: (varId: number) =>
-            loadVariableDataAndMetadata(varId, DATA_API_URL, { noCache: true }),
+        additionalDataLoaderFn: (catalogKey) =>
+            loadCatalogData(catalogKey, { baseUrl: CATALOG_URL }),
     })
     cachingGrapherDataLoader = getCachingInputTableFetcher(
         DATA_API_URL,
@@ -83,6 +101,8 @@ export abstract class AbstractChartEditor<
     parentConfig: GrapherInterface | undefined = undefined
     // if inheritance is enabled, the parent config is applied to grapherState
     isInheritanceEnabled: boolean | undefined = undefined
+
+    private disposers: IReactionDisposer[] = []
 
     constructor(props: { manager: Manager }) {
         makeObservable(this, {
@@ -102,6 +122,9 @@ export abstract class AbstractChartEditor<
                 ? "mobile"
                 : "desktop"
 
+        this.readInitialTabFromUrl()
+        this.setupTabUrlSync()
+
         when(
             () => this.manager.parentConfig !== undefined,
             () => (this.parentConfig = this.manager.parentConfig)
@@ -117,6 +140,33 @@ export abstract class AbstractChartEditor<
             () => this.grapherState.hasData && this.grapherState.isReady,
             () => (this.savedPatchConfig = this.patchConfig)
         )
+    }
+
+    private readInitialTabFromUrl(): void {
+        const urlParams = new URLSearchParams(window.location.search)
+        const tabParam = urlParams.get("tab")
+        if (tabParam && isValidEditorTab(tabParam)) this.tab = tabParam
+    }
+
+    private setupTabUrlSync(): void {
+        this.disposers.push(
+            reaction(
+                () => this.tab,
+                (tab) => {
+                    const url = new URL(window.location.href)
+                    if (tab === "basic") {
+                        url.searchParams.delete("tab")
+                    } else {
+                        url.searchParams.set("tab", tab)
+                    }
+                    window.history.replaceState({}, "", url.toString())
+                }
+            )
+        )
+    }
+
+    dispose(): void {
+        this.disposers.forEach((dispose) => dispose())
     }
 
     abstract get references(): References | undefined
@@ -208,13 +258,13 @@ export abstract class AbstractChartEditor<
     @computed get invalidFocusedSeriesNames(): SeriesName[] {
         const { grapherState } = this
 
-        // if focusing is not supported, then all focused series are invalid
+        // If focusing is not supported, then all focused series are invalid
         if (!this.features.canHighlightSeries) {
             return grapherState.focusArray.seriesNames
         }
 
-        // find invalid focused series
-        const availableSeriesNames = grapherState.chartSeriesNames
+        // Find invalid focused series
+        const availableSeriesNames = grapherState.focusableSeriesNames
         const focusedSeriesNames = grapherState.focusArray.seriesNames
         return _.difference(focusedSeriesNames, availableSeriesNames)
     }
@@ -222,7 +272,7 @@ export abstract class AbstractChartEditor<
     @computed get invalidSelectedEntityNames(): SeriesName[] {
         const { grapherState } = this
 
-        // find invalid selected entities
+        // Find invalid selected entities
         const { availableEntityNames } = grapherState
         const selectedEntityNames = grapherState.selection.selectedEntityNames
         return _.difference(selectedEntityNames, availableEntityNames)
@@ -245,6 +295,20 @@ export abstract class AbstractChartEditor<
             grapherState.selectedEntityColors
         )
         if (inputTable) grapherState.inputTable = inputTable
+    }
+
+    @action.bound async commitDimensionsAndReloadData(
+        newDimensions?: OwidChartDimensionInterface[]
+    ): Promise<void> {
+        const { grapherState } = this
+        if (newDimensions) {
+            grapherState.setDimensionsFromConfigs(newDimensions)
+        }
+        grapherState.updateAuthoredVersion({
+            dimensions: grapherState.dimensions.map((dim) => dim.toObject()),
+        })
+        grapherState.seriesColorMap?.clear()
+        await this.reloadGrapherData()
     }
 
     abstract get isNewGrapher(): boolean

@@ -8,7 +8,7 @@ import {
     GrapherState,
     getCachingInputTableFetcher,
     GrapherManager,
-    loadVariableDataAndMetadata,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import {
     DataPageDataV2,
@@ -18,6 +18,7 @@ import {
     isInIFrame,
 } from "@ourworldindata/utils"
 import {
+    AdditionalGrapherDataFetchFn,
     ArchiveContext,
     DataPageRelatedResearch,
     FaqEntryKeyedByGdocIdAndFragmentId,
@@ -47,6 +48,7 @@ import {
     DATA_API_URL,
     BAKED_GRAPHER_URL,
     ADMIN_BASE_URL,
+    CATALOG_URL,
 } from "../../settings/clientSettings.js"
 
 export const OWID_DATAPAGE_CONTENT_ROOT_ID = "owid-datapageJson-root"
@@ -112,11 +114,11 @@ export function DataPageContent({
     const managerRef = useRef<GrapherManager>({ adminEditPath: "" })
     const grapherStateRef = useRef<GrapherState>(
         new GrapherState({
-            additionalDataLoaderFn: (varId: number) =>
-                loadVariableDataAndMetadata(varId, DATA_API_URL, {
+            additionalDataLoaderFn: ((catalogKey) =>
+                loadCatalogData(catalogKey, {
+                    baseUrl: CATALOG_URL,
                     assetMap,
-                    noCache: isPreviewing,
-                }),
+                })) as AdditionalGrapherDataFetchFn,
             manager: managerRef.current,
             archiveContext,
             isConfigReady: false,
@@ -126,6 +128,11 @@ export function DataPageContent({
     const [searchParams, setSearchParams] = useSearchParams()
     const [varDatapageData, setVarDatapageData] =
         useState<VariableDataPageData | null>(null)
+
+    // Workaround to prevent a race condition when switching between views.
+    // https://github.com/owid/owid-grapher/issues/5727
+    const [isLoadingView, setIsLoadingView] = useState(false)
+
     const inputTableFetcher = useMemo(
         () =>
             getCachingInputTableFetcher(
@@ -164,6 +171,7 @@ export function DataPageContent({
             if (!variableId) return
 
             grapherState.isDataReady = false
+            setIsLoadingView(true)
 
             const datapageDataPromise = cachedGetVariableMetadata(
                 variableId,
@@ -260,6 +268,7 @@ export function DataPageContent({
                     }
                 })
                 .catch(Sentry.captureException)
+                .finally(() => setIsLoadingView(false))
         },
         [
             assetMap,
@@ -415,6 +424,7 @@ export function DataPageContent({
                                 config={config}
                                 settings={settings}
                                 onChange={handleSettingsChange}
+                                disabled={isLoadingView}
                             />
                         </div>
                     </div>

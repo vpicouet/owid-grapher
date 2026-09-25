@@ -21,6 +21,7 @@ import { TagGraphRoot } from "../domainTypes/ContentGraph.js"
 import { DbRawImage } from "../dbTypes/Images.js"
 import { DbPlainNarrativeChart } from "../dbTypes/NarrativeCharts.js"
 import { ArchivedPageVersion } from "../domainTypes/Archive.js"
+import { GrapherValuesJson } from "../endpointTypes/GrapherValuesJson.js"
 
 export enum OwidGdocPublicationContext {
     unlisted = "unlisted",
@@ -95,6 +96,18 @@ export interface LinkedIndicator {
     attributionShort?: string
 }
 
+/**
+ * A linked callout stores the data values needed to populate a data-callout block.
+ * The key is generated from the normalized URL + entity name.
+ */
+export interface LinkedCallout {
+    url: string
+    /** The data values for this chart/entity combination */
+    values: GrapherValuesJson
+}
+
+export type LinkedCallouts = Record<string, LinkedCallout>
+
 export enum OwidGdocType {
     Article = "article",
     TopicPage = "topic-page",
@@ -131,6 +144,7 @@ export interface OwidGdocBaseInterface {
     linkedNarrativeCharts?: Record<string, NarrativeChartInfo>
     linkedStaticViz?: Record<string, LinkedStaticViz>
     linkedIndicators?: Record<number, LinkedIndicator>
+    linkedCallouts?: LinkedCallouts
     imageMetadata?: Record<string, ImageMetadata>
     relatedCharts?: RelatedChart[]
     tags?: MinimalTag[] | null
@@ -157,6 +171,7 @@ export interface OwidGdocMinimalPostInterface {
     "featured-image"?: string // used in prominent links and research & writing block
     kicker?: string // used in homepage announcements
     cta?: { text: string; url: string } // used in homepage announcements
+    availableEntityCodes?: string[] // used for profile-type docs to resolve ?country=X links
 }
 
 export type OwidGdocIndexItem = Pick<
@@ -253,11 +268,14 @@ export interface OwidGdocAnnouncementInterface extends OwidGdocBaseInterface {
     content: OwidGdocAnnouncementContent
 }
 
+export type OwidGdocProfileScope = "countries" | "continents" | "all"
+
 export interface OwidGdocProfileContent {
     type: OwidGdocType.Profile
     title: string
     authors: string[]
-    scope: string // e.g. "countries, continents"
+    scope: OwidGdocProfileScope
+    exclude?: string
     subtitle?: string
     excerpt?: string
     "featured-image"?: string
@@ -385,11 +403,10 @@ export interface OwidGdocErrorMessage {
 }
 
 // see also: getOwidGdocFromJSON()
-export interface OwidGdocJSON
-    extends Omit<
-        OwidGdocPostInterface,
-        "createdAt" | "publishedAt" | "updatedAt"
-    > {
+export interface OwidGdocJSON extends Omit<
+    OwidGdocPostInterface,
+    "createdAt" | "publishedAt" | "updatedAt"
+> {
     createdAt: string
     publishedAt: string | null
     updatedAt: string | null

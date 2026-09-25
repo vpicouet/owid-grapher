@@ -1,0 +1,11 @@
+{
+  "site/owid.entry.ts": {
+    "file": "owid.mjs",
+    "name": "owid",
+    "src": "site/owid.entry.ts",
+    "isEntry": true,
+    "css": [
+      "owid.css"
+    ]
+  }
+}

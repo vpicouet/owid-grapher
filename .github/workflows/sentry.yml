@@ -4,6 +4,8 @@ on: push
 jobs:
     create-release:
         runs-on: ubuntu-latest
+        # Only run on OWID repo where SENTRY secrets exist
+        if: github.repository == 'owid/owid-grapher'
 
         steps:
             - name: Clone repository

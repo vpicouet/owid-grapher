@@ -55,6 +55,8 @@ $zindex-controls-drawer: 150;
     @import "../controls/MapRegionDropdown.scss";
     @import "../captionedChart/CaptionedChart.scss";
     @import "../timeline/TimelineComponent.scss";
+    @import "../tabs/Tabs.scss";
+    @import "../tabs/TabsWithDropdown.scss";
     @import "../controls/ContentSwitchers.scss";
     @import "../controls/ActionButtons.scss";
     @import "../controls/ShareMenu.scss";
@@ -70,8 +72,6 @@ $zindex-controls-drawer: 150;
     @import "../header/Header.scss";
     @import "../modal/SourcesKeyDataTable.scss";
     @import "../modal/SourcesDescriptions.scss";
-    @import "../tabs/Tabs.scss";
-    @import "../tabs/TabsWithDropdown.scss";
     @import "../slideInDrawer/SlideInDrawer.scss";
     @import "../sidePanel/SidePanel.scss";
     @import "../scatterCharts/NoDataSection.scss";
@@ -87,6 +87,7 @@ $zindex-controls-drawer: 150;
 @import "../../../components/src/Checkbox.scss";
 @import "../../../components/src/RadioButton.scss";
 @import "../../../components/src/loadingIndicator/LoadingIndicator.scss";
+@import "../seriesLabel/RegionTooltip.scss";
 
 @import "../../../components/src/closeButton/CloseButton.scss";
 @import "../../../components/src/OverlayHeader.scss";
@@ -223,6 +224,29 @@ $zindex-controls-drawer: 150;
 
     .tippy-arrow {
         color: $gray-90;
+    }
+}
+
+// React Aria Tooltip
+// Matches the styling of .tippy-box[data-theme="grapher-explanation"]
+.react-aria-tooltip {
+    background: white;
+    color: $gray-80;
+    font: 400 14px/1.5 $sans-serif-font-stack;
+    box-shadow: 0px 4px 40px 0px rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    padding: 15px;
+    max-width: 338px;
+
+    // Small triangle arrow that point to the info icon
+    .react-aria-tooltip__overlay-arrow {
+        position: absolute;
+
+        svg {
+            display: block;
+            fill: white;
+            stroke: none;
+        }
     }
 }
 

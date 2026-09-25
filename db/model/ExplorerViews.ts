@@ -8,6 +8,7 @@ import {
     GrapherInterface,
     DbPlainChart,
     DbRawChartConfig,
+    ExplorerViewDimensionsTableName,
 } from "@ourworldindata/types"
 import {
     ExplorerProgram,
@@ -24,6 +25,7 @@ import {
     ADMIN_BASE_URL,
     BAKED_BASE_URL,
     BAKED_GRAPHER_URL,
+    CATALOG_URL,
     DATA_API_URL,
 } from "../../settings/clientSettings.js"
 
@@ -162,6 +164,7 @@ function createExplorerForViews(
         bakedBaseUrl: BAKED_BASE_URL,
         bakedGrapherUrl: BAKED_GRAPHER_URL,
         dataApiUrl: DATA_API_URL,
+        catalogUrl: CATALOG_URL,
         loadMetadataOnly,
         throwOnMissingGrapher: true,
         setupGrapher: false, // We will set up the grapher later in iterateExplorerViews
@@ -445,6 +448,11 @@ export async function refreshExplorerViewsForSlug(
             }
             await insertChartConfig(knex, chartConfig)
 
+            await knex(ExplorerViewDimensionsTableName).insert({
+                chartConfigId,
+                dimensions: generated.dimensions,
+            })
+
             updatedChartConfigIds.push(chartConfigId)
 
             await knex("explorer_views").where("id", existing.id).update({
@@ -471,6 +479,11 @@ export async function refreshExplorerViewsForSlug(
                     full: serializeChartConfig(newView.config),
                 }
                 await insertChartConfig(knex, chartConfig)
+
+                await knex(ExplorerViewDimensionsTableName).insert({
+                    chartConfigId,
+                    dimensions: newView.dimensions,
+                })
 
                 updatedChartConfigIds.push(chartConfigId)
 

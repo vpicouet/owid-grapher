@@ -23,6 +23,7 @@ import {
     byHoverThenFocusState,
     getHoverStateForSeries,
 } from "../chart/ChartUtils"
+import { resolveEmphasis } from "../interaction/Emphasis"
 
 export type AnnotationsMap = Map<PrimitiveType, Set<PrimitiveType>>
 
@@ -115,11 +116,11 @@ export function getYAxisConfigDefaults(
 ): AxisConfigInterface {
     return {
         nice: config?.scaleType !== ScaleType.log,
-        // if we only have a single y value (probably 0), we want the
+        // If we only have a single y value (probably 0), we want the
         // horizontal axis to be at the bottom of the chart.
         // see https://github.com/owid/owid-grapher/pull/975#issuecomment-890798547
         singleValueAxisPointAlign: AxisAlign.start,
-        // default to 0 if not set
+        // Default to 0 if not set
         min: 0,
     }
 }
@@ -162,13 +163,13 @@ export function toRenderLineChartSeries(
     }
 ): RenderLineChartSeries[] {
     let series: RenderLineChartSeries[] = placedSeries.map((series) => {
-        return {
-            ...series,
-            hover: getHoverStateForSeries(series, {
-                isHoverModeActive,
-                hoveredSeriesNames,
-            }),
-        }
+        const hover = getHoverStateForSeries(series, {
+            isHoverModeActive,
+            hoveredSeriesNames,
+        })
+        const emphasis = resolveEmphasis({ hover, focus: series.focus })
+
+        return { ...series, hover, emphasis }
     })
 
     // draw lines on top of markers-only series

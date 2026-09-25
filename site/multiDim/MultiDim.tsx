@@ -12,9 +12,9 @@ import {
     getCachingInputTableFetcher,
     Grapher,
     GrapherProgrammaticInterface,
-    loadVariableDataAndMetadata,
     useMaybeGlobalGrapherStateRef,
     GuidedChartContext,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import {
     extractMultiDimChoicesFromSearchParams,
@@ -23,13 +23,17 @@ import {
     MultiDimDataPageConfig,
     MultiDimDimensionChoices,
 } from "@ourworldindata/utils"
-import { ArchiveContext } from "@ourworldindata/types"
+import {
+    AdditionalGrapherDataFetchFn,
+    ArchiveContext,
+} from "@ourworldindata/types"
 import { useElementBounds } from "../hooks.js"
 import { cachedGetGrapherConfigByUuid } from "./api.js"
 import MultiDimEmbedSettingsPanel from "./MultiDimEmbedSettingsPanel.js"
 import { useBaseGrapherConfig, useMultiDimAnalytics } from "./hooks.js"
 import {
     BAKED_GRAPHER_URL,
+    CATALOG_URL,
     DATA_API_URL,
 } from "../../settings/clientSettings.js"
 
@@ -56,11 +60,11 @@ export default function MultiDim({
     const grapherStateRef = useMaybeGlobalGrapherStateRef({
         manager: manager.current,
         queryStr,
-        additionalDataLoaderFn: (varId: number) =>
-            loadVariableDataAndMetadata(varId, DATA_API_URL, {
+        additionalDataLoaderFn: ((catalogKey) =>
+            loadCatalogData(catalogKey, {
+                baseUrl: CATALOG_URL,
                 assetMap,
-                noCache: isPreviewing,
-            }),
+            })) as AdditionalGrapherDataFetchFn,
         archiveContext,
         isConfigReady: false,
     })
@@ -90,7 +94,7 @@ export default function MultiDim({
     })
     // We want to preserve the grapher tab when switching between views, except
     // when the switch happens via a guided chart link.
-    const [shouldPreserveTab, setShouldPreserveTab] = useState(false)
+    const [shouldPreserveTab, setShouldPreserveTab] = useState(true)
     const [additionalQueryParams, setAdditionalQueryParams] =
         useState<GrapherQueryParams | null>(null)
 

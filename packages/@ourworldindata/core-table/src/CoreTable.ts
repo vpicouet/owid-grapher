@@ -1,6 +1,5 @@
 import * as _ from "lodash-es"
 import {
-    csvEscape,
     intersection,
     isPresent,
     ColumnSlug,
@@ -29,7 +28,6 @@ import {
     CoreColumnDef,
     JsTypes,
     OwidTableSlugs,
-    OwidColumnDef,
 } from "@ourworldindata/types"
 import {
     makeAutoTypeFn,
@@ -70,7 +68,8 @@ export class CoreTable<
     ROW_TYPE extends CoreRow = CoreRow,
     COL_DEF_TYPE extends CoreColumnDef = CoreColumnDef,
 > {
-    private _columns: Map<ColumnSlug, CoreColumn> = new Map()
+    private _columns: Map<ColumnSlug, CoreColumn<this, COL_DEF_TYPE>> =
+        new Map()
     protected parent?: this
     tableDescription: string
     private timeToLoad = 0
@@ -146,6 +145,10 @@ export class CoreTable<
         return new CoreTable(
             this.defs.filter((def) => !providedSlugs.has(def.slug))
         )
+    }
+
+    isOwidTable(): boolean {
+        return false
     }
 
     @imemo get transformCategory(): TransformType {
@@ -287,7 +290,7 @@ export class CoreTable<
         const { inputColumnStore, colsToParse } = this
         const columnsObject: CoreColumnStore = {}
         if (!colsToParse.length) return columnsObject
-        const missingCols: CoreColumn[] = []
+        const missingCols: CoreColumn<this>[] = []
         let len = 0
         colsToParse.forEach((col) => {
             const { slug } = col
@@ -311,7 +314,7 @@ export class CoreTable<
         return columnsObject
     }
 
-    private get colsToParse(): CoreColumn[] {
+    private get colsToParse(): CoreColumn<this>[] {
         const { inputType, columnsAsArray, inputColumnStore } = this
         const columnsToMaybeParse = columnsAsArray.filter(
             (col) => !col.def.skipParsing
@@ -442,16 +445,14 @@ export class CoreTable<
         return this.columnSlugs.length
     }
 
-    get(columnSlug: ColumnSlug | undefined): CoreColumn {
+    get(columnSlug: ColumnSlug | undefined): CoreColumn<this, COL_DEF_TYPE> {
         if (columnSlug === undefined)
             return new MissingColumn(this, {
                 slug: `undefined_slug`,
-            })
+            } as COL_DEF_TYPE)
         return (
             this._columns.get(columnSlug) ??
-            new MissingColumn(this, {
-                slug: columnSlug,
-            })
+            new MissingColumn(this, { slug: columnSlug } as COL_DEF_TYPE)
         )
     }
 
@@ -462,16 +463,12 @@ export class CoreTable<
 
     getFirstColumnWithType(
         columnTypeName: ColumnTypeNames
-    ): CoreColumn | undefined {
+    ): CoreColumn<this, COL_DEF_TYPE> | undefined {
         return this.columnsAsArray.find(
             (col) => col.def.type === columnTypeName
         )
     }
 
-    // todo: move this. time methods should not be in CoreTable, in OwidTable instead (which is really TimeSeriesTable).
-    // TODO: remove this. Currently we use this to get the right day/year time formatting. For now a chart is either a "day chart" or a "year chart".
-    // But we can have charts with multiple time columns. Ideally each place that needs access to the timeColumn, would get the specific column
-    // and not the first time column from the table.
     @imemo get timeColumn(): TimeColumn | MissingColumn {
         // "time" is the canonical time column slug.
         // See LegacyToOwidTable where this column is injected for all Graphers.
@@ -496,20 +493,7 @@ export class CoreTable<
             maybeTimeColumn) as TimeColumn | MissingColumn
     }
 
-    // todo: should be on owidtable
-    @imemo get entityNameColumn(): CoreColumn {
-        return (
-            this.getFirstColumnWithType(ColumnTypeNames.EntityName) ??
-            this.get(OwidTableSlugs.entityName)
-        )
-    }
-
-    // todo: should be on owidtable
-    @imemo get entityNameSlug(): string {
-        return this.entityNameColumn.slug
-    }
-
-    @imemo private get columnsWithParseErrors(): CoreColumn[] {
+    @imemo private get columnsWithParseErrors(): CoreColumn<this>[] {
         return this.columnsAsArray.filter((col) => col.numErrorValues)
     }
 
@@ -695,15 +679,15 @@ export class CoreTable<
             .map((col) => col.slug)
     }
 
-    private get _columnsAsArray(): CoreColumn[] {
+    private get _columnsAsArray(): CoreColumn<this, COL_DEF_TYPE>[] {
         return Array.from(this._columns.values())
     }
 
-    @imemo get columnsAsArray(): CoreColumn[] {
+    @imemo get columnsAsArray(): CoreColumn<this, COL_DEF_TYPE>[] {
         return this._columnsAsArray
     }
 
-    getColumns(slugs: ColumnSlug[]): CoreColumn[] {
+    getColumns(slugs: ColumnSlug[]): CoreColumn<this, COL_DEF_TYPE>[] {
         return slugs.map((slug) => this.get(slug))
     }
 
@@ -848,29 +832,6 @@ export class CoreTable<
         }
     }
 
-    toCsvWithColumnNames(useShortNames: boolean = false): string {
-        const delimiter = ","
-        const header =
-            this.columnsAsArray
-                .map((col) =>
-                    csvEscape(
-                        useShortNames && (col.def as OwidColumnDef).shortName
-                            ? (col.def as OwidColumnDef).shortName
-                            : col.name
-                    )
-                )
-                .join(delimiter) + "\n"
-        const body = this.rows
-            .map((row) =>
-                this.columnsAsArray.map(
-                    (col) => col.formatForCsv(row[col.slug]) ?? ""
-                )
-            )
-            .map((row) => row.join(delimiter))
-            .join("\n")
-        return header + body
-    }
-
     rowsAt(indices: number[]): ROW_TYPE[] {
         const { columnStore } = this
         return indices.map(
@@ -930,17 +891,19 @@ export class CoreTable<
     }
 
     select(slugs: ColumnSlug[]): this {
-        const columnsToKeep = new Set(slugs)
         const newStore: CoreColumnStore = {}
-        const defs = this.columnsAsArray
-            .filter((col) => columnsToKeep.has(col.slug))
-            .map((col) => col.def) as COL_DEF_TYPE[]
 
-        Object.keys(this.columnStore)
-            .filter((slug) => columnsToKeep.has(slug))
-            .forEach((slug) => {
+        // Build defs in the order specified by slugs
+        const defs = slugs
+            .filter((slug) => this.has(slug))
+            .map((slug) => this.get(slug).def) as COL_DEF_TYPE[]
+
+        // Build column store with the same columns
+        slugs.forEach((slug) => {
+            if (this.columnStore[slug] !== undefined) {
                 newStore[slug] = this.columnStore[slug]
-            })
+            }
+        })
 
         return this.transform(
             newStore,
@@ -984,6 +947,24 @@ export class CoreTable<
             this.indices
                 .map((index) => (this.isRowEmpty(index) ? index : null))
                 .filter(isPresent)
+        )
+    }
+
+    dropRowsWithErrorValuesForAnyColumn(slugs: ColumnSlug[]): this {
+        return this.rowFilter(
+            (row) => slugs.every((slug) => isNotErrorValue(row[slug])),
+            `Drop rows with empty or ErrorValues in any column: ${slugs.join(
+                ", "
+            )}`
+        )
+    }
+
+    dropRowsWithErrorValuesForAllColumns(slugs: ColumnSlug[]): this {
+        return this.rowFilter(
+            (row) => slugs.some((slug) => isNotErrorValue(row[slug])),
+            `Drop rows with empty or ErrorValues in every column: ${slugs.join(
+                ", "
+            )}`
         )
     }
 
@@ -1033,7 +1014,7 @@ export class CoreTable<
 
     replaceCells(
         columnSlugs: ColumnSlug[],
-        replaceFn: (val: CoreValueType) => CoreValueType
+        replaceFn: (val: CoreValueType, index: number) => CoreValueType
     ): this {
         const newStore: CoreColumnStore = { ...this.columnStore }
         columnSlugs.forEach((slug) => {

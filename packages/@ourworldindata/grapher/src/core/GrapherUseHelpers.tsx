@@ -1,26 +1,30 @@
-import { Bounds } from "@ourworldindata/utils"
 import { debounce } from "lodash-es"
-import { GrapherProgrammaticInterface } from "../index.js"
+import { GrapherProgrammaticInterface, loadCatalogData } from "../index.js"
 import * as Sentry from "@sentry/react"
+import { createRoot } from "react-dom/client"
 import { FetchingGrapher } from "./FetchingGrapher.js"
 import {
+    AdditionalGrapherDataFetchFn,
     ArchiveContext,
-    OwidVariableDataMetadataDimensions,
-    OwidVariableId,
 } from "@ourworldindata/types"
-import { loadVariableDataAndMetadata } from "./loadVariable.js"
-import { createRoot } from "react-dom/client"
+import { Bounds } from "@ourworldindata/utils"
 
-export function renderGrapherIntoContainer(
-    config: GrapherProgrammaticInterface,
-    containerNode: Element,
-    dataApiUrl: string,
-    {
-        archiveContext,
-        noCache,
-    }: { archiveContext?: ArchiveContext; noCache?: boolean } = {}
-): void {
-    const reactRoot = createRoot(containerNode)
+export function renderGrapherIntoContainer({
+    config,
+    container,
+    dataApiUrl,
+    catalogUrl,
+    archiveContext,
+    noCache,
+}: {
+    config: GrapherProgrammaticInterface
+    container: Element
+    dataApiUrl: string
+    catalogUrl: string
+    archiveContext?: ArchiveContext
+    noCache?: boolean
+}): void {
+    const reactRoot = createRoot(container)
 
     const setBoundsFromContainerAndRender = (
         entries: ResizeObserverEntry[]
@@ -37,10 +41,10 @@ export function renderGrapherIntoContainer(
 
         const grapherConfigWithBounds = {
             ...config,
-            additionalDataLoaderFn: (
-                varId: OwidVariableId
-            ): Promise<OwidVariableDataMetadataDimensions> =>
-                loadVariableDataAndMetadata(varId, dataApiUrl, { noCache }),
+            additionalDataLoaderFn: ((catalogKey) =>
+                loadCatalogData(catalogKey, {
+                    baseUrl: catalogUrl,
+                })) as AdditionalGrapherDataFetchFn,
         }
 
         reactRoot.render(
@@ -48,6 +52,7 @@ export function renderGrapherIntoContainer(
                 <FetchingGrapher
                     config={grapherConfigWithBounds}
                     dataApiUrl={dataApiUrl}
+                    catalogUrl={catalogUrl}
                     archiveContext={archiveContext}
                     externalBounds={Bounds.fromRect(entry.contentRect)}
                     queryStr={grapherConfigWithBounds.queryStr}
@@ -64,7 +69,7 @@ export function renderGrapherIntoContainer(
                 leading: true,
             })
         )
-        resizeObserver.observe(containerNode)
+        resizeObserver.observe(container)
     } else if (typeof window === "object" && typeof document === "object") {
         // only show the warning when we're in something that roughly resembles a browser
         console.warn(
@@ -73,36 +78,41 @@ export function renderGrapherIntoContainer(
     }
 }
 
-export function renderSingleGrapherOnGrapherPage(
-    jsonConfig: GrapherProgrammaticInterface,
-    dataApiUrl: string,
-    {
-        archiveContext,
-        noCache,
-        queryParams,
-    }: {
-        archiveContext?: ArchiveContext
-        noCache?: boolean
-        queryParams?: URLSearchParams
-    } = {}
-): void {
+export function renderSingleGrapherOnGrapherPage({
+    config,
+    dataApiUrl,
+    catalogUrl,
+    archiveContext,
+    noCache,
+    queryParams,
+}: {
+    config: GrapherProgrammaticInterface
+    dataApiUrl: string
+    catalogUrl: string
+    archiveContext?: ArchiveContext
+    noCache?: boolean
+    queryParams?: URLSearchParams
+}): void {
     const container = document.getElementsByTagName("figure")[0]
     const queryStrValue = queryParams
         ? `?${queryParams.toString()}`
         : window.location.search
     try {
-        renderGrapherIntoContainer(
-            {
-                ...jsonConfig,
-                bindUrlToWindow: true,
-                enableKeyboardShortcuts: true,
-                queryStr: queryStrValue,
-                archiveContext,
-            },
+        const enrichedConfig = {
+            ...config,
+            bindUrlToWindow: true,
+            enableKeyboardShortcuts: true,
+            queryStr: queryStrValue,
+            archiveContext,
+        }
+        renderGrapherIntoContainer({
+            config: enrichedConfig,
             container,
             dataApiUrl,
-            { archiveContext, noCache }
-        )
+            catalogUrl,
+            archiveContext,
+            noCache,
+        })
     } catch (err) {
         container.innerHTML = `<p>Unable to load interactive visualization</p>`
         container.setAttribute("id", "fallback")

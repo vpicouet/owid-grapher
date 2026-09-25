@@ -14,7 +14,8 @@ import {
     PointVector,
     Bounds,
     isTouchDevice,
-    makeIdForHumanConsumption,
+    makeFigmaId,
+    guid,
 } from "@ourworldindata/utils"
 import { observer } from "mobx-react"
 import { NoDataModal } from "../noDataModal/NoDataModal"
@@ -41,7 +42,11 @@ import { DualAxis, HorizontalAxis, VerticalAxis } from "../axis/Axis"
 import { ColorScale, NO_DATA_LABEL } from "../color/ColorScale"
 import { AxisConfig, AxisManager } from "../axis/AxisConfig"
 import { ChartInterface } from "../chart/ChartInterface"
-import { getShortNameForEntity } from "../chart/ChartUtils"
+import {
+    ClipPath,
+    getShortNameForEntity,
+    makeClipPath,
+} from "../chart/ChartUtils"
 import {
     ScatterPlotManager,
     ScatterSeries,
@@ -55,10 +60,8 @@ import {
 } from "./ScatterPlotChartConstants"
 import { ScatterPointsWithLabels } from "./ScatterPointsWithLabels"
 import { ColorScaleBin } from "../color/ColorScaleBin"
-import {
-    LegendInteractionState,
-    LegendStyleConfig,
-} from "../legend/LegendInteractionState"
+import { LegendStyleConfig } from "../legend/LegendStyleConfig"
+import { Emphasis } from "../interaction/Emphasis"
 import {
     ScatterSizeLegend,
     ScatterSizeLegendManager,
@@ -105,7 +108,7 @@ export class ScatterPlotChart
             default: { opacity: SCATTER_POINT_OPACITY },
             muted: { fill: INACTIVE_SCATTER_POINT_COLOR },
         },
-        text: { muted: { color: GRAY_60 }, focused: { color: GRAY_100 } },
+        text: { muted: { color: GRAY_60 }, highlighted: { color: GRAY_100 } },
     }
 
     @computed get chartState(): ScatterPlotChartState {
@@ -186,6 +189,10 @@ export class ScatterPlotChart
 
     @computed get fontSize(): number {
         return this.manager.fontSize ?? BASE_FONT_SIZE
+    }
+
+    @computed get isStaticAndSmall(): boolean {
+        return !!this.manager.isStaticAndSmall
     }
 
     @action.bound onLegendMouseOver(bin: ColorScaleBin): void {
@@ -281,7 +288,7 @@ export class ScatterPlotChart
             this.xColumn.isTimeColumn ||
             this.yColumn.isTimeColumn ||
             this.manager.isRelativeMode ||
-            this.manager.isDisplayedAlongsideComplementaryTable
+            !this.manager.showLegend
         )
             return undefined
 
@@ -317,10 +324,7 @@ export class ScatterPlotChart
     @computed private get verticalColorLegend():
         | VerticalColorLegend
         | undefined {
-        if (
-            this.categoricalLegendData.length === 0 ||
-            this.manager.isDisplayedAlongsideComplementaryTable
-        )
+        if (this.categoricalLegendData.length === 0 || !this.manager.showLegend)
             return undefined
         return new VerticalColorLegend({ manager: this })
     }
@@ -340,6 +344,7 @@ export class ScatterPlotChart
     @computed.struct get sidebarWidth(): number {
         const { sidebarMinWidth, sidebarMaxWidth } = this
 
+        // No sidebar needed if there are no legends
         if (
             !this.verticalColorLegend &&
             !this.sizeLegend &&
@@ -348,10 +353,9 @@ export class ScatterPlotChart
         )
             return 0
 
-        return Math.max(
-            Math.min(this.verticalColorLegend?.width ?? 0, sidebarMaxWidth),
-            sidebarMinWidth
-        )
+        const colorLegendWidth = this.verticalColorLegend?.width ?? 0
+
+        return _.clamp(colorLegendWidth, sidebarMinWidth, sidebarMaxWidth)
     }
 
     @computed get dualAxis(): DualAxis {
@@ -409,11 +413,9 @@ export class ScatterPlotChart
         return Array.from(activeColorsSet)
     }
 
-    getLegendBinState(bin: ColorScaleBin): LegendInteractionState {
+    resolveLegendBinEmphasis(bin: ColorScaleBin): Emphasis {
         const isActive = this.activeColors.includes(bin.color)
-        return isActive
-            ? LegendInteractionState.Focused
-            : LegendInteractionState.Muted
+        return isActive ? Emphasis.Highlighted : Emphasis.Muted
     }
 
     @computed private get hideConnectedScatterLines(): boolean {
@@ -504,6 +506,7 @@ export class ScatterPlotChart
                 tooltipSeriesName={this.tooltipSeries?.seriesName}
                 disableIntroAnimation={this.manager.disableIntroAnimation}
                 hideScatterLabels={this.hideScatterLabels}
+                hideEntityLabels={!this.manager.showSeriesLabels}
                 onMouseEnter={this.onScatterMouseEnter}
                 onMouseLeave={this.onScatterMouseLeave}
                 onClick={this.onScatterClick}
@@ -563,6 +566,8 @@ export class ScatterPlotChart
     @computed private get sizeLegend(): ScatterSizeLegend | undefined {
         if (this.chartState.isConnected || this.sizeColumn.isMissing)
             return undefined
+        if (!this.manager.showLegend && !this.manager.useMinimalLabeling)
+            return undefined
         return new ScatterSizeLegend(this)
     }
 
@@ -587,6 +592,14 @@ export class ScatterPlotChart
 
     override componentDidMount(): void {
         exposeInstanceOnWindow(this)
+    }
+
+    @computed private get renderUid(): number {
+        return guid()
+    }
+
+    @computed private get clipPath(): ClipPath {
+        return makeClipPath({ renderUid: this.renderUid, box: this.bounds })
     }
 
     renderSidebar(): React.ReactElement | null {
@@ -626,7 +639,7 @@ export class ScatterPlotChart
         const separatorLine = (y: number): React.ReactElement | null =>
             y > bounds.top ? (
                 <line
-                    id={makeIdForHumanConsumption("separator")}
+                    id={makeFigmaId("separator")}
                     x1={this.legendX}
                     y1={y - 0.5 * legendPadding}
                     x2={bounds.right}
@@ -677,28 +690,34 @@ export class ScatterPlotChart
     renderStatic(): React.ReactElement {
         return (
             <>
+                {this.clipPath.element}
                 <DualAxisComponent
                     dualAxis={this.dualAxis}
                     showTickMarks={false}
                     detailsMarker={this.manager.detailsMarkerInSvg}
                     backgroundColor={this.manager.backgroundColor}
                 />
-                {this.points}
-                {this.renderSidebar()}
+                <g clipPath={this.clipPath.id}>
+                    {this.points}
+                    {this.renderSidebar()}
+                </g>
             </>
         )
     }
 
     renderInteractive(): React.ReactElement {
         return (
-            <g className="ScatterPlot" onMouseMove={this.onScatterMouseMove}>
+            <g onMouseMove={this.onScatterMouseMove}>
+                {this.clipPath.element}
                 <DualAxisComponent
                     dualAxis={this.dualAxis}
                     showTickMarks={false}
                     detailsMarker={this.manager.detailsMarkerInSvg}
                 />
-                {this.points}
-                {this.renderSidebar()}
+                <g clipPath={this.clipPath.id}>
+                    {this.points}
+                    {this.renderSidebar()}
+                </g>
                 {this.tooltip}
             </g>
         )

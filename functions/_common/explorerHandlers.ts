@@ -31,7 +31,6 @@ import {
     prepareSearchParamsBeforeExtractingDataValues,
 } from "./downloadFunctions.js"
 import { assembleMetadata } from "./metadataTools.js"
-import { getDataApiUrl } from "./grapherTools.js"
 import { checkCache } from "./reusableHandlers.js"
 
 async function initGrapherForExplorerView(
@@ -48,8 +47,9 @@ async function initGrapherForExplorerView(
     const queryStr = url.searchParams.toString()
     // The env URL class isn't compatible with the Url class from @ourworldindata/utils
     const urlObj = Url.fromURL(url.toString())
+    const migratedUrl = migrateSelectedEntityNamesParam(urlObj)
     const windowEntityNames = getSelectedEntityNamesParam(
-        migrateSelectedEntityNamesParam(urlObj)
+        migratedUrl.queryParams.country
     )
 
     const selection = new SelectionArray(windowEntityNames)
@@ -66,9 +66,9 @@ async function initGrapherForExplorerView(
 
     if (options.grapherProps?.variant)
         explorer.grapherState.variant = options.grapherProps.variant
-    if (options.grapherProps?.isDisplayedAlongsideComplementaryTable)
-        explorer.grapherState.isDisplayedAlongsideComplementaryTable =
-            options.grapherProps.isDisplayedAlongsideComplementaryTable
+    if (options.grapherProps?.useMinimalLabeling)
+        explorer.grapherState.useMinimalLabeling =
+            options.grapherProps.useMinimalLabeling
     explorer.grapherState.initialOptions = { baseFontSize: options.fontSize }
 
     return {
@@ -90,7 +90,7 @@ export async function handleThumbnailRequestForExplorerView(
             explorerEnv,
             options
         )
-        const svg = grapherState.generateStaticSvg(
+        const svg = await grapherState.generateStaticSvg(
             ReactDOMServer.renderToStaticMarkup
         )
         if (extension === "svg") {
@@ -350,12 +350,12 @@ export async function fetchSearchResultDataForExplorerView(
         const shouldIgnoreProjections = searchParams.has("ignoreProjections")
         if (shouldIgnoreProjections) dropProjectionColumns(grapherState)
 
-        const dataApiUrl = getDataApiUrl(env)
+        const catalogUrl = env.CATALOG_URL
         const searchResult = await assembleSearchResultData(grapherState, {
             variant,
             pickedEntities,
             numDataTableRowsPerColumn,
-            dataApiUrl,
+            catalogUrl,
         })
 
         if (searchResult === undefined)

@@ -4,8 +4,9 @@ import { observer } from "mobx-react"
 import {
     Bounds,
     getRelativeMouse,
-    makeIdForHumanConsumption,
+    makeFigmaId,
     Url,
+    Point,
 } from "@ourworldindata/utils"
 import {
     DATAPAGE_ABOUT_THIS_DATA_SECTION_ID,
@@ -380,7 +381,7 @@ abstract class AbstractFooter<
     }
 
     base = React.createRef<HTMLDivElement>()
-    tooltipTarget: { x: number; y: number } | undefined = undefined
+    tooltipTarget: Point | undefined = undefined
 
     @action.bound private onMouseMove(e: MouseEvent): void {
         const cc = this.base.current?.querySelector(".cclogo")
@@ -770,19 +771,19 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
 
         return (
             <g
-                id={makeIdForHumanConsumption(GRAPHER_FOOTER_CLASS)}
+                id={makeFigmaId(GRAPHER_FOOTER_CLASS)}
                 className="SourcesFooter"
                 style={{ fill: this.textColor }}
             >
                 {sources.renderSVG(targetX, targetY, {
-                    id: makeIdForHumanConsumption("sources"),
+                    id: makeFigmaId("sources"),
                 })}
                 {this.showNote &&
                     note.renderSVG(
                         targetX,
                         targetY + sources.height + this.verticalPadding,
                         {
-                            id: makeIdForHumanConsumption("note"),
+                            id: makeFigmaId("note"),
                             detailsMarker: this.manager.detailsMarkerInSvg,
                         }
                     )}
@@ -790,7 +791,7 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
                     ? licenseAndOriginUrl.renderSVG(
                           targetX + maxWidth - licenseAndOriginUrl.width,
                           targetY,
-                          { id: makeIdForHumanConsumption("origin-url") }
+                          { id: makeFigmaId("origin-url") }
                       )
                     : licenseAndOriginUrl.renderSVG(
                           targetX,
@@ -800,7 +801,7 @@ export class StaticFooter extends AbstractFooter<StaticFooterProps> {
                                   ? note.height + this.verticalPadding
                                   : 0) +
                               this.verticalPadding,
-                          { id: makeIdForHumanConsumption("origin-url") }
+                          { id: makeFigmaId("origin-url") }
                       )}
             </g>
         )

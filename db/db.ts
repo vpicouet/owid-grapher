@@ -44,6 +44,7 @@ import {
     TagsTableName,
     TagGraphTableName,
     ExplorersTableName,
+    MultiDimDataPagesTableName,
     OwidGdocMinimalPostInterface,
     DbRawPostGdoc,
 } from "@ourworldindata/types"
@@ -333,7 +334,7 @@ export async function checkIfSlugCollides(
     knex: KnexReadonlyTransaction,
     gdoc: OwidGdocBaseInterface
 ): Promise<boolean> {
-    const existingGdoc = await knex(PostsGdocsTableName)
+    const existingGdocs = await knex(PostsGdocsTableName)
         .where({
             slug: gdoc.slug,
             published: true,
@@ -341,15 +342,15 @@ export async function checkIfSlugCollides(
         .whereNot({
             id: gdoc.id,
         })
-        .first()
-        .then((row) => (row ? parsePostsGdocsRow(row) : undefined))
+        .then((rows) => rows.map(parsePostsGdocsRow))
 
-    if (!existingGdoc) return false
+    if (existingGdocs.length === 0) return false
 
-    const existingCanonicalUrl = getCanonicalUrl("", existingGdoc)
     const incomingCanonicalUrl = getCanonicalUrl("", gdoc)
 
-    return existingCanonicalUrl === incomingCanonicalUrl
+    return existingGdocs.some(
+        (existing) => getCanonicalUrl("", existing) === incomingCanonicalUrl
+    )
 }
 
 export const getPublishedDataInsightCount = (
@@ -565,7 +566,7 @@ export const getNonGrapherExplorerViewCount = (
 
 /**
  * 1. Fetch all records in tag_graph:
- *    - isTopic = true when there is a published TP/LTP/Article with the same slug as the tag
+ *    - isTopic = true when there is a published TP/LTP with the same slug as the tag
  *    - isSearchable = true when isTopic OR the tag has searchableInAlgolia set
  * 2. Group tags by their parentId
  * 3. Return the flat tag graph along with a __rootId property so that the UI knows which record is the root node
@@ -595,12 +596,7 @@ export async function getFlatTagGraph(knex: KnexReadonlyTransaction): Promise<
         -- order by descending weight, tiebreak by name
         ORDER BY tg.weight DESC, t.name ASC`,
         {
-            types: [
-                OwidGdocType.TopicPage,
-                OwidGdocType.LinearTopicPage,
-                // For sub-topics e.g. Nuclear Energy we use the article format
-                OwidGdocType.Article,
-            ],
+            types: [OwidGdocType.TopicPage, OwidGdocType.LinearTopicPage],
         }
     ).then((rows) => _.groupBy(rows, "parentId"))
 
@@ -845,6 +841,19 @@ export async function getGrapherLinkTargets(
     )
 }
 
+export async function getStaticVizLinkTargets(
+    knex: KnexReadonlyTransaction
+): Promise<Pick<DbPlainPostGdocLink, "target">[]> {
+    return knexRaw<Pick<DbPlainPostGdocLink, "target">>(
+        knex,
+        `-- sql
+        SELECT DISTINCT target
+        FROM posts_gdocs_links
+        WHERE linkType = '${ContentGraphLinkType.StaticViz}'
+        `
+    )
+}
+
 /**
  * Get the slugs of all datapages that are linked to in KeyIndicator blocks
  * Optionally exclude homepage KeyIndicator blocks, because for prefetching (the one current usecase for this function)
@@ -1052,29 +1061,38 @@ export async function generateTopicTagGraph(
 /**
  * Fetch all topic tags from the database.
  * Topics are any tags that have a slug.
- * Returns id, name, and slug of each topic tag.
+ * Returns name and slug of each topic tag.
  * Note: This does not include area tags, which are the top-level children of the tag
  * graph root and do not have a slug.
  */
-export const getAllTopicSlugs = async (
+export const getAllTopicTags = async (
     trx: KnexReadonlyTransaction
-): Promise<string[]> => {
-    const results = await knexRaw<{ slug: string }>(
+): Promise<{ slug: string; name: string; id: number }[]> => {
+    return knexRaw<{ slug: string; name: string; id: number }>(
         trx,
         `-- sql
-        SELECT slug
-        FROM ${TagsTableName}
-        WHERE slug IS NOT NULL
-        `
+        SELECT t.slug, t.name, t.id
+        FROM ${TagsTableName} t
+        JOIN ${PostsGdocsTableName} pg ON pg.slug = t.slug
+        WHERE pg.published = TRUE
+        AND pg.type IN (:types)
+        AND t.slug IS NOT NULL
+        `,
+        {
+            types: [
+                OwidGdocType.TopicPage,
+                OwidGdocType.LinearTopicPage,
+                OwidGdocType.Article,
+            ],
+        }
     )
-
-    return results.map((row) => row.slug)
 }
 
 /**
  * Fetch all area and topic tag names from the database.
  * Areas are the top-level children of the tag graph root, and don't have a slug.
- * Topics are any tags that have a slug or have searchableInAlgolia set.
+ * Topics are tags whose slug matches a published topic-page or linear-topic-page,
+ * or tags with searchableInAlgolia set.
  */
 const getAllAreaAndTopicTagNames = async (
     trx: KnexReadonlyTransaction
@@ -1083,9 +1101,13 @@ const getAllAreaAndTopicTagNames = async (
         trx,
         `-- sql
         WITH topic_tags AS (
-            SELECT name
-            FROM ${TagsTableName}
-            WHERE slug IS NOT NULL OR searchableInAlgolia = TRUE
+            SELECT t.name
+            FROM ${TagsTableName} t
+            LEFT JOIN ${PostsGdocsTableName} pg
+                ON pg.slug = t.slug
+                AND pg.published = TRUE
+                AND pg.type IN ('topic-page', 'linear-topic-page')
+            WHERE pg.id IS NOT NULL OR t.searchableInAlgolia = TRUE
         ),
         area_tags AS (
             SELECT t.name
@@ -1129,7 +1151,7 @@ export const getFeaturedMetricsByParentTagName = async (
 }
 
 /**
- * Takes a URL and checks if it points to a valid grapher, explorer, or MDIM view.
+ * Takes a URL and checks if it points to a valid grapher, explorer, or multi-dim view.
  * Doesn't validate query params as this would be quite complicated / overkill for our needs
  */
 export async function validateChartSlug(
@@ -1170,11 +1192,17 @@ export async function validateChartSlug(
             [slug]
         ).then((rows) => rows[0])
 
-        if (!grapher)
-            return {
-                isValid: false,
-                reason: "Grapher not found or not published",
-            }
+        if (!grapher) {
+            const multiDim = await trx(MultiDimDataPagesTableName)
+                .where({ slug, published: true })
+                .first()
+
+            if (!multiDim)
+                return {
+                    isValid: false,
+                    reason: "Grapher not found or not published",
+                }
+        }
 
         return { isValid: true, reason: "" }
     }

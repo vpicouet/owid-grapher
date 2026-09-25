@@ -49,15 +49,21 @@ import {
     fetchInputTableForConfig,
     Grapher,
     GrapherState,
-    loadVariableDataAndMetadata,
+    loadCatalogData,
 } from "@ourworldindata/grapher"
 import { faCircleInfo } from "@fortawesome/free-solid-svg-icons"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { DATA_API_URL, ETL_API_URL } from "../settings/clientSettings.js"
+import {
+    CATALOG_URL,
+    DATA_API_URL,
+    ETL_API_URL,
+} from "../settings/clientSettings.js"
 import urljoin from "url-join"
 
-interface VariablePageData
-    extends Omit<OwidVariableWithDataAndSource, "source"> {
+interface VariablePageData extends Omit<
+    OwidVariableWithDataAndSource,
+    "source"
+> {
     datasetNamespace: string
     charts: ChartListItem[]
     grapherConfig: GrapherInterface | undefined
@@ -88,13 +94,10 @@ const getDifference = <T extends object>(object: T, base: T): Partial<T> => {
     return changes(object, base)
 }
 
-class VariableEditable
-    implements
-        Omit<
-            OwidVariableWithDataAndSource,
-            "id" | "values" | "years" | "entities"
-        >
-{
+class VariableEditable implements Omit<
+    OwidVariableWithDataAndSource,
+    "id" | "values" | "years" | "entities"
+> {
     name = ""
     unit = ""
     shortUnit = ""
@@ -750,10 +753,8 @@ class VariableEditor extends Component<{
     override componentDidMount() {
         this.grapherState = new GrapherState({
             ...this.grapherConfig,
-            additionalDataLoaderFn: (varId: number) =>
-                loadVariableDataAndMetadata(varId, DATA_API_URL, {
-                    noCache: true,
-                }),
+            additionalDataLoaderFn: (catalogKey) =>
+                loadCatalogData(catalogKey, { baseUrl: CATALOG_URL }),
         })
         void fetchInputTableForConfig({
             dimensions: this.grapherConfig.dimensions,

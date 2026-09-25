@@ -5,6 +5,7 @@ import {
     WORLD_ENTITY_NAME,
     getEntityNamesParam,
     generateSelectedEntityNamesParam,
+    constructGrapherValuesJson,
 } from "@ourworldindata/grapher"
 import {
     OwidColumnDef,
@@ -18,14 +19,12 @@ import { assembleMetadata, getColumnsForMetadata } from "./metadataTools.js"
 import { Env } from "./env.js"
 import {
     getDataApiUrl,
-    getGrapherTableWithRelevantColumns,
     GrapherIdentifier,
     initGrapher,
 } from "./grapherTools.js"
 import { TWITTER_OPTIONS } from "./imageOptions.js"
 import { constructReadme } from "./readmeTools.js"
 import { constructSearchResultDataTableContent } from "./search/constructSearchResultDataTableContent.js"
-import { constructGrapherValuesJson } from "./grapherValuesJson.js"
 import { match } from "ts-pattern"
 import {
     configureGrapherStateTab,
@@ -127,11 +126,11 @@ export function assembleCsv(
         searchParams.get("useColumnShortNames") === "true"
     const shouldUseFilteredTable = searchParams.get("csvType") === "filtered"
 
-    const table = getGrapherTableWithRelevantColumns(grapherState, {
-        shouldUseFilteredTable,
-    })
+    const table = shouldUseFilteredTable
+        ? grapherState.filteredTableForDownload
+        : grapherState.tableForDownload
 
-    return table.toPrettyCsv(shouldUseShortNames)
+    return table.toPrettyCsv({ useShortNames: shouldUseShortNames })
 }
 
 export async function fetchCsvForGrapher(
@@ -348,11 +347,12 @@ export async function fetchSearchResultDataForGrapher(
     })
     if (inputTable) grapher.grapherState.inputTable = inputTable
 
+    const catalogUrl = env.CATALOG_URL
     const searchResult = await assembleSearchResultData(grapher.grapherState, {
         variant,
         pickedEntities,
         numDataTableRowsPerColumn,
-        dataApiUrl,
+        catalogUrl,
     })
 
     if (searchResult === undefined)
@@ -376,7 +376,7 @@ export async function assembleSearchResultData(
         variant: RichDataVariant
         pickedEntities: EntityName[]
         numDataTableRowsPerColumn: number
-        dataApiUrl: string
+        catalogUrl: string
     }
 ): Promise<GrapherSearchResultJson | undefined> {
     // Find Grapher tabs to display and bring them in the right order

@@ -46,6 +46,8 @@ export enum EventCategory {
     DetailOnDemand = "owid.detail_on_demand",
     SiteGuidedChartLinkClick = "owid.site_guided_chart_link_click",
     SiteChartPreviewMouseover = "owid.site_chart_preview_mouseover",
+    SiteStaticVizDownload = "owid.site_static_viz_download",
+    SiteUserSurvey = "owid.site_user_survey",
     TranslatePage = "owid.translate_page",
 }
 
@@ -69,6 +71,8 @@ export type EventParamsMap = {
     [EventCategory.KeyboardShortcut]: KeyboardShortcutParams
     [EventCategory.SiteGuidedChartLinkClick]: SiteGuidedChartLinkClickParams
     [EventCategory.SiteChartPreviewMouseover]: SiteChartPreviewMouseoverParams
+    [EventCategory.SiteStaticVizDownload]: SiteStaticVizDownloadParams
+    [EventCategory.SiteUserSurvey]: SiteUserSurveyParams
     [EventCategory.SiteClick]: SiteClickParams
     [EventCategory.SiteFormSubmit]: SiteFormSubmitParams
     [EventCategory.SiteInstantSearchClick]: SiteInstantSearchClickParams
@@ -165,6 +169,8 @@ export interface SiteGuidedChartLinkClickParams {
     eventAction: "click"
     /** Target URL or chart path */
     eventTarget: string
+    /** Continuation of eventTarget for URLs > 100 chars (characters 101-200) */
+    eventTargetNext?: string
     /** Grapher path of the linked chart (optional - may use eventTarget instead) */
     grapherPath?: string
 }
@@ -174,17 +180,127 @@ export interface SiteChartPreviewMouseoverParams {
     eventAction: "mouseover"
     /** Target chart URL */
     eventTarget: string
+    /** Continuation of eventTarget for URLs > 100 chars (characters 101-200) */
+    eventTargetNext?: string
     /** Explorer path if in explorer */
     explorerPath?: string
     /** Grapher path being previewed */
     grapherPath?: string
 }
 
+export interface SiteStaticVizDownloadParams {
+    /** Type of download action */
+    eventAction: "image_download" | "data_download" | "source_link_click"
+    /** Name of the static viz */
+    eventTarget: string
+    /** Additional context (e.g., 'desktop' or 'mobile' for images, URL for data/source) */
+    eventContext?: string
+}
+
+export type UserSurveyExperimentArm = "long-list" | "short-list" | "free-form"
+
+export type UserSurveyRoleAnswer =
+    | {
+          experimentArm: "free-form"
+          freeFormInput: string
+      }
+    | {
+          experimentArm: "long-list" | "short-list"
+          optionId: string
+          optionLabel: string
+          optionIndex: number
+          freeFormInput?: string
+      }
+
+export type SiteUserSurveyParams =
+    | {
+          /** Always 'user_role_show' for this event */
+          eventAction: "user_role_show"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** First-screen arm for this survey */
+          experimentArm: UserSurveyExperimentArm
+      }
+    | {
+          /** Always 'thank_you_show' for this event */
+          eventAction: "thank_you_show"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** First-screen arm for this survey */
+          experimentArm: UserSurveyExperimentArm
+      }
+    | {
+          /** Always 'user_role_submit' for this event */
+          eventAction: "user_role_submit"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** Free-form arm name */
+          experimentArm: "free-form"
+          /** Text field input from the first screen */
+          freeFormInput: string
+      }
+    | {
+          /** Always 'user_role_submit' for this event */
+          eventAction: "user_role_submit"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** Choice-based arm names */
+          experimentArm: "long-list" | "short-list"
+          /** Option id from predefined options */
+          optionId: string
+          /** Option label from predefined options */
+          optionLabel: string
+          /** 0-based index of selected option in randomized list */
+          optionIndex: number
+          /** Optional text field input from the "other" option */
+          freeFormInput?: string
+      }
+    | {
+          /** Always 'feedback_submit' for this event */
+          eventAction: "feedback_submit"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** First-screen arm for this survey */
+          experimentArm: UserSurveyExperimentArm
+      }
+    | {
+          /** Always 'user_role_dismiss' for this event */
+          eventAction: "user_role_dismiss"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** First-screen arm for this survey */
+          experimentArm: UserSurveyExperimentArm
+      }
+    | {
+          /** Always 'thank_you_dismiss' for this event */
+          eventAction: "thank_you_dismiss"
+          /** Survey name identifier */
+          surveyName: string
+          /** Survey instance identifier generated with uuidv7 */
+          responseId: string
+          /** First-screen arm for this survey */
+          experimentArm: UserSurveyExperimentArm
+      }
+
 // Grapher Events
 
 export interface GrapherViewParams {
     /** Grapher chart path (e.g., '/grapher/life-expectancy') */
-    grapherPath: string
+    grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID for multi-dimensional data pages */
     viewConfigId?: string
     /** Name of the narrative chart if embedded */
@@ -196,6 +312,8 @@ export interface GrapherClickParams {
     eventAction: GrapherImageDownloadEvent | string
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -211,6 +329,8 @@ export interface GrapherHoverParams {
     eventAction: GrapherInteractionEvent
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -226,6 +346,8 @@ export interface GrapherErrorParams {
     eventContext: string
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -237,6 +359,8 @@ export interface GrapherEntitySelectorParams {
     eventAction: EntitySelectorEvent
     /** Grapher chart path */
     grapherPath?: string
+    /** Continuation of grapherPath for URLs > 100 chars (characters 101-200) */
+    grapherPathNext?: string
     /** View configuration ID */
     viewConfigId?: string
     /** Name of narrative chart */
@@ -252,6 +376,8 @@ export interface ExplorerViewParams {
     explorerPath: string
     /** JSON string of the explorer view state */
     explorerView: string
+    /** Chart config ID of the explorer view */
+    viewConfigId?: string
 }
 
 export interface ExplorerCountrySelectorParams {

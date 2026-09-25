@@ -15,11 +15,16 @@ import {
     byHoverThenFocusState,
     getHoverStateForSeries,
 } from "../chart/ChartUtils"
+import { resolveEmphasis } from "../interaction/Emphasis"
 
 export function getYAxisConfigDefaults(
     config?: AxisConfigInterface
 ): AxisConfigInterface {
-    return { nice: config?.scaleType !== ScaleType.log }
+    return {
+        nice: config?.scaleType !== ScaleType.log,
+        // Default to 0 if not set
+        min: 0,
+    }
 }
 
 export function toPlacedSlopeChartSeries(
@@ -54,13 +59,12 @@ export function toRenderSlopeChartSeries(
     }
 ): RenderSlopeChartSeries[] {
     const series: RenderSlopeChartSeries[] = placedSeries.map((series) => {
-        return {
-            ...series,
-            hover: getHoverStateForSeries(series, {
-                isHoverModeActive,
-                hoveredSeriesNames,
-            }),
-        }
+        const hover = getHoverStateForSeries(series, {
+            isHoverModeActive,
+            hoveredSeriesNames,
+        })
+        const emphasis = resolveEmphasis({ hover, focus: series.focus })
+        return { ...series, hover, emphasis }
     })
 
     // Sort by interaction state so that foreground series

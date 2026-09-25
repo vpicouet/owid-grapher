@@ -40,10 +40,18 @@ export default function Chart({
     // and it should all resolve correctly via the same linkedChart
     const { linkedChart } = useLinkedChart(d.url)
     const resolvedUrl = linkedChart?.resolvedUrl ?? ""
-    const resolvedUrlParsed = useMemo(
-        () => Url.fromURL(resolvedUrl),
-        [resolvedUrl]
-    )
+    const resolvedUrlParsed = useMemo(() => {
+        let baseUrl = Url.fromURL(resolvedUrl)
+
+        // Append peerCountries param if specified in the archie block
+        if (d.peerCountries) {
+            baseUrl = baseUrl.updateQueryParams({
+                peerCountries: d.peerCountries,
+            })
+        }
+
+        return baseUrl
+    }, [resolvedUrl, d.peerCountries])
     const resolvedQueryParams = useMemo(() => {
         return { ...resolvedUrlParsed.queryParams }
     }, [resolvedUrlParsed])
@@ -155,7 +163,9 @@ export default function Chart({
                     })}
                     data-is-multi-dim={isMultiDim || undefined}
                     data-grapher-src={isExplorer ? undefined : resolvedUrl}
-                    data-explorer-src={isExplorer ? resolvedUrl : undefined}
+                    data-explorer-src={
+                        isExplorer ? resolvedUrlParsed.fullUrl : undefined
+                    }
                     style={{
                         width: "100%",
                         border: "0px none",

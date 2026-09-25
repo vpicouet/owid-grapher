@@ -235,6 +235,7 @@ export const enrichedBlockExamples: Record<
         type: "static-viz",
         name: "some-static-viz",
         size: BlockSize.Wide,
+        caption: boldLinkExampleText,
         hasOutline: true,
         parseErrors: [],
     },
@@ -906,6 +907,58 @@ export const enrichedBlockExamples: Record<
                 text: "ourworldindata.org",
                 parseErrors: [],
             },
+        ],
+        parseErrors: [],
+    },
+    "data-callout": {
+        type: "data-callout",
+        url: "https://ourworldindata.org/grapher/life-expectancy?country=KEN",
+        content: [
+            {
+                type: "text",
+                value: [
+                    {
+                        spanType: "span-simple-text",
+                        text: "In ",
+                    },
+                    {
+                        spanType: "span-callout",
+                        functionName: "latestTime",
+                        parameters: ["life_expectancy_0"],
+                        children: [],
+                    },
+                    {
+                        spanType: "span-simple-text",
+                        text: ", Kenya had a life expectancy of ",
+                    },
+                    {
+                        spanType: "span-callout",
+                        functionName: "latestValue",
+                        parameters: ["life_expectancy_0"],
+                        children: [],
+                    },
+                    {
+                        spanType: "span-simple-text",
+                        text: ".",
+                    },
+                ],
+                parseErrors: [],
+            },
+        ],
+        parseErrors: [],
+    },
+    "country-profile-selector": {
+        type: "country-profile-selector",
+        url: "https://docs.google.com/document/d/ABC123/edit",
+        title: "Country profiles",
+        description: "Explore key metrics on energy consumption and sources.",
+        defaultCountries: [
+            "United Kingdom",
+            "United States",
+            "China",
+            "Nigeria",
+            "India",
+            "Brazil",
         ],
         parseErrors: [],
     },

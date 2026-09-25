@@ -77,6 +77,7 @@ interface AlgoliaSearchResponse {
 // Minimal set of attributes needed by the MCP server and other API consumers
 const DATA_CATALOG_ATTRIBUTES = [
     "title",
+    "containerTitle",
     "slug",
     "subtitle",
     "variantName",
@@ -114,6 +115,17 @@ export function formatCountryFacetFilters(
     return requireAll
         ? [...filters.map((f) => [f]), excludeIncomeGroupFM]
         : [filters, excludeIncomeGroupFM]
+}
+
+/**
+ * Returns a facet filter that excludes Featured Metric records when a
+ * free-text query is present. When there is no query (e.g. browsing by
+ * topic), FMs are kept so they can surface at the top of topic pages.
+ */
+export function formatFeaturedMetricFacetFilter(
+    query: string
+): (string | string[])[] {
+    return query.trim() ? ["isFM:false"] : []
 }
 
 export function formatTopicFacetFilters(
@@ -185,7 +197,12 @@ export async function searchCharts(
     const topicFacetFilters = formatTopicFacetFilters(
         getFilterNamesOfType(state.filters, FilterType.TOPIC)
     )
-    const facetFilters = [...countryFacetFilters, ...topicFacetFilters]
+    const fmFacetFilter = formatFeaturedMetricFacetFilter(state.query)
+    const facetFilters = [
+        ...countryFacetFilters,
+        ...topicFacetFilters,
+        ...fmFacetFilter,
+    ]
 
     const indexName = getIndexName(
         SearchIndexName.ExplorerViewsMdimViewsAndCharts,

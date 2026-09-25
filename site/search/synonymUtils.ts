@@ -274,6 +274,8 @@ export const synonyms = [
     ["gaza", "palestine", "west bank"],
     ["hpv", "human papillomavirus"],
     ["tertiary", "university", "college", "post-secondary"],
+    ["fdi", "foreign direct investment"],
+    ["sex", "gender"],
 ]
 
 /**

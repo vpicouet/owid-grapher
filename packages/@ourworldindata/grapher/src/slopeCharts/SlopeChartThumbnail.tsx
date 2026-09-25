@@ -26,11 +26,9 @@ import {
 import { Bounds, SeriesName } from "@ourworldindata/utils"
 import { VerticalAxis } from "../axis/Axis"
 import { Slope } from "./Slope"
-import {
-    InitialVerticalLabelsSeries,
-    VerticalLabelsState,
-} from "../verticalLabels/VerticalLabelsState"
-import { VerticalLabels } from "../verticalLabels/VerticalLabels"
+import { InitialSimpleLabelSeries } from "../verticalLabels/SimpleVerticalLabelsTypes.js"
+import { SimpleVerticalLabelsState } from "../verticalLabels/SimpleVerticalLabelsState"
+import { SimpleVerticalLabels } from "../verticalLabels/SimpleVerticalLabels"
 import { MarkX } from "./MarkX"
 import { NoDataModal } from "../noDataModal/NoDataModal"
 
@@ -211,8 +209,10 @@ export class SlopeChartThumbnail
             .yRange()
     }
 
-    @computed private get endLabelsState(): VerticalLabelsState | undefined {
-        if (!this.manager.showLegend) return undefined
+    @computed private get endLabelsState():
+        | SimpleVerticalLabelsState
+        | undefined {
+        if (!this.manager.showSeriesLabels) return undefined
 
         const series = this.labelCandidateSeries.map((series) => {
             const { seriesName, color } = series
@@ -233,7 +233,7 @@ export class SlopeChartThumbnail
             }
         })
 
-        return new VerticalLabelsState(series, {
+        return new SimpleVerticalLabelsState(series, {
             fontSize: this.labelFontSize,
             fontWeight: 500,
             minSpacing: 2,
@@ -241,18 +241,21 @@ export class SlopeChartThumbnail
         })
     }
 
-    @computed private get startLabelsState(): VerticalLabelsState | undefined {
-        if (!this.manager.showLegend) return undefined
+    @computed private get startLabelsState():
+        | SimpleVerticalLabelsState
+        | undefined {
+        if (!this.manager.showSeriesLabels) return undefined
 
-        const showEntityNames =
-            !this.manager.isDisplayedAlongsideComplementaryTable
+        const showValueLabelsOnly = this.manager.useMinimalLabeling
 
         const series = this.labelCandidateSeries.map((series) => {
             const { seriesName, color } = series
             const firstPoint = series.start
             const value = firstPoint?.value ?? 0
             const yPosition = this.outerBoundsVerticalAxis.place(value)
-            const label = showEntityNames ? seriesName : this.formatLabel(value)
+            const label = showValueLabelsOnly
+                ? this.formatLabel(value)
+                : seriesName
             return {
                 seriesName,
                 value,
@@ -263,16 +266,18 @@ export class SlopeChartThumbnail
             }
         })
 
-        return new VerticalLabelsState(series, {
+        return new SimpleVerticalLabelsState(series, {
             fontSize: this.labelFontSize,
             fontWeight: 500,
-            maxWidth: showEntityNames ? 0.25 * this.bounds.width : undefined,
-            minSpacing: showEntityNames ? 5 : 2,
+            maxWidth: showValueLabelsOnly
+                ? undefined
+                : 0.25 * this.bounds.width,
+            minSpacing: showValueLabelsOnly ? 2 : 5,
             yRange: this.labelsRange,
             resolveCollision: (
-                s1: InitialVerticalLabelsSeries,
-                s2: InitialVerticalLabelsSeries
-            ): InitialVerticalLabelsSeries => {
+                s1: InitialSimpleLabelSeries,
+                s2: InitialSimpleLabelSeries
+            ): InitialSimpleLabelSeries => {
                 // Prefer to label series that have an end label
                 if (this.visibleEndLabels.has(s1.seriesName)) return s1
                 if (this.visibleEndLabels.has(s2.seriesName)) return s2
@@ -343,12 +348,11 @@ export class SlopeChartThumbnail
                             strokeWidth={1.5}
                             outlineWidth={0}
                             outlineStroke={this.manager.backgroundColor}
-                            unfocusedStyle="faded"
                         />
                     ))}
                 </g>
                 {this.startLabelsState && (
-                    <VerticalLabels
+                    <SimpleVerticalLabels
                         state={this.startLabelsState}
                         yAxis={this.yAxis}
                         x={this.innerBounds.left - LABEL_PADDING}
@@ -356,7 +360,7 @@ export class SlopeChartThumbnail
                     />
                 )}
                 {this.endLabelsState && (
-                    <VerticalLabels
+                    <SimpleVerticalLabels
                         state={this.endLabelsState}
                         yAxis={this.yAxis}
                         x={this.innerBounds.right + LABEL_PADDING}

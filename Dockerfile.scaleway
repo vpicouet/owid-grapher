@@ -1,0 +1,18 @@
+FROM node:20
+
+RUN corepack enable && corepack prepare yarn@4.10.3 --activate
+
+WORKDIR /app
+
+# Copy everything first (needed for yarn workspaces)
+COPY . .
+
+# Install dependencies for Linux platform
+RUN yarn install --immutable
+
+EXPOSE 3030
+
+ENV NODE_ENV=production
+ENV DANGEROUSLY_DISABLE_HOST_CHECK=true
+
+CMD ["yarn", "startAdminServer"]

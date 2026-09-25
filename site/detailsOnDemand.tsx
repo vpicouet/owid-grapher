@@ -1,6 +1,6 @@
 import { tippy } from "@tippyjs/react"
 import type { Instance } from "tippy.js"
-import { ADMIN_BASE_URL, BAKED_BASE_URL } from "../settings/clientSettings.js"
+import { ADMIN_BASE_URL } from "../settings/clientSettings.js"
 import {
     ArchiveMetaInformation,
     DetailDictionary,
@@ -44,7 +44,7 @@ export async function runDetailsOnDemand(
         ? urljoin(ADMIN_BASE_URL, "admin/api/parsed-dods.json")
         : readFromAssetMap(runtimeAssetMap, {
               path: "dods.json",
-              fallback: `${BAKED_BASE_URL}/dods.json`,
+              fallback: `/dods.json`,
           })
 
     window.details = await fetchWithRetry(dodFetchUrl, {

@@ -8,6 +8,7 @@ import {
     GrapherTabName,
     GrapherTabConfigOption,
     GrapherTabQueryParam,
+    DimensionProperty,
 } from "@ourworldindata/types"
 import * as R from "remeda"
 import { match } from "ts-pattern"
@@ -20,12 +21,13 @@ import { match } from "ts-pattern"
  *
  * This also determines the order of chart types in the UI.
  */
-const VALID_CHART_TYPE_COMBINATIONS = [
+export const VALID_CHART_TYPE_COMBINATIONS = [
     [
         GRAPHER_CHART_TYPES.LineChart,
         GRAPHER_CHART_TYPES.SlopeChart,
         GRAPHER_CHART_TYPES.DiscreteBar,
         GRAPHER_CHART_TYPES.Marimekko,
+        GRAPHER_CHART_TYPES.ScatterPlot,
     ],
 ]
 
@@ -176,3 +178,25 @@ export const isMapTab = (
     tab: GrapherTabName
 ): tab is typeof GRAPHER_TAB_NAMES.WorldMap =>
     tab === GRAPHER_TAB_NAMES.WorldMap
+
+/**
+ * Returns which dimension properties are supported for the given chart types.
+ * Returns the union of all dimensions needed across all chart types.
+ */
+export const getSupportedDimensionsForChartTypes = (
+    chartTypes: GrapherChartType[]
+): DimensionProperty[] => {
+    const chartTypeSet = new Set(chartTypes)
+
+    const { y, x, color, size } = DimensionProperty
+
+    const hasScatter = chartTypeSet.has(GRAPHER_CHART_TYPES.ScatterPlot)
+    const hasMarimekko = chartTypeSet.has(GRAPHER_CHART_TYPES.Marimekko)
+    const hasLineChart = chartTypeSet.has(GRAPHER_CHART_TYPES.LineChart)
+    const hasDiscreteBar = chartTypeSet.has(GRAPHER_CHART_TYPES.DiscreteBar)
+
+    if (hasScatter) return [y, x, size, color]
+    if (hasMarimekko) return [y, x, color]
+    if (hasLineChart || hasDiscreteBar) return [y, color]
+    return [y]
+}

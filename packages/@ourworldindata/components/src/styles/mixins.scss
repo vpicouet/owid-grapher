@@ -426,7 +426,6 @@
 
 @mixin hide-site-chrome {
     .site-header,
-    .alert-banner,
     .donate-footer,
     .cookie-notice,
     .site-footer {
@@ -480,7 +479,7 @@
 
 @mixin related-topics {
     h4 {
-        color: $blue-40;
+        color: $blue-50;
     }
 
     ul {

@@ -148,8 +148,7 @@ export class MarimekkoChartState implements ChartState, ColorScaleManager {
     }
 
     @computed get colorColumnSlug(): string | undefined {
-        // Marimekko charts only support categorical variables as color dimension
-        return this.manager.categoricalColorColumnSlug
+        return this.manager.colorColumnSlug
     }
 
     @computed get colorColumn(): CoreColumn {
@@ -445,6 +444,8 @@ export class MarimekkoChartState implements ChartState, ColorScaleManager {
             axis.updateDomainPreservingUserSettings(this.xDomainDefault)
         }
 
+        // Marimekko charts should always use linear scale
+        axis.scaleType = ScaleType.linear
         axis.formatColumn = this.xColumn
 
         axis.label = this.horizontalAxisLabel

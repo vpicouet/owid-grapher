@@ -8,6 +8,7 @@ import {
     autorun,
     reaction,
     makeObservable,
+    comparer,
 } from "mobx"
 import {
     bind,
@@ -84,7 +85,7 @@ export interface GrapherProgrammaticInterface extends GrapherInterface {
     baseFontSize?: number
     staticBounds?: Bounds
     variant?: GrapherVariant
-    isDisplayedAlongsideComplementaryTable?: boolean
+    useMinimalLabeling?: boolean
 
     hideTitle?: boolean
     hideSubtitle?: boolean
@@ -655,6 +656,8 @@ export class Grapher extends React.Component<GrapherProps> {
     // Binds chart properties to global window title and URL. This should only
     // ever be invoked from top-level JavaScript.
     private bindToWindow(): void {
+        if (!this.grapherState.bindUrlToWindow) return
+
         // There is a surprisingly considerable performance overhead to updating the url
         // while animating, so we debounce to allow e.g. smoother timelines
         const pushParams = (): void =>
@@ -673,6 +676,7 @@ export class Grapher extends React.Component<GrapherProps> {
         const updateWindowDimensions = action((): void => {
             this.grapherState.windowInnerWidth = window.innerWidth
             this.grapherState.windowInnerHeight = window.innerHeight
+            this.grapherState.screenHeight = window.screen.height
         })
         const onResize = _.debounce(updateWindowDimensions, 400, {
             leading: true,
@@ -687,11 +691,7 @@ export class Grapher extends React.Component<GrapherProps> {
         }
     }
 
-    override componentDidMount(): void {
-        this.setBaseFontSize()
-        this.setUpIntersectionObserver()
-        this.setUpWindowResizeEventHandler()
-        exposeInstanceOnWindow(this, "grapher")
+    private setUpGrapherLoadedEventDispatcher(): void {
         // Emit a custom event when the grapher is ready
         // We can use this in global scripts that depend on the grapher e.g. the site-screenshots tool
         this.grapherState.disposers.push(
@@ -706,20 +706,49 @@ export class Grapher extends React.Component<GrapherProps> {
                         )
                     }
                 }
-            ),
-            reaction(
-                () => this.grapherState.facetStrategy,
-                () => this.grapherState.focusArray.clear()
             )
         )
-        if (this.grapherState.bindUrlToWindow) this.bindToWindow()
-        if (this.grapherState.enableKeyboardShortcuts)
-            this.bindKeyboardShortcuts()
+    }
+
+    private clearFocusMode(): void {
+        // Make it easy to exit focus mode by clearing it when the selection
+        // or view changes. This is disabled in the admin to avoid clearing
+        // focus when authors are editing the chart
+        if (!this.grapherState.isAdmin) {
+            this.grapherState.disposers.push(
+                reaction(
+                    () => [
+                        this.grapherState.facetStrategy,
+                        this.grapherState.selection.selectedEntityNames,
+                        this.grapherState.activeTab,
+                    ],
+                    () => this.grapherState.focusArray.clear(),
+                    // Use structural comparison to detect changes in array
+                    // contents, not just reference
+                    { equals: comparer.structural }
+                )
+            )
+        }
+    }
+
+    override componentDidMount(): void {
+        exposeInstanceOnWindow(this, "grapher")
+
+        this.setBaseFontSize()
+        this.setUpIntersectionObserver()
+        this.setUpWindowResizeEventHandler()
+        this.setUpGrapherLoadedEventDispatcher()
+
+        this.bindToWindow()
+        this.bindKeyboardShortcuts()
+
+        this.clearFocusMode()
     }
 
     private _shortcutsBound = false
     private bindKeyboardShortcuts(): void {
-        if (this._shortcutsBound) return
+        if (!this.grapherState.enableKeyboardShortcuts || this._shortcutsBound)
+            return
         this.keyboardShortcuts.forEach((shortcut) => {
             Mousetrap.bind(shortcut.combo, () => {
                 shortcut.fn()

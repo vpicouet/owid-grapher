@@ -172,6 +172,14 @@ export default function Image(props: {
         assetMap
     )
 
+    const downloadButton =
+        isInteractive && !shouldHideDownloadButton ? (
+            <FloatingDownloadButton
+                label="Download"
+                onClick={() => void handleDownload()}
+            />
+        ) : null
+
     return (
         <div className={className}>
             <picture onClick={openLightbox}>
@@ -197,12 +205,7 @@ export default function Image(props: {
                     height={activeImage.originalHeight ?? undefined}
                 />
             </picture>
-            {isInteractive && !shouldHideDownloadButton && (
-                <FloatingDownloadButton
-                    label={`Download`}
-                    onClick={() => void handleDownload()}
-                />
-            )}
+            {downloadButton}
             {isLightboxOpen && (
                 <Lightbox
                     imgSrc={imageSrc}
@@ -211,6 +214,7 @@ export default function Image(props: {
                     width={activeImage.originalWidth}
                     height={activeImage.originalHeight}
                     alt={alt}
+                    hideDownload={shouldHideDownloadButton}
                 />
             )}
         </div>
