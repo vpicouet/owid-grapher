@@ -606,6 +606,31 @@ const getSortFromDimensions = (
     return sort
 }
 
+// FORK PATCH (2026-09-25, MIT-era fork, not from upstream): OWID's public
+// API started returning descriptionKey as a single markdown string instead
+// of a string[] (their own upstream commit b5a5c7bd42, "descriptionKey
+// becomes a single markdown string" — post-license-change, 2026-07-21, so
+// not something we can pull in directly; see
+// Website/docs/Security/owid-licence-brief-juridique.md). Our fork's types
+// and every consumer (SourcesDescriptions.tsx, SourcesModal.tsx) still
+// expect string[] — a bare string crashed
+// `descriptionKey.map(...)` in the "Learn more about this data" panel
+// ("e.descriptionKey.map is not a function") on ANY chart backed by a live
+// OWID indicator (both explorers and the new /grapher/<slug> pages), since
+// this is what the real OWID API returns today, independent of our own
+// pipeline. Normalized once, here, at the single point where the raw API
+// response becomes a typed column def — every string[]-typed consumer
+// downstream is unaffected and needs no changes of its own. A one-element
+// array already renders as prose (see SourcesDescriptions.tsx), matching
+// what a markdown string is meant to look like.
+const normalizeDescriptionKey = (
+    value: unknown
+): string[] | undefined => {
+    if (Array.isArray(value)) return value
+    if (typeof value === "string" && value.trim() !== "") return [value]
+    return undefined
+}
+
 const columnDefFromOwidVariable = (
     variable: OwidVariableWithSourceAndDimension
 ): OwidColumnDef => {
@@ -619,7 +644,7 @@ const columnDefFromOwidVariable = (
         datasetName,
         descriptionShort,
         descriptionProcessing,
-        descriptionKey,
+        descriptionKey: rawDescriptionKey,
         descriptionFromProducer,
         source,
         origins,
@@ -634,6 +659,9 @@ const columnDefFromOwidVariable = (
 
     const isContinent = isContinentsVariableId(variable.id)
     const name = variable.name
+
+    // See normalizeDescriptionKey()'s comment above for why this is needed.
+    const descriptionKey = normalizeDescriptionKey(rawDescriptionKey)
 
     // The column's type
     const parsedType = variable.type

@@ -30,6 +30,21 @@ import { SiteAnalytics } from "./SiteAnalytics.js"
 import { runMonkeyPatchForGoogleTranslate } from "./hacks.js"
 import { runSiteFooterScripts } from "./runSiteFooterScripts.js"
 
+// Modern Societies (fork patch P4): on Xplorer pages (/explorers/...) define window.__msoAnalyze (opens fit.html on this explorer).
+// In the deployed bundle this block was prepended by hand to line 1 (same code, minified); see Website/docs/OWID grapher/build/owid-mjs-runbook.md
+if (typeof window !== "undefined" && /^\/explorers(-private)?\//.test(location.pathname) && typeof (window as any).__msoAnalyze !== "function") {
+    const tok = new URLSearchParams(location.search).get("token")
+    ;(window as any).__msoAnalyze = () => {
+        const c = new URL(location.href)
+        if (tok && /^\/explorers-private\//.test(c.pathname) && !c.searchParams.get("token")) c.searchParams.set("token", tok)
+        const u = location.origin + "/fit.html?explorer=" + encodeURIComponent(c.href)
+        let w: Window | null = null
+        try { w = window.open(u, "_blank") } catch (e) { /* popup blocked */ }
+        if (w) { try { w.opener = null } catch (e) { /* ignore */ } }
+        else if (window.parent !== window) window.parent.postMessage({ xploreAnalyze: u }, "*")
+    }
+}
+
 declare let window: any
 window.Grapher = Grapher
 window.GrapherState = GrapherState

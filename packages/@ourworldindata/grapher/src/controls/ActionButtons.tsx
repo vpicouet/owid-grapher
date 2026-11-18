@@ -9,7 +9,7 @@ import {
     faDownload,
     faArrowRight,
     IconDefinition,
-    faHeart,
+    faChartLine,
 } from "@fortawesome/free-solid-svg-icons"
 import {
     ShareMenu,
@@ -166,7 +166,7 @@ export class ActionButtons extends React.Component<ActionButtonsProps> {
     }
 
     @computed private get donateButtonWithLabelWidth(): number {
-        return ActionButtons.computeButtonWidth("Donate")
+        return ActionButtons.computeButtonWidth("Analyze data")
     }
 
     @computed private get exploreTheDataButtonWithLabelWidth(): number {
@@ -249,8 +249,10 @@ export class ActionButtons extends React.Component<ActionButtonsProps> {
         return true
     }
 
+    // Modern Societies: the "Donate" button is replaced by "Analyze data", shown whenever the host page defines window.__msoAnalyze
+    // (chart.html and the MCP view do): it opens the analysis studio (fit.html) on the chart being looked at
     @computed private get hasDonateButton(): boolean {
-        return !!this.manager.isInIFrame && !this.manager.isAdmin
+        return typeof window !== "undefined" && typeof (window as any).__msoAnalyze === "function" && !this.manager.isAdmin
     }
 
     @computed private get hasShareButton(): boolean {
@@ -353,12 +355,15 @@ export class ActionButtons extends React.Component<ActionButtonsProps> {
                     {this.hasDonateButton && (
                         <li style={{ width: this.donateButtonWidth }}>
                             <ActionButton
-                                className="ActionButton--donate"
-                                label="Donate"
-                                dataTrackNote="chart_click_donate"
+                                className="ActionButton--analyze"
+                                label="Analyze data"
+                                dataTrackNote="chart_click_analyze"
                                 showLabel={this.showButtonLabels}
-                                icon={faHeart}
-                                href="https://ourworldindata.org/donate"
+                                icon={faChartLine}
+                                onClick={action((e): void => {
+                                    ;(window as any).__msoAnalyze?.()
+                                    e.stopPropagation()
+                                })}
                             />
                         </li>
                     )}

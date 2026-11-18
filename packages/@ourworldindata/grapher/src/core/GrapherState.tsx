@@ -4013,7 +4013,10 @@ export class GrapherState
             // Don't use the panel if the grapher is embedded
             ((!this.isInIFrame && !this.isEmbeddedInAnOwidPage) ||
                 // unless we're in full-screen mode
-                this.isInFullScreenMode)
+                this.isInFullScreenMode ||
+                // Modern Societies (fork patch P2): fit.html / embedded-analysis.html set this flag from chart.html
+                (typeof window !== "undefined" &&
+                    !!(window as any).__msoSidePanel))
         )
             return GrapherWindowType.panel
 
