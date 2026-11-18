@@ -41,7 +41,13 @@ if (typeof window !== "undefined" && /^\/explorers(-private)?\//.test(location.p
         let w: Window | null = null
         try { w = window.open(u, "_blank") } catch (e) { /* popup blocked */ }
         if (w) { try { w.opener = null } catch (e) { /* ignore */ } }
-        else if (window.parent !== window) window.parent.postMessage({ xploreAnalyze: u }, "*")
+        else if (window.parent !== window) {
+            // never send the private token with a wildcard origin: target the real parent origin, "*" only for public explorers
+            let o: string | null = null
+            try { o = location.ancestorOrigins?.[0] || (document.referrer ? new URL(document.referrer).origin : null) } catch (e) { /* ignore */ }
+            if (o && o !== "null") window.parent.postMessage({ xploreAnalyze: u }, o)
+            else if (!tok) window.parent.postMessage({ xploreAnalyze: u }, "*")
+        }
     }
 }
 
