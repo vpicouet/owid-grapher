@@ -55,6 +55,25 @@ declare let window: any
 window.Grapher = Grapher
 window.GrapherState = GrapherState
 window.Explorer = Explorer
+// Modern Societies (fork patch P7): upstream inserted `chartConfigIdByViewId` as 4th argument of renderSingleExplorerOnExplorerPage and
+// `catalogUrl` in explorerConstants. Pages already baked on our servers call the 6-argument form: accept both.
+const renderExplorerPage = Explorer.renderSingleExplorerOnExplorerPage.bind(Explorer) as (...a: any[]) => void
+;(Explorer as any).renderSingleExplorerOnExplorerPage = (...args: any[]) => {
+    const c = args[3]
+    if (c && typeof c === "object" && ("dataApiUrl" in c || "adminBaseUrl" in c)) {
+        const [program, grapherConfigs, partialGrapherConfigs, constants, urlMigrationSpec, archiveContext] = args
+        return renderExplorerPage(
+            program,
+            grapherConfigs,
+            partialGrapherConfigs,
+            undefined,
+            { catalogUrl: "https://catalog.ourworldindata.org", ...constants },
+            urlMigrationSpec,
+            archiveContext
+        )
+    }
+    return renderExplorerPage(...args)
+}
 window.CoreTable = CoreTable
 window.OwidTable = OwidTable
 window.React = React
