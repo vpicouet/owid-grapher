@@ -64,7 +64,20 @@ window.runFeedbackPage = runFeedbackPage
 window.runDonateForm = runDonateForm
 window.runCountryIndexPage = runCountryIndexPage
 window.runTableOfContents = runTableOfContents
-window.renderSingleGrapherOnGrapherPage = renderSingleGrapherOnGrapherPage
+// Modern Societies (fork patch P6): upstream changed this function from (config, dataApiUrl, opts) to ({config, dataApiUrl, catalogUrl, ...}).
+// All our callers (chart.html, MCP view, baked pages) use the legacy positional form: accept both.
+const renderSingleGrapher = renderSingleGrapherOnGrapherPage
+window.renderSingleGrapherOnGrapherPage = (a: any, dataApiUrl?: string, opts: any = {}) =>
+    typeof dataApiUrl === "string"
+        ? renderSingleGrapher({
+              config: a,
+              dataApiUrl,
+              catalogUrl: opts.catalogUrl ?? "https://catalog.ourworldindata.org",
+              archiveContext: opts.archiveContext,
+              noCache: opts.noCache,
+              queryParams: opts.queryParams,
+          })
+        : renderSingleGrapher(a)
 window.MultiEmbedderSingleton = MultiEmbedderSingleton
 
 // Note: do a text search of the project for "runSiteFooterScripts" to find the usage. todo: clean that up.
